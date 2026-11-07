@@ -5,6 +5,8 @@
 #include "game/controller.h"
 #include "game/focus.h"
 #include "game/frame_hooks.h"
+#include "game/ui_nav.h"
+#include "input/inject.h"
 #include "log.h"
 #include "sacred/engine.h"
 #include "sacred/object.h"
@@ -95,18 +97,25 @@ namespace
     // Loot already dealt with: opened containers, items the hero stood at without picking them up (a full
     // inventory) or could not reach.
     std::unordered_set<uint32_t> g_doneLoot;
+    // Fixtures the game ranks as ground items (signposts, plaques: cSpecial3D like some loot) whose click opened a
+    // dialog; they keep their ids, so they stay here.
+    std::unordered_set<uint32_t> g_fixtures;
 
-    // How long the hero may take for loot, and how long it may stand at it, before we leave it.
-    constexpr DWORD kLootGiveUpMs = 10000;
+    // The hero gets no nearer to the loot for this long: it cannot reach it (behind a fence, in a house).
+    constexpr DWORD kLootStuckMs = 2500;
+    // How long it may stand at the loot before we leave it.
     constexpr DWORD kLootAtMs = 1500;
+    // A dialog that opens this soon after a loot order is that loot's.
+    constexpr DWORD kFixtureDialogMs = 3000;
     constexpr float kLootAtDistance = 2.5f * 53.66563f;   // world units, 2.5 tiles
 
     bool g_on = false;
     bool g_keyWasDown = false;
     uint32_t g_target = 0;          // the enemy we attack or the loot we go for, 0 for none
     bool g_looting = false;         // g_target is loot
-    DWORD g_lootSince = 0;          // when we went for it
     DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
+    float g_lootBest = 0.0f;        // the nearest the hero got to it, world units
+    DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
     DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
 
@@ -154,7 +163,7 @@ namespace
 
     bool acceptLoot(uint32_t id, void*)
     {
-        if (g_doneLoot.count(id))
+        if (g_doneLoot.count(id) || g_fixtures.count(id))
         {
             return false;
         }
@@ -195,15 +204,22 @@ namespace
         {
             return true;
         }
-        if (static_cast<int>(now - g_lootSince) > static_cast<int>(kLootGiveUpMs))
-        {
-            LOG("AutoAttack: loot {:x} not reached, left", id);
-            return true;
-        }
         const float dx = static_cast<float>(loot->x - hero->x), dy = static_cast<float>(loot->y - hero->y);
-        if (std::sqrt(dx * dx + dy * dy) > kLootAtDistance)
+        const float distance = std::sqrt(dx * dx + dy * dy);
+        // Progress: half a tile nearer than ever before.
+        if (!g_lootBestAt || distance < g_lootBest - 0.5f * 53.66563f)
+        {
+            g_lootBest = distance;
+            g_lootBestAt = now;
+        }
+        if (distance > kLootAtDistance)
         {
             g_lootAtSince = 0;
+            if (static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootStuckMs))
+            {
+                LOG("AutoAttack: loot {:x} not reached, left", id);
+                return true;
+            }
             return false;
         }
         if (!g_lootAtSince)
@@ -283,6 +299,19 @@ void AutoAttack::onFrame()
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         g_target = 0;
     }
+    // Our loot order opened a dialog (a signpost's text): close it and never go there again.
+    const bool justSent = static_cast<int>(now - g_sentAt) < static_cast<int>(kFixtureDialogMs);
+    if (g_on && foreground && g_looting && g_target && justSent && static_cast<int>(now - g_quietUntil) >= 0 &&
+        (UiNav::npcDialogOpen() || UiNav::modal()))
+    {
+        LOG("AutoAttack: loot {:x} opened a dialog, closed and left", g_target);
+        g_fixtures.insert(g_target);
+        Inject::key(VK_RETURN, true);
+        Inject::key(VK_RETURN, false);
+        g_target = 0;
+        g_looting = false;
+        return;
+    }
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
         static_cast<int>(now - g_quietUntil) < 0)
     {
@@ -317,8 +346,8 @@ void AutoAttack::onFrame()
         if (t.id != g_target || looting != g_looting)
         {
             LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", t.id);
-            g_lootSince = now;
             g_lootAtSince = 0;
+            g_lootBestAt = 0;
         }
         g_target = t.id;
         g_looting = looting;
