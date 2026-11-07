@@ -22,6 +22,7 @@ namespace
     // Ring sectors this module set the keep flag on (cleared again once they leave the ring).
     Sector* g_kept[kCount] = {};
     bool g_active = false;
+    cMapData* g_map = nullptr;
     uint32_t g_mismatchLogs = 0;
 
     using GetSector = Sector*(__fastcall*)(cMapData* self, void* edx, uint32_t id);
@@ -162,6 +163,7 @@ void WideSectors::update(cWorldView* view)
     static constexpr int kDr[8] = {-1, -1, -1, 0, 1, 1, 1, 0};
     static constexpr int kDc[8] = {-1, 0, 1, 1, 1, 0, -1, -1};
     cMapData* map = view->mapData;
+    g_map = map;
     for (int slot = 0; slot < kCount && map; ++slot)
     {
         if (inner3x3(slot))
@@ -231,4 +233,9 @@ void WideSectors::update(cWorldView* view)
 Sector* WideSectors::at(int slot)
 {
     return slot >= 0 && slot < kCount ? g_table[slot] : nullptr;
+}
+
+cMapData* WideSectors::map()
+{
+    return g_map;
 }

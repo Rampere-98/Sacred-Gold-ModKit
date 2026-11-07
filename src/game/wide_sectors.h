@@ -3,6 +3,7 @@
 
 namespace Sacred
 {
+    struct cMapData;
     struct cWorldView;
     struct Sector;
 }
@@ -32,6 +33,9 @@ namespace WideSectors
 
     // The sector at 5x5 index `slot` (row * 5 + column), nullptr if none is loaded there.
     Sacred::Sector* at(int slot);
+
+    // The map data of the view the table was last filled for, nullptr before that.
+    Sacred::cMapData* map();
 
     // The game's 3x3 index (row * 3 + column) as a 5x5 one.
     constexpr int fromGame(int slot) { return (slot / 3 + 1) * kSide + slot % 3 + 1; }
