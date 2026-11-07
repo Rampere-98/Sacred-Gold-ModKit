@@ -3,6 +3,7 @@
 #include "game/click_walk.h"
 #include "game/auto_potion.h"
 #include "game/controller.h"
+#include "game/modkit_menu.h"
 #include "game/d3d_stats.h"
 #include "game/device_proxy.h"
 #include "game/focus.h"
@@ -214,6 +215,7 @@ namespace
         AutoAttack::onFrame();
         ClickWalk::onFrame();
         AutoPotion::onFrame();
+        ModkitMenu::onFrame();
         logGameState();
         if (DeviceProxy* proxy = DeviceProxy::instance())
         {
