@@ -648,9 +648,14 @@ namespace
                 g_origTileRow(self, edx, device, &clipped, detail);
                 return;
             }
-            if (g_walk.cornerInside)
+            // With the wide grid the view reaches below the game's 3x3 even when its corner lies inside: the game
+            // then steps on into sector indices past 8 (sector 10 for the row under its bottom-left sector), which
+            // name another sector of the 5x5 grid and draw its ground in the wrong place. Only rows the game keeps
+            // in its 3x3 are its own; the others are drawn where the anchor puts them.
+            if (g_walk.cornerInside && pos->sector >= 0 && pos->sector <= 8)
             {
-                // The game's walk is right whenever its corner is: this would be a bug here, keep the game's row.
+                // The game's walk is right whenever its corner is and it stays in its sectors: this would be a bug
+                // here, keep the game's row.
                 if (g_walkMismatchLogs < 10)
                 {
                     ++g_walkMismatchLogs;
