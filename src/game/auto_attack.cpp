@@ -348,8 +348,10 @@ namespace
                 continue;
             }
             const auto last = g_lastDistance.find(f.id);
-            const bool closing = last != g_lastDistance.end() && last->second - d > 12.0f;
-            if (d < range * 0.45f || closing)
+            // Closing in from afar; in the melee everyone shuffles about, which says nothing.
+            const bool close = d < range * 0.45f;
+            const bool closing = !close && last != g_lastDistance.end() && last->second - d > 12.0f;
+            if (close || closing)
             {
                 threat = true;
             }
@@ -364,7 +366,8 @@ namespace
             }
             if (current)
             {
-                cost *= 0.7f;       // no flitting between enemies
+                // Stay on it: a player finishes the enemy they fight, unless another is far nearer.
+                cost *= 0.4f;
             }
             if (!enemy || cost < enemyCost)
             {
