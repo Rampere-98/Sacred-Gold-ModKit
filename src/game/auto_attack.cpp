@@ -118,8 +118,9 @@ namespace
         int count = 0;
     };
     std::unordered_map<uint32_t, LootFailure> g_lootFailures;
-    constexpr int kLootTries = 3;
-    constexpr DWORD kLootRetryMs = 15000;
+    // Not reached (behind a fence, across a river): tried again a minute later, once.
+    constexpr int kLootTries = 2;
+    constexpr DWORD kLootRetryMs = 60000;
 
     bool lootBlocked(uint32_t id, DWORD now)
     {
@@ -141,6 +142,8 @@ namespace
     // Fixtures the game ranks as ground items (signposts, plaques: cSpecial3D like some loot) whose click opened a
     // dialog; they keep their ids, so they stay here.
     std::unordered_set<uint32_t> g_fixtures;
+    // Loot the hero stood at and that stayed: an opened container, an item that did not fit. Never gone for again.
+    std::unordered_set<uint32_t> g_lootDone;
 
     // The hero gets no nearer to the loot for this long: it cannot reach it (behind a fence, in a house).
     constexpr DWORD kLootStuckMs = 3500;
@@ -187,7 +190,7 @@ namespace
 
     bool acceptLoot(uint32_t id, void*)
     {
-        if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id))
+        if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id) || g_lootDone.count(id))
         {
             return false;
         }
@@ -590,7 +593,18 @@ namespace
                 }
                 return;
             }
-            lootFailed(g_target, now);
+            if (g_lootAtSince)
+            {
+                if (g_lootDone.size() > 4096)
+                {
+                    g_lootDone.clear();
+                }
+                g_lootDone.insert(g_target);
+            }
+            else
+            {
+                lootFailed(g_target, now);
+            }
             g_target = 0;
         }
         AimAssist::Target next;
@@ -624,6 +638,11 @@ namespace
     DWORD g_autoCollectLookAt = 0;
     DWORD g_autoHurtAt = 0;
     int g_autoLastHealth = 0;
+    // Never in the way of the player: only a while after their last click, with the hero standing.
+    constexpr DWORD kAutoCollectIdleMs = 2500;
+    constexpr DWORD kAutoCollectStillMs = 1000;
+    DWORD g_autoMovedAt = 0;
+    int32_t g_autoHeroX = 0, g_autoHeroY = 0;
 
     bool underAttack()
     {
@@ -657,7 +676,17 @@ namespace
             }
             g_autoLastHealth = health;
         }
-        if (static_cast<int>(now - g_autoCollectLookAt) < 0)
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (hero && (hero->x != g_autoHeroX || hero->y != g_autoHeroY))
+        {
+            g_autoHeroX = hero->x;
+            g_autoHeroY = hero->y;
+            g_autoMovedAt = now;
+        }
+        if (static_cast<int>(now - g_autoCollectLookAt) < 0 ||
+            static_cast<int>(now - g_quietUntil) < static_cast<int>(kAutoCollectIdleMs) ||
+            static_cast<int>(now - g_autoMovedAt) < static_cast<int>(kAutoCollectStillMs))
         {
             return;
         }
@@ -822,7 +851,7 @@ void AutoAttack::onFrame()
         }
     }
     if (Config::autoAttack.autoCollect && !g_collecting && foreground && !Controller::drives() &&
-        Controller::worldRunning() && heroAlive() && static_cast<int>(now - g_quietUntil) >= 0)
+        Controller::worldRunning() && heroAlive())
     {
         autoCollect(now);
         if (g_collecting)
