@@ -24,6 +24,9 @@ namespace
     constexpr DWORD kMeasureMs = 1500;
     // A potion that healed nothing: none left (or the key did nothing); no new try for this long.
     constexpr DWORD kNoneLeftMs = 15000;
+    // Less than this gain over the measure is no potion: the smallest heals far more.
+    constexpr int kMinPotionHeal = 8;
+    constexpr int kMinPotionPercent = 6;
 
     int g_heal = 0;                 // health one potion heals, learned; 0 while unknown
     DWORD g_drankAt = 0;            // when the last potion was drunk, 0 for none
@@ -125,7 +128,8 @@ void AutoPotion::onFrame()
         }
         g_measuring = false;
         const int gained = g_bestAfter - g_healthBefore;
-        if (gained > 0)
+        // A few points are the hero's own regeneration, not a potion (none left, or Space did nothing).
+        if (gained >= std::max(kMinPotionHeal, maximum * kMinPotionPercent / 100))
         {
             // At full health the potion heals no further: only a gain short of the maximum is its full amount.
             if (g_bestAfter < maximum || gained > g_heal)
@@ -138,7 +142,8 @@ void AutoPotion::onFrame()
         else
         {
             g_noneLeftUntil = now + kNoneLeftMs;
-            LOG("AutoPotion: the potion healed nothing (none left?), next try in {} s", kNoneLeftMs / 1000);
+            LOG("AutoPotion: the potion healed nothing ({} is regeneration; none left?), next try in {} s", gained,
+                kNoneLeftMs / 1000);
         }
     }
 
