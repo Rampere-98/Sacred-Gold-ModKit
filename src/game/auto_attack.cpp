@@ -117,6 +117,19 @@ namespace
         return true;
     }
 
+    // What the bookkeeping below keys loot by: an object's id, a fixed thing's tile (the game drops a used hiding
+    // place from the table, which moves the later ones down: their ids change).
+    uint32_t lootKey(uint32_t id)
+    {
+        int32_t x = 0, y = 0;
+        if (!isFixed(id) || !fixedPosition(id, x, y))
+        {
+            return id;
+        }
+        const uint32_t tx = static_cast<uint32_t>(x / kFixedTile) & 0x7FFF, ty = static_cast<uint32_t>(y / kFixedTile) & 0xFFFF;
+        return kFixedId | (tx << 16) | ty;
+    }
+
     bool fixedUsable(uint32_t id)
     {
         const uint8_t* record = fixedRecord(id);
@@ -188,6 +201,7 @@ namespace
 
     bool lootBlocked(uint32_t id, DWORD now)
     {
+        id = lootKey(id);
         const auto it = g_lootFailures.find(id);
         return it != g_lootFailures.end() &&
                (it->second.count >= kLootTries || static_cast<int>(now - it->second.retryAt) < 0);
@@ -195,6 +209,7 @@ namespace
 
     void lootFailed(uint32_t id, DWORD now)
     {
+        id = lootKey(id);
         if (g_lootFailures.size() > 1024)
         {
             g_lootFailures.clear();
@@ -257,7 +272,7 @@ namespace
 
     bool acceptLoot(uint32_t id, void*)
     {
-        if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id) || g_lootDone.count(id))
+        if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id) || g_lootDone.count(lootKey(id)))
         {
             return false;
         }
@@ -302,7 +317,7 @@ namespace
             fixedPosition(id, x, y);
             const double dx = x - hero->x, dy = y - hero->y;
             if (std::abs(dx) > reach || std::abs(dy) > reach || dx * dx + dy * dy >= best ||
-                lootBlocked(id, GetTickCount()) || g_lootDone.count(id))
+                lootBlocked(id, GetTickCount()) || g_lootDone.count(lootKey(id)))
             {
                 continue;
             }
@@ -740,7 +755,7 @@ namespace
             if (g_target && heroAlive())
             {
                 LOG("AutoAttack: loot {:x} opened a window, left for good", g_target);
-                g_lootDone.insert(g_target);
+                g_lootDone.insert(lootKey(g_target));
             }
             endCollect("no hero or world");
             return;
@@ -804,7 +819,7 @@ namespace
                 {
                     g_lootDone.clear();
                 }
-                g_lootDone.insert(g_target);
+                g_lootDone.insert(lootKey(g_target));
             }
             else
             {
