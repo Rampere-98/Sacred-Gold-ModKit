@@ -63,8 +63,8 @@ namespace
     };
 
     // What the object is, by its own class (cached per vtable). Every cItemBase has a class of its own: the ones
-    // the hero can carry, cChest3D for containers (it derives from cItemBase too) and others such as cBsItem3D for
-    // world fixtures (signposts and the like), which a click would only open a dialog for.
+    // the hero can carry, cChest3D for containers (it derives from cItemBase too) and others for world fixtures
+    // (cSpecial3D: signposts and plaques, whose text a click opens; cBsItem3D).
     Loot lootOf(const cObject* object)
     {
         static std::unordered_map<const void*, Loot> cache;
@@ -74,8 +74,7 @@ namespace
             return it->second;
         }
         static constexpr const char* kItems[] = {".?AVcArmor3D@@", ".?AVcArrow3D@@", ".?AVcPotion3D@@",
-            ".?AVcRing3D@@", ".?AVcScroll3D@@", ".?AVcShield3D@@", ".?AVcWeapon3D@@", ".?AVcItemUpgrade@@",
-            ".?AVcSpecial3D@@"};
+            ".?AVcRing3D@@", ".?AVcScroll3D@@", ".?AVcShield3D@@", ".?AVcWeapon3D@@", ".?AVcItemUpgrade@@"};
         Loot loot = Loot::None;
         const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(vtable)[-1];
         const char* name = locator && locator->type ? locator->type->name : "?";
