@@ -266,6 +266,12 @@ namespace
         {
             return false;
         }
+        // Mounted, a click on a creature goes to the rider, not the mount (seen in the orders the world mouse
+        // handler gives): the horse would only walk up to it.
+        if (cCreature* hero = objects->hero(); hero && hero != self && target->asCreature())
+        {
+            self = hero;
+        }
         UseOrder order;
         order.target = id;
         order.x = target->x;
