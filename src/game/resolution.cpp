@@ -1,6 +1,7 @@
 #include "game/resolution.h"
 #include "game/focus.h"
 #include "game/ui_canvas.h"
+#include "game/wide_sectors.h"
 #include "config/ddraw.h"
 #include "config/display.h"
 #include "config/render.h"
@@ -525,15 +526,34 @@ namespace
 
     decltype(Addr::cWorldView_initRowWalk)::Ptr g_origInitRowWalk = nullptr;
 
+    // Loaded sectors per side (WideSectors: 5x5 around the game's 3x3) and the tile where the game's 3x3 starts.
+    int gridSide()
+    {
+        return WideSectors::active() ? WideSectors::kSide : 3;
+    }
+
+    int gridInner()
+    {
+        return WideSectors::active() ? WideSectors::kInner : 0;
+    }
+
+    // A row position of the game's walk (3x3 indices) in the loaded tiles of the grid.
     bool loadedTile(const RowPos& p, int& row, int& col)
     {
         if (p.sector < 0 || p.sector > 8 || p.tile < 0 || p.tile > 0xFFF)
         {
             return false;
         }
-        row = p.sector / 3 * 64 + p.tile / 64;
-        col = p.sector % 3 * 64 + p.tile % 64;
+        row = gridInner() + p.sector / 3 * 64 + p.tile / 64;
+        col = gridInner() + p.sector % 3 * 64 + p.tile % 64;
         return true;
+    }
+
+    // The game's 3x3 sector index as the patched row walk wants it.
+    int16_t gridSector(int16_t sector)
+    {
+        return WideSectors::active() && sector >= 0 && sector <= 8 ? static_cast<int16_t>(WideSectors::fromGame(sector))
+                                                                  : sector;
     }
 
     int floorDiv(int a, int b)
@@ -543,6 +563,7 @@ namespace
 
     void __fastcall hookInitRowWalk(cWorldView* self, void* edx, const int32_t* pos, cMapData* map)
     {
+        WideSectors::update(self);
         g_origInitRowWalk(self, edx, pos, map);
         RowPos* even = &self->rowEven;
         RowPos* odd = &self->rowOdd;
@@ -605,9 +626,11 @@ namespace
         const int col = g_walk.col + k + odd;
         int32_t& length = self->rowLength;
         const int32_t n0 = length;
+        const int side = gridSide();
+        const int maxTile = side * 64 - 1;
         // Tile j of the row is (row - j, col + j).
-        const int first = std::max({0, row - 191, -col});
-        const int last = std::min({n0 - 1, row, 191 - col});
+        const int first = std::max({0, row - maxTile, -col});
+        const int last = std::min({n0 - 1, row, maxTile - col});
         if (first > last)
         {
             return;
@@ -616,13 +639,13 @@ namespace
         clipped.x += static_cast<float>(first) * 96.0f;
         const int r = row - first;
         const int c = col + first;
-        clipped.sector = static_cast<int16_t>(r / 64 * 3 + c / 64);
+        clipped.sector = static_cast<int16_t>(r / 64 * side + c / 64);
         clipped.tile = static_cast<int16_t>(r % 64 * 64 + c % 64);
         if (first == 0 && last == n0 - 1)
         {
-            if (clipped.sector == pos->sector && clipped.tile == pos->tile)
+            if (clipped.sector == gridSector(pos->sector) && clipped.tile == pos->tile)
             {
-                g_origTileRow(self, edx, device, pos, detail);
+                g_origTileRow(self, edx, device, &clipped, detail);
                 return;
             }
             if (g_walk.cornerInside)
@@ -634,7 +657,9 @@ namespace
                     LOG("Row walk: row at y {} is sector {} tile {}, computed {} / {}", pos->y, pos->sector, pos->tile,
                         clipped.sector, clipped.tile);
                 }
-                g_origTileRow(self, edx, device, pos, detail);
+                RowPos game = *pos;
+                game.sector = gridSector(pos->sector);
+                g_origTileRow(self, edx, device, &game, detail);
                 return;
             }
         }
@@ -685,7 +710,9 @@ namespace
             }
             return;
         }
-        g_origTileRow(self, edx, device, pos, detail);
+        RowPos game = *pos;
+        game.sector = gridSector(pos->sector);
+        g_origTileRow(self, edx, device, &game, detail);
     }
 
     decltype(Addr::cTextureManager_init)::Ptr g_origTextureInit = nullptr;

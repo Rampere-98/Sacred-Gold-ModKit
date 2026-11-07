@@ -85,14 +85,24 @@ namespace Sacred
     struct Sector
     {
         static constexpr int size = 64;
+        // In flags (ENG 00634340): its tiles are loaded; a full sector cache unloads every sector without `keep`.
+        static constexpr uint32_t loaded = 0x10000;
+        static constexpr uint32_t keep = 0x800;
 
-        uint8_t _00[0x44];
+        uint32_t _00;
+        // Ids of the sectors around it (cMapData::getSector), by (tile row, column) offset: (-1,-1), (-1,0),
+        // (-1,+1), (0,+1), (+1,+1), (+1,0), (+1,-1), (0,-1).
+        uint32_t neighbors[8];
+        uint8_t _24[0x30 - 0x24];
+        uint32_t flags;             // loaded, keep
+        uint8_t _34[0x44 - 0x34];
         int32_t originX;            // world tile column of its tile 0
         int32_t originY;            // world tile row of its tile 0
         uint8_t _4c[0x6C - 0x4C];
         Tile* tiles;                // size x size, row * size + column
     };
     static_assert(offsetof(Sector, originX) == 0x44 && offsetof(Sector, originY) == 0x48);
+    static_assert(offsetof(Sector, neighbors) == 0x04 && offsetof(Sector, flags) == 0x30);
     static_assert(offsetof(Sector, tiles) == 0x6C);
 
     // A std::map<uint32_t, record> of the map data's record caches (as the exe's std::map lays it out).
@@ -173,7 +183,8 @@ namespace Sacred
 
         const Vtable* vtable;
         cMapData* mapData;
-        uint8_t _08[0x830 - 0x08];
+        Sector* center;             // the camera's sector: sectors[4], its neighbors' ids give the other eight
+        uint8_t _0c[0x830 - 0x0C];
         // Texture coordinates of the 18 tile cells of a 256x256 ground sheet: per cell 4 corners (left, top, bottom,
         // right) of (u, v). Base tiles use their definition's cell, blend layers the definition index % 18.
         float tileUvs[tileUvCells][8];

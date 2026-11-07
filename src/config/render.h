@@ -26,6 +26,9 @@ namespace Config
         // shader in a few draws per frame, instead of the game rebuilding and drawing every tile and blend layer each
         // frame (Direct3D 9 backend only).
         bool groundMesh = true;
+        // The map loaded and drawn 5x5 sectors (320x320 tiles) around the camera instead of 3x3: a 32:9 view zoomed out
+        // reaches past the 3x3 in its corners, which stayed black.
+        bool wideSectors = true;
         // Characters skinned in a vertex shader instead of by Granny on the CPU (Direct3D 9 backend only).
         bool gpuSkinning = true;
         // Skeletons not drawn in the last frames are posed every Nth frame instead of every frame (1 = every frame).
