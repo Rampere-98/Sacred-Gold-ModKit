@@ -1,5 +1,6 @@
 #include "game/frame_hooks.h"
 #include "game/controller.h"
+#include "game/modkit_menu.h"
 #include "game/d3d_stats.h"
 #include "game/device_proxy.h"
 #include "game/focus.h"
@@ -208,6 +209,7 @@ namespace
         GpuSkin::onFrame();
         Focus::onFrame();
         Controller::onFrame();
+        ModkitMenu::onFrame();
         logGameState();
         if (DeviceProxy* proxy = DeviceProxy::instance())
         {
