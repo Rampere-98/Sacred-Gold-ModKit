@@ -359,7 +359,8 @@ namespace
         bool urgent = false;    // under threat: acted on sooner
     };
 
-    // Which enemy to fight. Only those attacking the hero and those the player attacked (engaged); of them, weighing
+    // Which enemy to fight. Those attacking the hero and those the player attacked (engaged), and with Seek any other
+    // within Range; of them, weighing
     // the situation: those close, closing in or hurting the hero first, the badly wounded finished off, the current
     // one kept unless another is clearly better. Loot is not the auto attack's: the player collects with A.
     bool decide(DWORD now, Choice& out)
@@ -404,8 +405,9 @@ namespace
             const float d = std::sqrt(dx * dx + dy * dy);
             distances[f.id] = d;
             const bool current = f.id == g_target;
-            // Within the look's reach (1.5 Range): an archer shooting from afar is fought too.
-            if (!current && !engaged(objects, f.id, self, heroId))
+            // Engaged ones within the look's reach (1.5 Range): an archer shooting from afar is fought too. Seeking
+            // fights, any other enemy within Range as well.
+            if (!current && !engaged(objects, f.id, self, heroId) && (!Config::autoAttack.seek || d > range))
             {
                 continue;
             }
@@ -480,11 +482,14 @@ namespace
     int32_t g_heroX = 0, g_heroY = 0;
     int g_collectHealth = 0;
 
+    DWORD g_collectEndedAt = 0;    // see autoCollect
+
     void endCollect(const char* why)
     {
         if (g_collecting)
         {
             LOG("AutoAttack: collect over ({})", why);
+            g_collectEndedAt = GetTickCount();
         }
         g_collecting = false;
         g_collectRest = false;
@@ -609,6 +614,71 @@ namespace
         }
     }
 
+    // Collect always ([AutoAttack] AutoCollect): with loot within LootRange and no fight on, A is pressed for the
+    // player, the same collect as theirs. Not while enemies attack the hero, it was hurt lately or the auto attack
+    // has an enemy; a while after each collect, so loot it could not take is not gone for again and again.
+    constexpr DWORD kAutoCollectLookMs = 500;
+    constexpr DWORD kAutoCollectRestMs = 3000;
+    constexpr DWORD kAutoCollectHurtMs = 3000;
+    DWORD g_autoCollectLookAt = 0;
+    DWORD g_autoHurtAt = 0;
+    int g_autoLastHealth = 0;
+
+    bool underAttack()
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cEngine* engine = FrameHooks::engine();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!objects || !engine || !hero)
+        {
+            return true;
+        }
+        AimAssist::Foe foes[kMaxFoes];
+        const int count = AimAssist::enemies(static_cast<float>(Config::autoAttack.range) * 1.5f, foes, kMaxFoes);
+        for (int i = 0; i < count; ++i)
+        {
+            if (engaged(objects, foes[i].id, engine->controlled, hero->id))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void autoCollect(DWORD now)
+    {
+        int health = 0, maximum = 0;
+        if (AimAssist::heroHealth(health, maximum))
+        {
+            if (g_autoLastHealth && health < g_autoLastHealth)
+            {
+                g_autoHurtAt = now;
+            }
+            g_autoLastHealth = health;
+        }
+        if (static_cast<int>(now - g_autoCollectLookAt) < 0)
+        {
+            return;
+        }
+        g_autoCollectLookAt = now + kAutoCollectLookMs;
+        if (g_target || g_pending || Tactics::busy(now) ||
+            (g_collectEndedAt && static_cast<int>(now - g_collectEndedAt) < static_cast<int>(kAutoCollectRestMs)) ||
+            (g_autoHurtAt && static_cast<int>(now - g_autoHurtAt) < static_cast<int>(kAutoCollectHurtMs)))
+        {
+            return;
+        }
+        AimAssist::Target loot;
+        if (!AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, loot) ||
+            underAttack())
+        {
+            return;
+        }
+        LOG("AutoAttack: loot about ({:x}), collecting", loot.id);
+        Inject::key(kCollectKey, true);
+        Inject::key(kCollectKey, false);
+        startCollect(now);
+    }
+
     // The ModKit menu's section: what changes applies at once.
     void drawMenu()
     {
@@ -619,6 +689,16 @@ namespace
         }
         ImGui::SetItemTooltip("Lo mismo que la tecla F11.");
         ImGui::Checkbox("Activo al arrancar", &c.enabled);
+        int mode = c.seek ? 1 : 0;
+        ImGui::TextUnformatted("Contra quién lucha:");
+        ImGui::RadioButton("Solo quien me ataca (y a quien ataco yo)", &mode, 0);
+        ImGui::RadioButton("Buscar combate (cualquier enemigo en el radio)", &mode, 1);
+        c.seek = mode == 1;
+        int collect = c.autoCollect ? 1 : 0;
+        ImGui::TextUnformatted("Recogida:");
+        ImGui::RadioButton("Solo al pulsar A", &collect, 0);
+        ImGui::RadioButton("Recoger siempre (sin combate cerca)", &collect, 1);
+        c.autoCollect = collect == 1;
         ImGui::Checkbox("Mejorar la recogida con A", &c.pickup);
         ImGui::SetItemTooltip("Tras la recogida del juego (tecla A), toma lo que quede en el radio y abre los cofres.");
         ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
@@ -632,7 +712,9 @@ namespace
     {
         const Config::AutoAttack& c = Config::autoAttack;
         ModkitMenu::write(ini, L"AutoAttack", L"Enabled", c.enabled);
+        ModkitMenu::write(ini, L"AutoAttack", L"Seek", c.seek);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
+        ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
         ModkitMenu::write(ini, L"AutoAttack", L"LootRange", c.lootRange);
         ModkitMenu::write(ini, L"AutoAttack", L"Pause", c.pauseMs);
@@ -733,6 +815,15 @@ void AutoAttack::onFrame()
         else
         {
             endCollect("the game's collect is done");
+        }
+    }
+    if (Config::autoAttack.autoCollect && !g_collecting && foreground && !Controller::drives() &&
+        Controller::worldRunning() && heroAlive() && static_cast<int>(now - g_quietUntil) >= 0)
+    {
+        autoCollect(now);
+        if (g_collecting)
+        {
+            return;
         }
     }
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||

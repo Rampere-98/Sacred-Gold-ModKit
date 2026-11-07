@@ -156,8 +156,10 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.enabled = readBool(ini, L"AutoAttack", L"Enabled", Config::autoAttack.enabled);
     Config::autoAttack.key = std::clamp(readInt(ini, L"AutoAttack", L"Key", Config::autoAttack.key), 1, 254);
     Config::autoAttack.range = std::clamp(readInt(ini, L"AutoAttack", L"Range", Config::autoAttack.range), 50, 3000);
+    Config::autoAttack.seek = readBool(ini, L"AutoAttack", L"Seek", Config::autoAttack.seek);
     Config::autoAttack.pauseMs = std::clamp(readInt(ini, L"AutoAttack", L"Pause", Config::autoAttack.pauseMs), 0, 10000);
     Config::autoAttack.pickup = readBool(ini, L"AutoAttack", L"Pickup", Config::autoAttack.pickup);
+    Config::autoAttack.autoCollect = readBool(ini, L"AutoAttack", L"AutoCollect", Config::autoAttack.autoCollect);
     Config::autoAttack.lootRange = std::clamp(readInt(ini, L"AutoAttack", L"LootRange", Config::autoAttack.lootRange), 50, 3000);
     Config::autoAttack.repeatMs = std::clamp(readInt(ini, L"AutoAttack", L"Repeat", Config::autoAttack.repeatMs), 0, 10000);
     Config::autoPotion.enabled = readBool(ini, L"AutoPotion", L"Enabled", Config::autoPotion.enabled);
@@ -202,9 +204,10 @@ void ConfigFile::load(const std::wstring& gameDir)
         Config::controller.enabled, Config::controller.deadzone, Config::controller.cursorSpeed, Config::controller.moveRadius,
         Config::controller.aimRange, Config::controller.aimCone, Config::controller.artClick, Config::controller.walk,
         Config::controller.prompts);
-    LOG("Config: AutoAttack Enabled={} Key={} Range={} Pause={} Repeat={} Pickup={} LootRange={}",
-        Config::autoAttack.enabled, Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs,
-        Config::autoAttack.repeatMs, Config::autoAttack.pickup, Config::autoAttack.lootRange);
+    LOG("Config: AutoAttack Enabled={} Key={} Range={} Seek={} Pause={} Repeat={} Pickup={} AutoCollect={} LootRange={}",
+        Config::autoAttack.enabled, Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.seek,
+        Config::autoAttack.pauseMs, Config::autoAttack.repeatMs, Config::autoAttack.pickup,
+        Config::autoAttack.autoCollect, Config::autoAttack.lootRange);
     LOG("Config: AutoPotion Enabled={} FirstPercent={} EmergencyPercent={} Interval={}", Config::autoPotion.enabled,
         Config::autoPotion.firstPercent, Config::autoPotion.emergencyPercent, Config::autoPotion.intervalMs);
     LOG("Config: Tactics Arts={} Slots={},{},{},{},{} Consumables={} UndeadDeath={} Mentor={} Antidote={} "
