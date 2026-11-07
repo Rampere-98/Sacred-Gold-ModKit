@@ -14,9 +14,11 @@
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <unordered_map>
 #include <unordered_set>
 
 using namespace Sacred;
@@ -94,17 +96,45 @@ namespace
         return loot;
     }
 
-    // Loot already dealt with: opened containers, items the hero stood at without picking them up (a full
-    // inventory) or could not reach.
-    std::unordered_set<uint32_t> g_doneLoot;
+    // Loot the hero failed at: opened containers, items it stood at without picking them up (a full inventory) or
+    // could not reach. Tried again later, a few times, as the hero may have been busy or the way blocked.
+    struct LootFailure
+    {
+        DWORD retryAt = 0;
+        int count = 0;
+    };
+    std::unordered_map<uint32_t, LootFailure> g_lootFailures;
+    constexpr int kLootTries = 3;
+    constexpr DWORD kLootRetryMs = 15000;
+
+    bool lootBlocked(uint32_t id, DWORD now)
+    {
+        const auto it = g_lootFailures.find(id);
+        return it != g_lootFailures.end() &&
+               (it->second.count >= kLootTries || static_cast<int>(now - it->second.retryAt) < 0);
+    }
+
+    void lootFailed(uint32_t id, DWORD now)
+    {
+        if (g_lootFailures.size() > 1024)
+        {
+            g_lootFailures.clear();
+        }
+        LootFailure& f = g_lootFailures[id];
+        ++f.count;
+        f.retryAt = now + kLootRetryMs * f.count;
+    }
     // Fixtures the game ranks as ground items (signposts, plaques: cSpecial3D like some loot) whose click opened a
     // dialog; they keep their ids, so they stay here.
     std::unordered_set<uint32_t> g_fixtures;
 
     // The hero gets no nearer to the loot for this long: it cannot reach it (behind a fence, in a house).
-    constexpr DWORD kLootStuckMs = 2500;
+    constexpr DWORD kLootStuckMs = 3500;
     // How long it may stand at the loot before we leave it.
-    constexpr DWORD kLootAtMs = 1500;
+    constexpr DWORD kLootAtMs = 3000;
+    // A loot order is given once (giving it again restarts the pick up, so gold farther than a second away was
+    // never taken); again only after this long without the hero getting nearer.
+    constexpr DWORD kLootNudgeMs = 1200;
     // A dialog that opens this soon after a loot order is that loot's.
     constexpr DWORD kFixtureDialogMs = 3000;
     constexpr float kLootAtDistance = 2.5f * 53.66563f;   // world units, 2.5 tiles
@@ -118,6 +148,12 @@ namespace
     DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
     DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
+    int g_lastHealth = 0;           // the hero's health on the last frame
+    DWORD g_hurtAt = 0;             // when it last lost health
+
+    // After the hero loses health, this long without looting: whoever hurts it (an archer, a caster out of Range)
+    // comes first.
+    constexpr DWORD kHurtMs = 4000;
 
     // The physical state: SacredBild's GetAsyncKeyState is not the game's patched import, so injected input and
     // the controller never show here.
@@ -139,15 +175,14 @@ namespace
         return AimAssist::heroHealth(health, maximum) && health > 0;
     }
 
-    // The current target if it is still there and within reach, else the nearest enemy in range.
-    bool chooseTarget(AimAssist::Target& t)
+    // The current target if it is still there and within reach, else the nearest enemy in range (`range` pixels).
+    bool chooseTarget(AimAssist::Target& t, float range)
     {
         float hx, hy;
         if (!AimAssist::hero(hx, hy))
         {
             return false;
         }
-        const float range = static_cast<float>(Config::autoAttack.range);
         if (g_target && AimAssist::locate(g_target, AimAssist::Kind::Enemy, t))
         {
             // Keep chasing it up to half again the range, then look for a closer one.
@@ -163,7 +198,7 @@ namespace
 
     bool acceptLoot(uint32_t id, void*)
     {
-        if (g_doneLoot.count(id) || g_fixtures.count(id))
+        if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id))
         {
             return false;
         }
@@ -181,14 +216,9 @@ namespace
     bool chooseLoot(AimAssist::Target& t)
     {
         const float range = static_cast<float>(Config::autoAttack.lootRange);
-        if (g_looting && g_target && !g_doneLoot.count(g_target) &&
-            AimAssist::findObject(range * 1.5f, &isCurrent, nullptr, t))
+        if (g_looting && g_target && AimAssist::findObject(range * 1.5f, &isCurrent, nullptr, t))
         {
             return true;
-        }
-        if (g_doneLoot.size() > 1024)
-        {
-            g_doneLoot.clear();
         }
         return AimAssist::findObject(range, &acceptLoot, nullptr, t);
     }
@@ -319,14 +349,32 @@ void AutoAttack::onFrame()
         return;
     }
 
-    // Enemies first; with none in range, the loot around.
+    // Whether the hero is under attack: it lost health lately.
+    int health = 0, maximum = 0;
+    AimAssist::heroHealth(health, maximum);
+    if (health < g_lastHealth)
+    {
+        g_hurtAt = now;
+    }
+    g_lastHealth = health;
+    const bool hurt = static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
+
+    // Enemies first; under attack, also those farther (as far as loot is looked for); with none, and none hurting
+    // the hero, the loot around.
+    const float range = static_cast<float>(Config::autoAttack.range);
+    const float hurtRange = std::max(range, static_cast<float>(Config::autoAttack.lootRange));
     AimAssist::Target t;
     bool looting = false;
-    if (!chooseTarget(t))
+    if (!chooseTarget(t, range) && !(hurt && chooseTarget(t, hurtRange)))
     {
+        if (hurt)
+        {
+            g_target = 0;
+            return;
+        }
         if (g_looting && g_target && lootDone(g_target, now))
         {
-            g_doneLoot.insert(g_target);
+            lootFailed(g_target, now);
             g_target = 0;
         }
         if (!Config::autoAttack.pickup || !chooseLoot(t))
@@ -336,10 +384,20 @@ void AutoAttack::onFrame()
         }
         looting = true;
     }
-    const int repeat = Config::autoAttack.repeatMs;
-    if (t.id == g_target && looting == g_looting && (repeat <= 0 || static_cast<int>(now - g_sentAt) < repeat))
+    if (t.id == g_target && looting == g_looting)
     {
-        return;
+        // Enemies: the order again every Repeat ms. Loot: only when the hero stalls.
+        const int repeat = Config::autoAttack.repeatMs;
+        const int sinceSent = static_cast<int>(now - g_sentAt);
+        // At the loot, the pick up may take a moment: once more only after twice the stall time.
+        const bool lootAgain = g_lootAtSince ? sinceSent > static_cast<int>(2 * kLootNudgeMs)
+                                             : static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs) &&
+                                                   sinceSent > static_cast<int>(kLootNudgeMs);
+        const bool again = looting ? lootAgain : repeat > 0 && sinceSent >= repeat;
+        if (!again)
+        {
+            return;
+        }
     }
     if (attack(t.id))
     {
@@ -347,7 +405,8 @@ void AutoAttack::onFrame()
         {
             LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", t.id);
             g_lootAtSince = 0;
-            g_lootBestAt = 0;
+            g_lootBestAt = now;
+            g_lootBest = 1e9f;
         }
         g_target = t.id;
         g_looting = looting;
