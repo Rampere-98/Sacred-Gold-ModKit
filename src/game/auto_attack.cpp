@@ -295,6 +295,48 @@ namespace
         return false;
     }
 
+    // The game's path finders search 64x64 tiles around the walker (ClickWalk): loot further out on a tile axis
+    // (a well across a river, 40 tiles up a 32:9 screen) is walked to first, with a walk order, which ClickWalk
+    // routes in legs; once within reach, the next order (lootDone's nudge when the hero stops) uses it.
+    constexpr double kTileSize = 53.66563;
+    constexpr int32_t kUseReach = static_cast<int32_t>(24 * kTileSize);
+
+    int32_t g_walkX = 0, g_walkY = 0;
+
+    // On the window's thread, as the player's clicks (HeroMove).
+    void walkThere(void*)
+    {
+        cEngine* engine = FrameHooks::engine();
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* self = engine && objects ? objects->creature(engine->controlled) : nullptr;
+        if (!self)
+        {
+            return;
+        }
+        cOrder order;
+        order.type = cOrder::move;
+        order.mode = cOrder::walk;
+        order.x = g_walkX;
+        order.y = g_walkY;
+        order.follow = 1;
+        engine->sendOrder(self, order);
+    }
+
+    // True if `self` is too far from (x, y) for the use order: a walk order went out instead.
+    bool walkFirst(cCreature* self, int32_t x, int32_t y)
+    {
+        if (std::abs(x - self->x) <= kUseReach && std::abs(y - self->y) <= kUseReach)
+        {
+            return false;
+        }
+        LOG("AutoAttack: loot at {},{} is far ({:.0f},{:.0f} tiles), walking there first", x, y,
+            (x - self->x) / kTileSize, (y - self->y) / kTileSize);
+        g_walkX = x;
+        g_walkY = y;
+        Inject::call(&walkThere, nullptr);
+        return true;
+    }
+
     // Orders the creature the mouse commands (the hero, or its mount) to attack, pick up or open `id`, as a click
     // on it does.
     bool attack(uint32_t id)
@@ -308,8 +350,7 @@ namespace
         cCreature* self = objects->creature(engine->controlled);
         if (self && isFixed(id))
         {
-            // As a click on it: the order 7 with its id and the world point under it (the middle of its rect,
-            // a little low, where it stands).
+            // As a click on it: the order 7 with its id and the world point under it (the middle of its rect).
             AimAssist::Target t;
             cWorldView* view = engine->worldView();
             if (!view || !AimAssist::locate(id, AimAssist::Kind::Interact, t))
@@ -320,6 +361,10 @@ namespace
             view->screenToWorld(static_cast<int>(t.x), static_cast<int>(t.y), point);
             g_fixedX = point.x;
             g_fixedY = point.y;
+            if (walkFirst(self, point.x, point.y))
+            {
+                return true;
+            }
             UseOrder order;
             order.target = id;
             order.x = point.x;
@@ -338,6 +383,10 @@ namespace
         if (cCreature* hero = objects->hero(); hero && hero != self && target->asCreature())
         {
             self = hero;
+        }
+        if (!target->asCreature() && walkFirst(self, target->x, target->y))
+        {
+            return true;
         }
         UseOrder order;
         order.target = id;
