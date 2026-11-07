@@ -215,7 +215,6 @@ namespace
         AutoAttack::onFrame();
         ClickWalk::onFrame();
         AutoPotion::onFrame();
-        ClickWalk::onFrame();
         ModkitMenu::onFrame();
         logGameState();
         if (DeviceProxy* proxy = DeviceProxy::instance())
