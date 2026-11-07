@@ -34,6 +34,10 @@ tabs, Start is Play. Text fields need the keyboard.
 | AutoAttack | Pickup | 1 | The hero also goes for loot, whichever of loot and enemy is nearer first (for 4 s after it is hurt, the enemies within `Range` come first): it picks up the items lying within `LootRange` (all that Alt shows on the ground) and opens chests and other containers (the same order a click gives). Loot it cannot take or reach (a full inventory, an opened container, behind a fence) is left and tried again later, up to three times; a signpost whose text opens is closed and never taken again. |
 | AutoAttack | LootRange | 800 | Screen pixels around the hero within which `Pickup` looks for loot. |
 | AutoAttack | Repeat | 1000 | The attack order is given again this often while the target lives; 0 = once per target. |
+| AutoPotion | Enabled | 1 | Drinks healing potions by itself (the game's Space key) once the hero misses as much health as a potion heals, learned from the health each potion gave. Only in the running game world, never while the chat line or a dialog is open. |
+| AutoPotion | FirstPercent | 50 | Before a potion's healing is known: drink once this percent of health is missing. |
+| AutoPotion | EmergencyPercent | 25 | Always drink at or below this percent of health. |
+| AutoPotion | Interval | 1500 | Milliseconds at least between two potions. |
 | Render | TextureBudgetMB | 0 | Texture memory the game may keep loaded; 0 = the game's value, at least 256. |
 | Render | Batch | 1 | Merge the world view's draw calls. |
 | Render | BatchNoClip | 1 | Merged draws skip Direct3D 7's software clipping; the GPU clips. |

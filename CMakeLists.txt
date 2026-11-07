@@ -73,6 +73,7 @@ set(DDRAW_SOURCES
   src/game/aim_assist.cpp
   src/game/auto_attack.cpp
   src/game/wide_sectors.cpp
+  src/game/auto_potion.cpp
   src/game/controller.cpp
   src/game/hero_move.cpp
   src/game/click_walk.cpp

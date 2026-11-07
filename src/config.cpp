@@ -1,5 +1,6 @@
 #include "config.h"
 #include "config/auto_attack.h"
+#include "config/auto_potion.h"
 #include "config/controller.h"
 #include "config/ddraw.h"
 #include "config/debug.h"
@@ -158,6 +159,10 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.pickup = readBool(ini, L"AutoAttack", L"Pickup", Config::autoAttack.pickup);
     Config::autoAttack.lootRange = std::clamp(readInt(ini, L"AutoAttack", L"LootRange", Config::autoAttack.lootRange), 50, 3000);
     Config::autoAttack.repeatMs = std::clamp(readInt(ini, L"AutoAttack", L"Repeat", Config::autoAttack.repeatMs), 0, 10000);
+    Config::autoPotion.enabled = readBool(ini, L"AutoPotion", L"Enabled", Config::autoPotion.enabled);
+    Config::autoPotion.firstPercent = std::clamp(readInt(ini, L"AutoPotion", L"FirstPercent", Config::autoPotion.firstPercent), 5, 95);
+    Config::autoPotion.emergencyPercent = std::clamp(readInt(ini, L"AutoPotion", L"EmergencyPercent", Config::autoPotion.emergencyPercent), 0, 90);
+    Config::autoPotion.intervalMs = std::clamp(readInt(ini, L"AutoPotion", L"Interval", Config::autoPotion.intervalMs), 250, 30000);
     Config::debug.d3dStats = readInt(ini, L"Debug", L"D3DStats", Config::debug.d3dStats) != 0;
     Config::debug.profiler = readInt(ini, L"Debug", L"Profiler", Config::debug.profiler) != 0;
     Config::debug.profilerIntervalUs = readInt(ini, L"Debug", L"ProfilerIntervalUs", Config::debug.profilerIntervalUs);
@@ -184,6 +189,8 @@ void ConfigFile::load(const std::wstring& gameDir)
     LOG("Config: AutoAttack Enabled={} Key={} Range={} Pause={} Repeat={} Pickup={} LootRange={}",
         Config::autoAttack.enabled, Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs,
         Config::autoAttack.repeatMs, Config::autoAttack.pickup, Config::autoAttack.lootRange);
+    LOG("Config: AutoPotion Enabled={} FirstPercent={} EmergencyPercent={} Interval={}", Config::autoPotion.enabled,
+        Config::autoPotion.firstPercent, Config::autoPotion.emergencyPercent, Config::autoPotion.intervalMs);
     const auto pos = [](const Config::Ui::Position& p) { return Fmt::format("{},{}", p.x, p.y); };
     LOG("Config: UI.Layout Taskbar={} Chat={} Inventory={} Equipment={} Stats={} Minimap={} Portraits={} Shops={}",
         pos(Config::ui.taskbar), pos(Config::ui.chat), pos(Config::ui.inventory), pos(Config::ui.equipment),

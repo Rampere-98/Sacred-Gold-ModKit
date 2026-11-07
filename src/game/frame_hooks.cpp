@@ -1,6 +1,7 @@
 #include "game/frame_hooks.h"
 #include "game/auto_attack.h"
 #include "game/click_walk.h"
+#include "game/auto_potion.h"
 #include "game/controller.h"
 #include "game/d3d_stats.h"
 #include "game/device_proxy.h"
@@ -212,6 +213,7 @@ namespace
         Controller::onFrame();
         AutoAttack::onFrame();
         ClickWalk::onFrame();
+        AutoPotion::onFrame();
         logGameState();
         if (DeviceProxy* proxy = DeviceProxy::instance())
         {
