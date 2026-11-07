@@ -5,18 +5,21 @@
 #include "game/controller.h"
 #include "game/focus.h"
 #include "game/frame_hooks.h"
+#include "game/modkit_menu.h"
 #include "game/ui_nav.h"
 #include "input/inject.h"
 #include "log.h"
 #include "sacred/engine.h"
 #include "sacred/object.h"
 
+#include <imgui.h>
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
 #include <cstring>
 #include <mutex>
+#include <string>
 #include <unordered_map>
 #include <unordered_set>
 
@@ -291,6 +294,34 @@ namespace
         handler(self, nullptr, &order);
         return true;
     }
+
+    // The ModKit menu's section: what changes applies at once.
+    void drawMenu()
+    {
+        Config::AutoAttack& c = Config::autoAttack;
+        if (ImGui::Checkbox("Activo ahora", &g_on))
+        {
+            LOG("AutoAttack: {} (menu)", g_on ? "on" : "off");
+        }
+        ImGui::SetItemTooltip("Lo mismo que la tecla F11.");
+        ImGui::Checkbox("Activo al arrancar", &c.enabled);
+        ImGui::Checkbox("Recoger objetos y abrir cofres", &c.pickup);
+        ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
+        ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 2000);
+        ImGui::SliderInt("Pausa tras tu clic (ms)", &c.pauseMs, 0, 3000);
+        ImGui::SliderInt("Repetir orden (ms, 0 = una vez)", &c.repeatMs, 0, 3000);
+    }
+
+    void saveMenu(const std::wstring& ini)
+    {
+        const Config::AutoAttack& c = Config::autoAttack;
+        ModkitMenu::write(ini, L"AutoAttack", L"Enabled", c.enabled);
+        ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
+        ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
+        ModkitMenu::write(ini, L"AutoAttack", L"LootRange", c.lootRange);
+        ModkitMenu::write(ini, L"AutoAttack", L"Pause", c.pauseMs);
+        ModkitMenu::write(ini, L"AutoAttack", L"Repeat", c.repeatMs);
+    }
 }
 
 void AutoAttack::install()
@@ -301,6 +332,7 @@ void AutoAttack::install()
         AimAssist::install();
     }
     g_on = Config::autoAttack.enabled;
+    ModkitMenu::add({"Ataque automático", &drawMenu, &saveMenu});
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
