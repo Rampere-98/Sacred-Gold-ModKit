@@ -14,7 +14,6 @@
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
-#include <algorithm>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -151,8 +150,7 @@ namespace
     int g_lastHealth = 0;           // the hero's health on the last frame
     DWORD g_hurtAt = 0;             // when it last lost health
 
-    // After the hero loses health, this long without looting: whoever hurts it (an archer, a caster out of Range)
-    // comes first.
+    // After the hero loses health, this long the enemies within Range come before any loot.
     constexpr DWORD kHurtMs = 4000;
 
     // The physical state: SacredBild's GetAsyncKeyState is not the game's patched import, so injected input and
@@ -359,15 +357,13 @@ void AutoAttack::onFrame()
     g_lastHealth = health;
     const bool hurt = static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
 
-    // The nearest enemy (under attack also those farther, as far as loot is looked for). While nothing hurts the
-    // hero, loot competes with it: whichever is nearer, with a margin for the one it already goes for so it does
-    // not switch back and forth. Under attack, no loot.
-    const float range = static_cast<float>(Config::autoAttack.range);
-    const float hurtRange = std::max(range, static_cast<float>(Config::autoAttack.lootRange));
+    // The nearest enemy within Range. While nothing hurts the hero, loot competes with it: whichever is nearer,
+    // with a margin for the one it already goes for so it does not switch back and forth. Under attack, the enemies
+    // around come first, and loot only once none is left.
     AimAssist::Target enemy, loot;
-    const bool haveEnemy = chooseTarget(enemy, range) || (hurt && chooseTarget(enemy, hurtRange));
+    const bool haveEnemy = chooseTarget(enemy, static_cast<float>(Config::autoAttack.range));
     bool haveLoot = false;
-    if (!hurt && Config::autoAttack.pickup)
+    if (!(hurt && haveEnemy) && Config::autoAttack.pickup)
     {
         if (g_looting && g_target && lootDone(g_target, now))
         {
