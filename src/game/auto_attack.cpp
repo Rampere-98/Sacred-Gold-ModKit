@@ -782,8 +782,55 @@ void AutoAttack::install()
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
 
+namespace
+{
+    // DIAG: every order a creature's handler (vtable +0x18) gets, logged with its bytes.
+    using RawHandler = void(__fastcall*)(void* self, void* edx, const uint8_t* order);
+    RawHandler g_diagOrig = nullptr;
+    uint32_t g_diagLogs = 0;
+
+    void __fastcall diagHandler(void* self, void* edx, const uint8_t* order)
+    {
+        if (g_diagLogs < 400)
+        {
+            ++g_diagLogs;
+            const uint32_t id = *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self) + 0x0C);
+            std::string hex;
+            for (int i = 4; i < 0x44; i += 4)
+            {
+                hex += Fmt::format("{:08x} ", *reinterpret_cast<const uint32_t*>(order + i));
+            }
+            LOG("DIAG order to {:x} (player btn {}): {}", id, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) ? 1 : 0, hex);
+        }
+        g_diagOrig(self, edx, order);
+    }
+
+    void diagPatch(cObject* hero)
+    {
+        static bool done = false;
+        if (done || !hero)
+        {
+            return;
+        }
+        done = true;
+        auto** slot = reinterpret_cast<void**>(const_cast<void*>(reinterpret_cast<const void*>(hero->vtable))) + 6;
+        DWORD old = 0;
+        if (VirtualProtect(slot, sizeof(void*), PAGE_READWRITE, &old))
+        {
+            g_diagOrig = reinterpret_cast<RawHandler>(*slot);
+            *slot = reinterpret_cast<void*>(&diagHandler);
+            VirtualProtect(slot, sizeof(void*), old, &old);
+            LOG("DIAG: order handler {} patched", static_cast<void*>(g_diagOrig));
+        }
+    }
+}
+
 void AutoAttack::onFrame()
 {
+    if (cObjectManager* m = cObjectManager::instance())
+    {
+        diagPatch(m->hero());
+    }
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
     const std::unique_lock lock(frameLock, std::try_to_lock);
