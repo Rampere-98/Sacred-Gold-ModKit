@@ -1,4 +1,5 @@
 #include "game/frame_hooks.h"
+#include "game/auto_attack.h"
 #include "game/controller.h"
 #include "game/d3d_stats.h"
 #include "game/device_proxy.h"
@@ -208,6 +209,7 @@ namespace
         GpuSkin::onFrame();
         Focus::onFrame();
         Controller::onFrame();
+        AutoAttack::onFrame();
         logGameState();
         if (DeviceProxy* proxy = DeviceProxy::instance())
         {

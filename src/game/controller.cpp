@@ -1336,6 +1336,23 @@ bool Controller::hideGameCursor(uintptr_t caller)
     return !(caller && caller == Addr::worldCursorSpecialRenderReturn && g_focusCursor.load(std::memory_order_relaxed));
 }
 
+void Controller::pointAt(int x, int y, DWORD ms)
+{
+    g_override = pack(x, y);
+    g_overrideUntil = GetTickCount() + ms;
+    g_overrideOn = true;
+}
+
+bool Controller::drives()
+{
+    return g_drive.load(std::memory_order_relaxed);
+}
+
+bool Controller::inGameWorld()
+{
+    return detect() == Context::Game;
+}
+
 void Controller::clickAt(int x, int y)
 {
     g_override = pack(x, y);

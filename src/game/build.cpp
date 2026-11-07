@@ -1,5 +1,6 @@
 #include "game/build.h"
 #include "game/click_walk.h"
+#include "game/auto_attack.h"
 #include "game/controller.h"
 #include "game/d3d_stats.h"
 #include "game/fast_math.h"
@@ -100,6 +101,7 @@ void Sacred::installHooks()
     UiAnchor::install();
     Overlay::install();
     Controller::install();
+    AutoAttack::install();
     ClickWalk::install();
     OptionsScreen::install();
     Movie::install();
