@@ -1,4 +1,31 @@
-# SacredBild
+# Sacred Gold ModKit
+
+*English summary: a fork of [SacredBild](https://github.com/kirides/sacred-bild) (GPL-3). The `main` branch is the
+main body, SacredBild as it is; every `mod/*` branch adds one mod on top of it, and `modkit` merges them all. Each
+branch builds its own `ddraw.dll`.*
+
+El **cuerpo principal** es SacredBild tal cual (rama `main`): ultrawide, Direct3D 9, UI escalada, mando. Cada **mod**
+es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los junta todos.
+
+| Rama | Mod | Ajuste en `SacredBild.ini` |
+|---|---|---|
+| `main` | Cuerpo principal: SacredBild sin mods. | - |
+| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado: ataca al enemigo más cercano mientras no tocas el ratón (F11). | `[AutoAttack]` |
+| [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
+| [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
+| [`mod/click-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/click-walk) | Ruta automática: un clic lejano planifica la ruta (A*) sobre los sectores cargados y la recorre por tramos. Necesita `mod/wide-sectors` (parte de ella). | - |
+| [`modkit`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/modkit) | Todos los mods juntos. | todos |
+
+**Instalar:** el juego carga un solo `ddraw.dll`, así que se instala una rama: la del mod que quieras o `modkit` para
+todos. El workflow del repo (Actions → *Build*, *Run workflow* sobre la rama) genera el `ddraw.dll`; se copia en la
+carpeta del juego con `SacredBild.ini` y `SacredBild\` como en SacredBild.
+
+**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini, y después
+merge en `modkit`. Notas de ingeniería inversa y herramientas: [sacred-gold-ultrawide](https://github.com/Rampere-98/sacred-gold-ultrawide).
+
+---
+
+## SacredBild (cuerpo principal)
 
 > **AI disclosure:** SacredBild is developed with an AI coding assistant (Anthropic's Claude). Most of the code,
 > the reverse engineering notes and this documentation were written with it, at the maintainer's direction; the
