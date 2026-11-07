@@ -198,17 +198,6 @@ namespace
         return id == g_target;
     }
 
-    // The loot we go for while it is there, else the nearest within range.
-    bool chooseLoot(AimAssist::Target& t)
-    {
-        const float range = static_cast<float>(Config::autoAttack.lootRange);
-        if (g_looting && g_target && AimAssist::findObject(range * 1.5f, &isCurrent, nullptr, t))
-        {
-            return true;
-        }
-        return AimAssist::findObject(range, &acceptLoot, nullptr, t);
-    }
-
     // Whether the hero is done with the loot it goes for: it gives up after a while, or after standing at it (an
     // opened container stays, and so does an item when the inventory is full).
     bool lootDone(uint32_t id, DWORD now)
@@ -286,7 +275,6 @@ namespace
 
     DWORD g_thinkAt = 0;            // the next look at the situation
     uint32_t g_pending = 0;         // the new aim not acted on yet, 0 for none
-    bool g_pendingLoot = false;
     DWORD g_actAt = 0;              // ... acted on from this tick
     int g_repeatMs = 1000;          // this target's repeat interval: Repeat with some spread
     int g_lastHealth = 0;
@@ -305,13 +293,12 @@ namespace
     struct Choice
     {
         uint32_t id = 0;
-        bool loot = false;
         bool urgent = false;    // under threat: acted on sooner
     };
 
-    // What to do now, weighing the situation. Enemies close, closing in or hurting the hero come before loot; with
-    // nothing threatening, whichever is nearer, loot or enemy; loot at the hero's feet is taken even mid-fight while
-    // the enemies are farther away. The current aim is kept unless another is clearly better.
+    // Which enemy to fight, weighing the situation: those close, closing in or hurting the hero first, the badly
+    // wounded finished off, the current one kept unless another is clearly better. Loot is not the auto attack's:
+    // the player collects with A (see collectFrame).
     bool decide(DWORD now, Choice& out)
     {
         float hx, hy;
@@ -343,7 +330,7 @@ namespace
             const float dx = f.x - hx, dy = f.y - hy;
             const float d = std::sqrt(dx * dx + dy * dy);
             distances[f.id] = d;
-            const bool current = !g_looting && f.id == g_target;
+            const bool current = f.id == g_target;
             if (d > range && !current)
             {
                 continue;
@@ -379,36 +366,10 @@ namespace
         }
         g_lastDistance = std::move(distances);
 
-        AimAssist::Target loot;
-        bool haveLoot = Config::autoAttack.pickup && chooseLoot(loot);
-        float lootCost = 0.0f;
-        if (haveLoot)
-        {
-            const float dx = loot.x - hx, dy = loot.y - hy;
-            lootCost = std::sqrt(dx * dx + dy * dy);
-            const bool current = g_looting && loot.id == g_target;
-            if (current)
-            {
-                lootCost *= 0.7f;
-            }
-            if (enemy && threat)
-            {
-                // Under threat only what lies at the hero's feet with the enemies farther away, and the pick up
-                // the hero is already stooping for.
-                const bool atFeet = lootCost < enemyDistance * 0.35f && lootCost < range * 0.3f;
-                const bool stooping = current && g_lootAtSince && !hurt;
-                haveLoot = atFeet || stooping;
-            }
-        }
         bool chosen = false;
-        if (haveLoot && (!enemy || lootCost <= enemyCost))
+        if (enemy)
         {
-            out = {loot.id, true, false};
-            chosen = true;
-        }
-        else if (enemy)
-        {
-            out = {enemy, false, threat};
+            out = {enemy, threat};
             chosen = true;
         }
 
@@ -419,7 +380,7 @@ namespace
         situation.maxHealth = maximum;
         situation.hurt = hurt;
         situation.threat = threat;
-        situation.target = chosen && !out.loot ? out.id : (!g_looting ? g_target : 0);
+        situation.target = chosen ? out.id : g_target;
         situation.foes = foes;
         situation.count = count;
         situation.hx = hx;
@@ -427,6 +388,151 @@ namespace
         situation.range = range;
         Tactics::think(situation);
         return chosen;
+    }
+
+    // A: the game's own collect (the taskbar's collect button, order 0x113: the hero gathers the items around it).
+    // Improved: when the game's collect is done, what is left within LootRange (items it did not reach, chests and
+    // other containers, which it never opens) is taken one by one, each with the order a click on it gives. The auto
+    // attack waits meanwhile; a click of the player's, a hit taken or the A key again ends it.
+    constexpr int kCollectKey = 'A';
+    constexpr DWORD kCollectGameMinMs = 700;    // the game's collect gets this long to start moving the hero
+    constexpr DWORD kCollectStillMs = 900;      // ... and is done once the hero stands still this long
+    constexpr DWORD kCollectMaxMs = 30000;
+    bool g_collectKeyWasDown = false;
+    bool g_collecting = false;
+    bool g_collectRest = false;     // the game's collect is done: taking the rest
+    DWORD g_collectStart = 0;
+    DWORD g_heroMovedAt = 0;
+    int32_t g_heroX = 0, g_heroY = 0;
+    int g_collectHealth = 0;
+
+    void endCollect(const char* why)
+    {
+        if (g_collecting)
+        {
+            LOG("AutoAttack: collect over ({})", why);
+        }
+        g_collecting = false;
+        g_collectRest = false;
+        g_target = 0;
+        g_looting = false;
+        g_pending = 0;
+    }
+
+    void startCollect(DWORD now)
+    {
+        g_collecting = true;
+        g_collectRest = false;
+        g_collectStart = now;
+        g_heroMovedAt = now;
+        g_target = 0;
+        g_looting = false;
+        g_pending = 0;
+        int maximum = 0;
+        g_collectHealth = 0;
+        AimAssist::heroHealth(g_collectHealth, maximum);
+        Tactics::reset();
+        LOG("AutoAttack: collect (A)");
+    }
+
+    // Whether the hero stopped moving lately (the game's collect done), keeping track of its position.
+    bool heroStill(DWORD now)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (hero && (hero->x != g_heroX || hero->y != g_heroY))
+        {
+            g_heroX = hero->x;
+            g_heroY = hero->y;
+            g_heroMovedAt = now;
+        }
+        return static_cast<int>(now - g_collectStart) >= static_cast<int>(kCollectGameMinMs) &&
+               static_cast<int>(now - g_heroMovedAt) >= static_cast<int>(kCollectStillMs);
+    }
+
+    void collectFrame(DWORD now)
+    {
+        if (!Controller::worldRunning() || !heroAlive())
+        {
+            endCollect("no hero or world");
+            return;
+        }
+        if (static_cast<int>(now - g_collectStart) > static_cast<int>(kCollectMaxMs))
+        {
+            endCollect("time out");
+            return;
+        }
+        int health = 0, maximum = 0;
+        if (AimAssist::heroHealth(health, maximum))
+        {
+            if (g_collectRest && g_collectHealth && health < g_collectHealth)
+            {
+                endCollect("hit");
+                return;
+            }
+            g_collectHealth = health;
+        }
+
+        // First the game's own collect, until the hero stands still.
+        if (!g_collectRest)
+        {
+            if (!heroStill(now))
+            {
+                return;
+            }
+            g_collectRest = true;
+            LOG("AutoAttack: the game's collect is done, taking the rest");
+        }
+
+        // Then the rest, one at a time: no new order while the hero stoops for one.
+        if (static_cast<int>(now - g_pickupUntil) < 0)
+        {
+            return;
+        }
+        if (g_target)
+        {
+            AimAssist::Target current;
+            const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
+            if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
+            {
+                g_target = 0;           // gone from the ground: being picked up
+                g_pickupUntil = now + kPickupMs;
+                return;
+            }
+            if (!lootDone(g_target, now))
+            {
+                // Again only when the hero stalls: a new order restarts the pick up.
+                const int sinceSent = static_cast<int>(now - g_sentAt);
+                const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
+                if (!g_lootAtSince && stalled && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
+                {
+                    g_sentAt = now;
+                }
+                return;
+            }
+            lootFailed(g_target, now);
+            g_target = 0;
+        }
+        AimAssist::Target next;
+        if (!AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, next))
+        {
+            endCollect("nothing left");
+            return;
+        }
+        if (attack(next.id))
+        {
+            LOG("AutoAttack: collect {:x}", next.id);
+            g_target = next.id;
+            g_looting = true;
+            g_sentAt = now;
+            g_lootAtSince = 0;
+            g_lootBestAt = now;
+            g_lootBest = 1e9f;
+        }
+        else
+        {
+            lootFailed(next.id, now);
+        }
     }
 
     // The ModKit menu's section: what changes applies at once.
@@ -439,7 +545,8 @@ namespace
         }
         ImGui::SetItemTooltip("Lo mismo que la tecla F11.");
         ImGui::Checkbox("Activo al arrancar", &c.enabled);
-        ImGui::Checkbox("Recoger objetos y abrir cofres", &c.pickup);
+        ImGui::Checkbox("Mejorar la recogida con A", &c.pickup);
+        ImGui::SetItemTooltip("Tras la recogida del juego (tecla A), toma lo que quede en el radio y abre los cofres.");
         ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
         ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 2000);
         ImGui::SliderInt("Pausa tras tu clic (ms)", &c.pauseMs, 0, 3000);
@@ -498,14 +605,28 @@ void AutoAttack::onFrame()
     if (foreground && playerClicks())
     {
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
-        g_target = 0;
-        g_pending = 0;
+        endCollect("player's click");
         Tactics::reset();
     }
+
+    // A: the game collects; we follow it up, and the auto attack waits. A again while taking the rest ends it.
+    const bool collectDown = foreground && physicallyDown(kCollectKey) && !physicallyDown(VK_CONTROL) &&
+                             !physicallyDown(VK_MENU);
+    if (collectDown && !g_collectKeyWasDown && Controller::worldRunning())
+    {
+        if (g_collecting && g_collectRest)
+        {
+            endCollect("A again");
+        }
+        else if (!g_collecting)
+        {
+            startCollect(now);
+        }
+    }
+    g_collectKeyWasDown = collectDown;
     // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
     // flags did not give away, and the dialog its text. Close it and never go there again.
-    if (g_on && foreground && g_looting && g_target && static_cast<int>(now - g_quietUntil) >= 0 &&
-        UiNav::npcDialogOpen())
+    if (g_collecting && foreground && g_looting && g_target && UiNav::npcDialogOpen())
     {
         LOG("AutoAttack: loot {:x} opened a dialog, closed and left", g_target);
         g_fixtures.insert(g_target);
@@ -514,6 +635,26 @@ void AutoAttack::onFrame()
         g_target = 0;
         g_looting = false;
         return;
+    }
+    if (g_collecting)
+    {
+        if (!foreground)
+        {
+            endCollect("focus lost");
+        }
+        else if (Config::autoAttack.pickup)
+        {
+            collectFrame(now);
+            return;
+        }
+        else if (!heroStill(now))
+        {
+            return;     // only the game's collect, which the auto attack must not cut short
+        }
+        else
+        {
+            endCollect("the game's collect is done");
+        }
     }
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
         static_cast<int>(now - g_quietUntil) < 0)
@@ -532,28 +673,6 @@ void AutoAttack::onFrame()
         return;
     }
 
-    // The loot under way: picked up (gone from the ground), or given up.
-    if (g_looting && g_target)
-    {
-        AimAssist::Target current;
-        const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
-        if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
-        {
-            // Gone from the ground: the hero is picking it up. Let it finish.
-            g_target = 0;
-            g_looting = false;
-            g_pending = 0;
-            g_pickupUntil = now + kPickupMs;
-            return;
-        }
-        if (lootDone(g_target, now))
-        {
-            lootFailed(g_target, now);
-            g_target = 0;
-            g_looting = false;
-        }
-    }
-
     // A look at the situation now and then, as a player glances around, not every frame.
     if (static_cast<int>(now - g_thinkAt) >= 0 || (!g_target && !g_pending))
     {
@@ -562,60 +681,48 @@ void AutoAttack::onFrame()
         if (!decide(now, choice))
         {
             g_target = 0;
-            g_looting = false;
             g_pending = 0;
             return;
         }
-        if (choice.id == g_target && choice.loot == g_looting)
+        if (choice.id == g_target)
         {
             g_pending = 0;
         }
-        else if (choice.id != g_pending || choice.loot != g_pendingLoot)
+        else if (choice.id != g_pending)
         {
             // A new aim: acted on after a moment, sooner under threat.
             g_pending = choice.id;
-            g_pendingLoot = choice.loot;
             g_actAt = now + (choice.urgent ? jitter(kReactUrgentMinMs, kReactUrgentMaxMs)
                                            : jitter(kReactMinMs, kReactMaxMs));
         }
     }
 
     uint32_t id = g_target;
-    bool looting = g_looting;
     if (g_pending && static_cast<int>(now - g_actAt) >= 0)
     {
         id = g_pending;
-        looting = g_pendingLoot;
         g_pending = 0;
     }
     if (!id)
     {
         return;
     }
-    if (id == g_target && looting == g_looting)
+    if (id == g_target)
     {
-        // Enemies: the order again about every Repeat ms. Loot: only when the hero stalls.
+        // The order again about every Repeat ms.
         const int sinceSent = static_cast<int>(now - g_sentAt);
-        // Never once the hero stands at it: a new order would cut its stooping short.
-        const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
-        const bool lootAgain = !g_lootAtSince && stalled && sinceSent > static_cast<int>(kLootNudgeMs);
-        const bool again = looting ? lootAgain : g_repeatMs > 0 && sinceSent >= g_repeatMs;
-        if (!again)
+        if (g_repeatMs <= 0 || sinceSent < g_repeatMs)
         {
             return;
         }
     }
     if (attack(id))
     {
-        if (id != g_target || looting != g_looting)
+        if (id != g_target)
         {
-            LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", id);
-            g_lootAtSince = 0;
-            g_lootBestAt = now;
-            g_lootBest = 1e9f;
+            LOG("AutoAttack: target {:x}", id);
         }
         g_target = id;
-        g_looting = looting;
         g_sentAt = now;
         const int repeat = Config::autoAttack.repeatMs;
         g_repeatMs = repeat > 0 ? repeat * static_cast<int>(jitter(80, 125)) / 100 : 0;
@@ -623,6 +730,5 @@ void AutoAttack::onFrame()
     else if (id == g_target)
     {
         g_target = 0;
-        g_looting = false;
     }
 }
