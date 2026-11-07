@@ -188,6 +188,10 @@ namespace
         return AimAssist::heroHealth(health, maximum) && health > 0;
     }
 
+    // Collecting by itself (AutoCollect): items only. Containers open windows (a storage chest in town), which only
+    // the player's own A should do.
+    bool g_itemsOnly = false;
+
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id) || g_lootDone.count(id))
@@ -196,7 +200,8 @@ namespace
         }
         cObjectManager* objects = cObjectManager::instance();
         cObject* object = objects ? objects->object(id) : nullptr;
-        return object && lootOf(object) != Loot::None;
+        const Loot loot = object ? lootOf(object) : Loot::None;
+        return loot == Loot::Item || (loot == Loot::Container && !g_itemsOnly);
     }
 
     bool isCurrent(uint32_t id, void*)
@@ -502,8 +507,9 @@ namespace
         g_pending = 0;
     }
 
-    void startCollect(DWORD now)
+    void startCollect(DWORD now, bool itemsOnly = false)
     {
+        g_itemsOnly = itemsOnly;
         g_collecting = true;
         g_collectRest = false;
         g_collectStart = now;
@@ -698,7 +704,11 @@ namespace
             return;
         }
         AimAssist::Target loot;
-        if (!AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, loot) ||
+        g_itemsOnly = true;
+        const bool found = AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr,
+            loot);
+        g_itemsOnly = false;
+        if (!found ||
             underAttack())
         {
             return;
@@ -706,7 +716,7 @@ namespace
         LOG("AutoAttack: loot about ({:x}), collecting", loot.id);
         Inject::key(kCollectKey, true);
         Inject::key(kCollectKey, false);
-        startCollect(now);
+        startCollect(now, true);
     }
 
     // The ModKit menu's section: what changes applies at once.
