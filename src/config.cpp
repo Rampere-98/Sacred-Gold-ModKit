@@ -1,4 +1,5 @@
 #include "config.h"
+#include "config/auto_potion.h"
 #include "config/controller.h"
 #include "config/ddraw.h"
 #include "config/debug.h"
@@ -149,6 +150,10 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::controller.artClick = readBool(ini, L"Controller", L"ArtClick", Config::controller.artClick);
     Config::controller.walk = readBool(ini, L"Controller", L"Walk", Config::controller.walk);
     Config::controller.prompts = readBool(ini, L"Controller", L"Prompts", Config::controller.prompts);
+    Config::autoPotion.enabled = readBool(ini, L"AutoPotion", L"Enabled", Config::autoPotion.enabled);
+    Config::autoPotion.firstPercent = std::clamp(readInt(ini, L"AutoPotion", L"FirstPercent", Config::autoPotion.firstPercent), 5, 95);
+    Config::autoPotion.emergencyPercent = std::clamp(readInt(ini, L"AutoPotion", L"EmergencyPercent", Config::autoPotion.emergencyPercent), 0, 90);
+    Config::autoPotion.intervalMs = std::clamp(readInt(ini, L"AutoPotion", L"Interval", Config::autoPotion.intervalMs), 250, 30000);
     Config::debug.d3dStats = readInt(ini, L"Debug", L"D3DStats", Config::debug.d3dStats) != 0;
     Config::debug.profiler = readInt(ini, L"Debug", L"Profiler", Config::debug.profiler) != 0;
     Config::debug.profilerIntervalUs = readInt(ini, L"Debug", L"ProfilerIntervalUs", Config::debug.profilerIntervalUs);
@@ -172,6 +177,8 @@ void ConfigFile::load(const std::wstring& gameDir)
         Config::controller.enabled, Config::controller.deadzone, Config::controller.cursorSpeed, Config::controller.moveRadius,
         Config::controller.aimRange, Config::controller.aimCone, Config::controller.artClick, Config::controller.walk,
         Config::controller.prompts);
+    LOG("Config: AutoPotion Enabled={} FirstPercent={} EmergencyPercent={} Interval={}", Config::autoPotion.enabled,
+        Config::autoPotion.firstPercent, Config::autoPotion.emergencyPercent, Config::autoPotion.intervalMs);
     const auto pos = [](const Config::Ui::Position& p) { return Fmt::format("{},{}", p.x, p.y); };
     LOG("Config: UI.Layout Taskbar={} Chat={} Inventory={} Equipment={} Stats={} Minimap={} Portraits={} Shops={}",
         pos(Config::ui.taskbar), pos(Config::ui.chat), pos(Config::ui.inventory), pos(Config::ui.equipment),

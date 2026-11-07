@@ -27,6 +27,10 @@ tabs, Start is Play. Text fields need the keyboard.
 | UI.Layout | Inventory | 0,4096 | |
 | UI.Layout | Stats, Equipment, Minimap | 4096,0 | |
 | UI.Layout | Portraits, Shops | 0,0 | Party portraits; blacksmith, merchant, combat art master, chest, cube and trade. |
+| AutoPotion | Enabled | 1 | Drinks healing potions by itself (the game's Space key) once the hero misses as much health as a potion heals, learned from the health each potion gave. Only in the running game world, never while the chat line or a dialog is open. |
+| AutoPotion | FirstPercent | 50 | Before a potion's healing is known: drink once this percent of health is missing. |
+| AutoPotion | EmergencyPercent | 25 | Always drink at or below this percent of health. |
+| AutoPotion | Interval | 1500 | Milliseconds at least between two potions. |
 | Render | TextureBudgetMB | 0 | Texture memory the game may keep loaded; 0 = the game's value, at least 256. |
 | Render | Batch | 1 | Merge the world view's draw calls. |
 | Render | BatchNoClip | 1 | Merged draws skip Direct3D 7's software clipping; the GPU clips. |
