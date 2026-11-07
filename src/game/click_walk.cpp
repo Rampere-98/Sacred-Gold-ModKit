@@ -498,11 +498,24 @@ namespace
         {
             return;
         }
-        const bool movedLittle =
-            std::max(std::abs(hero->x - g_legX), std::abs(hero->y - g_legY)) / kTileSize < kMovedTiles;
+        // Progress along the route, not movement: at a bridge the game's path finder walked the hero a few tiles
+        // off and back for each long leg.
+        size_t nearest = g_route.from;
+        int nearestD = INT_MAX;
+        const size_t limit = std::min(g_route.cells.size(), g_route.legEnd + 1);
+        for (size_t i = g_route.from; i < limit; ++i)
+        {
+            const int d = chebyshev(g_route.cells[i], at.x, at.y);
+            if (d < nearestD)
+            {
+                nearestD = d;
+                nearest = i;
+            }
+        }
+        const bool advanced = nearestD <= kOffRouteTiles && nearest >= g_route.from + kMovedTiles;
         Cell next{};
-        const bool stuck = stopped && movedLittle && toEnd > 2;
-        if (!stuck && !movedLittle)
+        const bool stuck = stopped && !advanced && toEnd > 2;
+        if (advanced)
         {
             g_route.legTiles = kLegTiles;
         }
