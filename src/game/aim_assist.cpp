@@ -206,47 +206,61 @@ bool AimAssist::find(Kind kind, float dirX, float dirY, float range, float cone,
     return found;
 }
 
+namespace
+{
+    // The creatures within `range` pixels of the hero, hostile or not, the hero left out.
+    int creatures(bool hostile, float range, AimAssist::Foe* out, int capacity)
+    {
+        cWorldView* view = worldView();
+        cCreature* hero = heroCreature();
+        float hx, hy;
+        if (!view || !hero || !AimAssist::hero(hx, hy))
+        {
+            return 0;
+        }
+        const uint32_t heroId = hero->id;
+        int count = 0;
+        scan(view, [&](const PickEntry& e) {
+            if (count >= capacity)
+            {
+                return false;
+            }
+            if (e.id == 0 || e.id == heroId || (e.id & 0x80000000u))
+            {
+                return true;
+            }
+            const float vx = e.centerX() - hx, vy = e.centerY() - hy;
+            if (vx * vx + vy * vy > range * range)
+            {
+                return true;
+            }
+            cCreature* creature = creatureOf(e.id);
+            if (!creature || isEnemy(hero, creature) != hostile)
+            {
+                return true;
+            }
+            for (int i = 0; i < count; ++i)
+            {
+                if (out[i].id == e.id)
+                {
+                    return true;    // a creature may have more than one pick rect
+                }
+            }
+            out[count++] = {e.id, e.centerX(), e.centerY(), creature->health, creature->maxHealth};
+            return true;
+        });
+        return count;
+    }
+}
+
 int AimAssist::enemies(float range, Foe* out, int capacity)
 {
-    cWorldView* view = worldView();
-    cCreature* hero = heroCreature();
-    float hx, hy;
-    if (!view || !hero || !AimAssist::hero(hx, hy))
-    {
-        return 0;
-    }
-    const uint32_t heroId = hero->id;
-    int count = 0;
-    scan(view, [&](const PickEntry& e) {
-        if (count >= capacity)
-        {
-            return false;
-        }
-        if (e.id == 0 || e.id == heroId || (e.id & 0x80000000u))
-        {
-            return true;
-        }
-        const float vx = e.centerX() - hx, vy = e.centerY() - hy;
-        if (vx * vx + vy * vy > range * range)
-        {
-            return true;
-        }
-        cCreature* creature = creatureOf(e.id);
-        if (!isEnemy(hero, creature))
-        {
-            return true;
-        }
-        for (int i = 0; i < count; ++i)
-        {
-            if (out[i].id == e.id)
-            {
-                return true;    // a creature may have more than one pick rect
-            }
-        }
-        out[count++] = {e.id, e.centerX(), e.centerY(), creature->health, creature->maxHealth};
-        return true;
-    });
-    return count;
+    return creatures(true, range, out, capacity);
+}
+
+int AimAssist::friends(float range, Foe* out, int capacity)
+{
+    return creatures(false, range, out, capacity);
 }
 
 bool AimAssist::findObject(float range, bool (*accept)(uint32_t id, void* context), void* context, Target& out)

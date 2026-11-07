@@ -8,6 +8,7 @@
 #include "config/net.h"
 #include "config/render.h"
 #include "config/screenshot.h"
+#include "config/tactics.h"
 #include "config/ui.h"
 #include "log.h"
 
@@ -157,6 +158,21 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.pickup = readBool(ini, L"AutoAttack", L"Pickup", Config::autoAttack.pickup);
     Config::autoAttack.lootRange = std::clamp(readInt(ini, L"AutoAttack", L"LootRange", Config::autoAttack.lootRange), 50, 3000);
     Config::autoAttack.repeatMs = std::clamp(readInt(ini, L"AutoAttack", L"Repeat", Config::autoAttack.repeatMs), 0, 10000);
+    {
+        Config::Tactics& t = Config::tactics;
+        t.arts = readBool(ini, L"Tactics", L"Arts", t.arts);
+        for (int i = 0; i < Config::Tactics::slotCount; ++i)
+        {
+            const std::wstring key = L"Slot" + std::to_wstring(i + 1);
+            t.slots[i] = Config::parseArt(readString(ini, L"Tactics", key.c_str(), Config::artKey(t.slots[i])).c_str());
+        }
+        t.consumables = readBool(ini, L"Tactics", L"Consumables", t.consumables);
+        t.undeadDeath = readBool(ini, L"Tactics", L"UndeadDeath", t.undeadDeath);
+        t.mentor = readBool(ini, L"Tactics", L"Mentor", t.mentor);
+        t.antidote = readBool(ini, L"Tactics", L"Antidote", t.antidote);
+        t.concentration = readBool(ini, L"Tactics", L"Concentration", t.concentration);
+        t.healHirelings = readBool(ini, L"Tactics", L"HealHirelings", t.healHirelings);
+    }
     Config::debug.d3dStats = readInt(ini, L"Debug", L"D3DStats", Config::debug.d3dStats) != 0;
     Config::debug.profiler = readInt(ini, L"Debug", L"Profiler", Config::debug.profiler) != 0;
     Config::debug.profilerIntervalUs = readInt(ini, L"Debug", L"ProfilerIntervalUs", Config::debug.profilerIntervalUs);
@@ -183,6 +199,12 @@ void ConfigFile::load(const std::wstring& gameDir)
     LOG("Config: AutoAttack Enabled={} Key={} Range={} Pause={} Repeat={} Pickup={} LootRange={}",
         Config::autoAttack.enabled, Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs,
         Config::autoAttack.repeatMs, Config::autoAttack.pickup, Config::autoAttack.lootRange);
+    LOG("Config: Tactics Arts={} Slots={},{},{},{},{} Consumables={} UndeadDeath={} Mentor={} Antidote={} "
+        "Concentration={} HealHirelings={}", Config::tactics.arts, static_cast<int>(Config::tactics.slots[0]),
+        static_cast<int>(Config::tactics.slots[1]), static_cast<int>(Config::tactics.slots[2]),
+        static_cast<int>(Config::tactics.slots[3]), static_cast<int>(Config::tactics.slots[4]),
+        Config::tactics.consumables, Config::tactics.undeadDeath, Config::tactics.mentor, Config::tactics.antidote,
+        Config::tactics.concentration, Config::tactics.healHirelings);
     const auto pos = [](const Config::Ui::Position& p) { return Fmt::format("{},{}", p.x, p.y); };
     LOG("Config: UI.Layout Taskbar={} Chat={} Inventory={} Equipment={} Stats={} Minimap={} Portraits={} Shops={}",
         pos(Config::ui.taskbar), pos(Config::ui.chat), pos(Config::ui.inventory), pos(Config::ui.equipment),

@@ -44,6 +44,8 @@ namespace AimAssist
     };
     // The enemies within `range` pixels of the hero, at most `capacity` of them, into `out`; how many.
     int enemies(float range, Foe* out, int capacity);
+    // The same for the other creatures (hirelings, people, animals that are not hostile), the hero left out.
+    int friends(float range, Foe* out, int capacity);
 
     // Where target `id` is now; false once it is gone (or, for an enemy, dead or no longer hostile).
     bool locate(uint32_t id, Kind kind, Target& out);
