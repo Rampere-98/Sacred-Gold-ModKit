@@ -41,27 +41,18 @@ namespace
     // cCreature's order handler, thiscall (order*), callee pops.
     using OrderHandler = void(__fastcall*)(cCreature* self, void* edx, UseOrder* order);
 
-    // MSVC's RTTI behind every vtable (vtable[-1], the complete object locator): the class and all its bases.
+    // MSVC's RTTI behind every vtable (vtable[-1], the complete object locator): the object's own class.
     struct TypeDescriptor
     {
         const void* vtable;
         void* spare;
         char name[1];
     };
-    struct BaseClassDescriptor
-    {
-        const TypeDescriptor* type;
-    };
-    struct ClassHierarchyDescriptor
-    {
-        uint32_t signature, attributes, count;
-        const BaseClassDescriptor* const* bases;
-    };
     struct CompleteObjectLocator
     {
         uint32_t signature, offset, cdOffset;
         const TypeDescriptor* type;
-        const ClassHierarchyDescriptor* hierarchy;
+        const void* hierarchy;
     };
 
     enum class Loot : uint8_t
@@ -71,7 +62,9 @@ namespace
         Container,  // cChest3D: chests, coffers and the like, a click opens them
     };
 
-    // What the object is, by its class or a base of it (cached per vtable).
+    // What the object is, by its own class (cached per vtable). Every cItemBase has a class of its own: the ones
+    // the hero can carry, cChest3D for containers (it derives from cItemBase too) and others such as cBsItem3D for
+    // world fixtures (signposts and the like), which a click would only open a dialog for.
     Loot lootOf(const cObject* object)
     {
         static std::unordered_map<const void*, Loot> cache;
@@ -80,24 +73,25 @@ namespace
         {
             return it->second;
         }
+        static constexpr const char* kItems[] = {".?AVcArmor3D@@", ".?AVcArrow3D@@", ".?AVcPotion3D@@",
+            ".?AVcRing3D@@", ".?AVcScroll3D@@", ".?AVcShield3D@@", ".?AVcWeapon3D@@", ".?AVcItemUpgrade@@",
+            ".?AVcSpecial3D@@"};
         Loot loot = Loot::None;
         const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(vtable)[-1];
-        const ClassHierarchyDescriptor* hierarchy = locator ? locator->hierarchy : nullptr;
-        if (hierarchy && hierarchy->bases && hierarchy->count < 64)
+        const char* name = locator && locator->type ? locator->type->name : "?";
+        if (std::strcmp(name, ".?AVcChest3D@@") == 0)
         {
-            for (uint32_t i = 0; i < hierarchy->count && loot == Loot::None; ++i)
+            loot = Loot::Container;
+        }
+        for (const char* item : kItems)
+        {
+            if (std::strcmp(name, item) == 0)
             {
-                const char* name = hierarchy->bases[i]->type->name;
-                if (std::strcmp(name, ".?AVcItemBase@@") == 0)
-                {
-                    loot = Loot::Item;
-                }
-                else if (std::strcmp(name, ".?AVcChest3D@@") == 0)
-                {
-                    loot = Loot::Container;
-                }
+                loot = Loot::Item;
             }
         }
+        LOG("AutoAttack: class {} (id {:x}) is {}", name, object->id,
+            loot == Loot::Item ? "an item" : loot == Loot::Container ? "a container" : "left alone");
         cache.emplace(vtable, loot);
         return loot;
     }
