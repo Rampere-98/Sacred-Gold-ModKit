@@ -118,16 +118,23 @@ namespace Sacred
     // data file, inserts it and may evict the node with the oldest stamp.
     struct cMapData
     {
-        uint8_t _00[0x258];
+        uint8_t _00[0x240];
+        // Every sector of the map by id (cMapData::getSector, ENG 00634340); the map's clear frees them, so a pointer
+        // kept across a game load is stale: look a sector up by its id instead.
+        Sector** sectors;
+        uint8_t _244[0x258 - 0x244];
         TileDef* tileDefs;          // indexed by Tile::def
         uint8_t _25c[0xDE50 - 0x25C];
         RecordMap records;          // recordCache's: the 64-byte records also used by game logic (stamp: node +0x54)
         uint8_t _de58[0xDE5C - 0xDE58];
         RecordMap layerRecords;     // layerRecordCache's (stamp: node +0x24)
 
+        Sector* sector(uint32_t id) const { return id < sectorCount() ? sectors[id] : nullptr; }
+        uint32_t sectorCount() const { return *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(this) + 0x8284); }
+
         LayerRecord* layerRecord(uint32_t id) { return Addr::layerRecordCache(this, id); }
     };
-    static_assert(offsetof(cMapData, tileDefs) == 0x258);
+    static_assert(offsetof(cMapData, sectors) == 0x240 && offsetof(cMapData, tileDefs) == 0x258);
     static_assert(offsetof(cMapData, records) == 0xDE50 && offsetof(cMapData, layerRecords) == 0xDE5C);
 
     // A world singleton (0x12E6C bytes, made on first use; also holds the view shake offsets at +0x9DC0).
