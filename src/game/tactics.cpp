@@ -1,4 +1,5 @@
 #include "game/tactics.h"
+#include "config.h"
 #include "config/tactics.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
@@ -14,6 +15,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -170,7 +172,7 @@ namespace
             {
                 return Art::Single;
             }
-            return none >= 3 ? Art::Buff : Art::Auto;   // Auto: not known yet
+            return none >= 4 ? Art::Buff : Art::Auto;   // Auto: not known yet
         }
     };
     std::unordered_map<uint32_t, Learned> g_learned;
@@ -186,6 +188,45 @@ namespace
         case Art::Off: return "no usar";
         default: return "sin saber aún";
         }
+    }
+
+    // What was learned stays for the next start: [Tactics.Learned] Art<id>=heal|area|single|buff.
+    Learned& learned(uint32_t art)
+    {
+        const auto it = g_learned.find(art);
+        if (it != g_learned.end())
+        {
+            return it->second;
+        }
+        Learned& l = g_learned[art];
+        const std::wstring& ini = ConfigFile::path();
+        if (!ini.empty())
+        {
+            wchar_t key[24], value[16] = {};
+            swprintf_s(key, L"Art%X", art);
+            GetPrivateProfileStringW(L"Tactics.Learned", key, L"", value, 16, ini.c_str());
+            switch (Config::parseArt(value))
+            {
+            case Art::Heal: l.heal = 2; break;
+            case Art::Area: l.area = 2; break;
+            case Art::Single: l.single = 2; break;
+            case Art::Buff: l.none = 4; break;
+            default: break;
+            }
+        }
+        return l;
+    }
+
+    void remember(uint32_t art, Art kind)
+    {
+        const std::wstring& ini = ConfigFile::path();
+        if (ini.empty() || kind == Art::Auto)
+        {
+            return;
+        }
+        wchar_t key[24];
+        swprintf_s(key, L"Art%X", art);
+        WritePrivateProfileStringW(L"Tactics.Learned", key, Config::artKey(kind), ini.c_str());
     }
 
     // --- The fight, as seen ------------------------------------------------------------------------------------------
@@ -216,6 +257,7 @@ namespace
     int g_slot = -1;
     uint32_t g_art = 0;
     uint32_t g_castTarget = 0;
+    bool g_castClose = false;       // the target stood close as the art went out: an art with no effect is one
     int g_restoreSlot = -1;         // the slot the player had selected
     int g_healthAtCast = 0, g_bestHealth = 0, g_maxHealth = 0;
     std::unordered_map<uint32_t, int> g_foesAtCast;
@@ -284,21 +326,29 @@ namespace
         g_healthAtCast = g_bestHealth = s.health;
         g_maxHealth = s.maxHealth;
         g_foesAtCast.clear();
+        g_castClose = !target;
         for (int i = 0; i < s.count; ++i)
         {
-            g_foesAtCast[s.foes[i].id] = s.foes[i].health;
+            const AimAssist::Foe& f = s.foes[i];
+            g_foesAtCast[f.id] = f.health;
+            const float dx = f.x - s.hx, dy = f.y - s.hy;
+            if (f.id == target && dx * dx + dy * dy < (s.range * 0.45f) * (s.range * 0.45f))
+            {
+                g_castClose = true;
+            }
         }
         if (g_restoreSlot != slot)
         {
             tap(slotKey(slot));
         }
-        LOG("Tactics: art slot {} ({:x}, {}) at {:x}: {}", slot + 1, art, artName(g_learned[art].kind()), target, why);
+        LOG("Tactics: art slot {} ({:x}, {}) at {:x}: {}", slot + 1, art, artName(learned(art).kind()), target, why);
     }
 
     // What the cast did, from the health of the hero and the enemies before and after; false if nothing was seen.
     bool measure()
     {
-        Learned& l = g_learned[g_art];
+        Learned& l = learned(g_art);
+        const Art before = l.kind();
         const int gain = g_bestHealth - g_healthAtCast;
         int hurtOthers = 0;
         bool hurtTarget = false;
@@ -335,10 +385,18 @@ namespace
             ++l.single;
             seen = "hurt the target";
         }
-        else
+        else if (g_castClose)
         {
             ++l.none;
             seen = "did nothing seen";
+        }
+        else
+        {
+            seen = "did nothing seen, the target far";
+        }
+        if (l.kind() != before)
+        {
+            remember(g_art, l.kind());
         }
         LOG("Tactics: art {:x} {} (gain {}, others hurt {}) -> {}", g_art, seen, gain, hurtOthers, artName(l.kind()));
         return gain > 0 || hurtOthers > 0 || hurtTarget;
@@ -349,7 +407,7 @@ namespace
     Art slotUse(int slot, uint32_t art)
     {
         const Art set = Config::tactics.slots[slot];
-        return set != Art::Auto ? set : g_learned[art].kind();
+        return set != Art::Auto ? set : learned(art).kind();
     }
 
     int median(std::vector<int> v)
@@ -448,7 +506,7 @@ namespace
                 break;
             case Art::Buff:
                 if ((close >= 3 || strong || danger) && s.threat &&
-                    static_cast<int>(s.now - g_learned[sa.art].lastCast) > 45000)
+                    static_cast<int>(s.now - learned(sa.art).lastCast) > 45000)
                 {
                     rank = 2;
                     reason = "a hard fight starts";
@@ -470,7 +528,7 @@ namespace
             {
                 continue;
             }
-            if (static_cast<int>(s.now - g_learned[sa.art].readyAt) < 0)
+            if (static_cast<int>(s.now - learned(sa.art).readyAt) < 0)
             {
                 wantedButRecharging = true;
                 continue;
@@ -628,7 +686,7 @@ namespace
             }
             else
             {
-                ImGui::Text("Ranura %d (tecla %c): %s", slot + 1, slotKey(slot), artName(g_learned[sa.art].kind()));
+                ImGui::Text("Ranura %d (tecla %c): %s", slot + 1, slotKey(slot), artName(learned(sa.art).kind()));
             }
             ImGui::PopID();
         }
@@ -743,10 +801,10 @@ void Tactics::onFrame(DWORD now)
         if (!sendArt(g_castTarget))
         {
             reset();
-            g_learned[g_art].readyAt = now + 5000;
+            learned(g_art).readyAt = now + 5000;
             return;
         }
-        g_learned[g_art].lastCast = now;
+        learned(g_art).lastCast = now;
         g_phase = Phase::Casting;
         g_phaseAt = now;
         return;
@@ -756,7 +814,7 @@ void Tactics::onFrame(DWORD now)
         return;
     }
     const bool seen = measure();
-    Learned& l = g_learned[g_art];
+    Learned& l = learned(g_art);
     // A cast with no effect from an art known to have one was likely refused while it recharges: wait longer.
     const bool nothing = !seen && l.heal + l.area + l.single > 0;
     l.readyAt = now + (nothing ? 8000 : jitter(3000, 5000));
