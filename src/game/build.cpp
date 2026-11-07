@@ -1,5 +1,6 @@
 #include "game/build.h"
 #include "game/click_walk.h"
+#include "game/wide_sectors.h"
 #include "game/auto_attack.h"
 #include "game/controller.h"
 #include "game/d3d_stats.h"
@@ -96,6 +97,7 @@ void Sacred::installHooks()
     Patch::begin();
     FrameHooks::install();
     Resolution::install();
+    WideSectors::install();
     Focus::install();
     UiCanvas::install();
     UiAnchor::install();

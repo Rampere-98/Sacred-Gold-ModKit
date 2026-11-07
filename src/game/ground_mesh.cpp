@@ -2,6 +2,7 @@
 #include "game/d3d_stats.h"
 #include "game/device_proxy.h"
 #include "game/resolution.h"
+#include "game/wide_sectors.h"
 #include "ddraw9/ground.h"
 #include "config/ddraw.h"
 #include "config/debug.h"
@@ -29,7 +30,13 @@ namespace
     decltype(Addr::cQuadBatcher_setTexture)::Ptr g_origSetTexture = nullptr;
 
     constexpr int kTilesPerSector = Sector::size * Sector::size;
-    constexpr int kLoaded = 192;            // loaded tiles per side (3x3 sectors)
+    constexpr int kMaxSlots = WideSectors::kCount;  // loaded sectors: 3x3, or 5x5 with WideSectors
+
+    // Loaded sectors per side and the slots of the row walk's grid (WideSectors: 5x5, its indices in the rows).
+    int gridSide()
+    {
+        return WideSectors::active() ? WideSectors::kSide : 3;
+    }
     constexpr float kGroundZ = 0.9f;        // the game's z for ground quads (renderTileRow)
     // Corners in the game's vertex order: left, top, bottom, right. Offsets around the tile position (renderTileRow,
     // set by cWorldView_updateViewMetrics divided by the zoom), and which of the tile's height/light bytes they take.
@@ -44,7 +51,7 @@ namespace
     constexpr int kAtlasCellsPerRow = kAtlasSize / kAtlasCell;
     constexpr int kAtlasCells = kAtlasCellsPerRow * kAtlasCellsPerRow;
     constexpr int kMaxPages = 4;
-    constexpr int kMaxSectorCaches = 16;    // the 9 loaded sectors and some the camera left recently
+    constexpr int kMaxSectorCaches = 36;    // the 9 (25) loaded sectors and some the camera left recently
 
     struct AtlasPage
     {
@@ -130,7 +137,7 @@ namespace
         float offsetX = 0, offsetY = 0;     // view position of loaded tile (0, 0)
         bool drawn = false;
         uint32_t frame = 0;
-        SectorCache* slots[9] = {};
+        SectorCache* slots[kMaxSlots] = {};
 
         // Statistics ([Debug] D3DStats).
         uint32_t tilesBuilt = 0, sectorResets = 0, draws = 0, frames = 0, offsetMismatches = 0;
@@ -533,7 +540,7 @@ namespace
     // The loaded sector in `slot`; false if it has no tiles.
     bool sectorId(int slot, SectorId& id)
     {
-        id.sector = g.view->sectors[slot];
+        id.sector = WideSectors::active() ? WideSectors::at(slot) : g.view->sectors[slot];
         id.tiles = id.sector ? id.sector->tiles : nullptr;
         if (!id.tiles)
         {
@@ -635,12 +642,13 @@ namespace
     // Builds what is new in the row the game is about to walk, and takes the view offset from it.
     void visitRow(cWorldView* self, const RowPos& pos)
     {
-        if (g.startOver || pos.sector < 0 || pos.sector > 8 || pos.tile < 0 || pos.tile > 0xFFF)
+        const int side = gridSide();
+        if (g.startOver || pos.sector < 0 || pos.sector >= side * side || pos.tile < 0 || pos.tile > 0xFFF)
         {
             return;
         }
-        const int r0 = pos.sector / 3 * 64 + pos.tile / 64;
-        const int c0 = pos.sector % 3 * 64 + pos.tile % 64;
+        const int r0 = pos.sector / side * 64 + pos.tile / 64;
+        const int c0 = pos.sector % side * 64 + pos.tile % 64;
         const float ox = pos.x - 48.0f * static_cast<float>(c0 - r0);
         const float oy = pos.y - 24.0f * static_cast<float>(c0 + r0);
         if (!g.haveOffset)
@@ -659,11 +667,11 @@ namespace
         for (int j = 0; j < length && g.active; ++j)
         {
             const int r = r0 - j, c = c0 + j;
-            if (r < 0 || c >= kLoaded)
+            if (r < 0 || c >= side * 64)
             {
                 break;
             }
-            if (!visitTile(r / 64 * 3 + c / 64, r % 64 * 64 + c % 64))
+            if (!visitTile(r / 64 * side + c / 64, r % 64 * 64 + c % 64))
             {
                 // This frame's ground is incomplete: the rows still skip the game's ground draws, the next frame
                 // starts over (or the game draws it again).
@@ -722,9 +730,11 @@ namespace
         const float width = static_cast<float>(Resolution::width());
         const float height = static_cast<float>(Resolution::height());
         int maxPass = -1;
-        float slotX[9], slotY[9];
-        bool visible[9] = {};
-        for (int s = 0; s < 9; ++s)
+        const int side = gridSide();
+        const int slots = side * side;
+        float slotX[kMaxSlots], slotY[kMaxSlots];
+        bool visible[kMaxSlots] = {};
+        for (int s = 0; s < slots; ++s)
         {
             // Every loaded sector the cache has, walked this frame or not: water tiles filling up their list make the
             // walk draw the ground halfway down the screen, before the rows below are walked.
@@ -741,7 +751,7 @@ namespace
             }
             c->frame = g.frame;
             // Loaded tile (64 * row, 64 * column) of this slot.
-            const int sr = s / 3 * 64, sc = s % 3 * 64;
+            const int sr = s / side * 64, sc = s % side * 64;
             slotX[s] = g.offsetX + 48.0f * static_cast<float>(sc - sr);
             slotY[s] = g.offsetY + 24.0f * static_cast<float>(sc + sr);
             if ((c->maxX + slotX[s]) * invZoom < 0.0f || (c->minX + slotX[s]) * invZoom > width ||
@@ -769,7 +779,7 @@ namespace
             {
                 flags->set(RenderFlags::oneTextureLayers, !twoTextures);
             }
-            for (int s = 0; s < 9 && !failed; ++s)
+            for (int s = 0; s < slots && !failed; ++s)
             {
                 if (!visible[s])
                 {
