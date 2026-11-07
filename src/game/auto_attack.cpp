@@ -70,7 +70,7 @@ namespace
         Item,       // cItemBase: lying on the ground, a click picks it up
         Container,  // cChest3D: chests, coffers and the like, a click opens them
         Fixed,      // a fixed thing of the map the cursor shows the hand on (id with bit 31): magic hiding places,
-                    // wells, graves; a click uses it. No object behind it, only its place in the pick list.
+                    // wells, gold (not runes and signposts, see fixedUsable); a click uses it. No object behind it, only its place in the pick list.
     };
 
     // The pick list's ids with bit 31 set are the map's fixed things the cursor can use (the world mouse handler,
@@ -79,6 +79,35 @@ namespace
     bool isFixed(uint32_t id)
     {
         return (id & kFixedId) != 0;
+    }
+
+    // The map's fixed things (ENG 0053B713: the low 16 bits of the id index it): records of 0x58 bytes, a kind at +4
+    // and a script name at +0x18. Seen in a whole map (2026-11-07): the usable ones, kind 0x00010000, are VERSTECK
+    // (magic hiding places), BRUNNEN (wells) and F_Gold; the rest, kind 0.25f, are scripts and texts: F_Stein (runes),
+    // Wegweiser (signposts), setvar triggers, Powerup. Only the usable ones are taken: a text is not loot.
+    constexpr uintptr_t kFixedBegin = 0xAB45B8, kFixedEnd = 0xAB45BC;
+    constexpr size_t kFixedSize = 0x58, kFixedKind = 0x04, kFixedName = 0x18;
+    constexpr uint32_t kFixedUsable = 0x00010000;
+
+    bool fixedUsable(uint32_t id)
+    {
+        const auto* begin = *reinterpret_cast<const uint8_t* const*>(kFixedBegin);
+        const auto* end = *reinterpret_cast<const uint8_t* const*>(kFixedEnd);
+        const size_t index = id & 0xFFFF;
+        if (!begin || end < begin || index >= static_cast<size_t>(end - begin) / kFixedSize)
+        {
+            return false;
+        }
+        const uint8_t* record = begin + index * kFixedSize;
+        const bool usable = *reinterpret_cast<const uint32_t*>(record + kFixedKind) == kFixedUsable;
+        static std::unordered_set<uint32_t> logged;
+        if (logged.insert(id).second && logged.size() < 512)
+        {
+            char name[0x40 + 1] = {};
+            std::memcpy(name, record + kFixedName, 0x40);
+            LOG("AutoAttack: fixed thing {} ({:x}) is {}", name, id, usable ? "taken" : "left alone");
+        }
+        return usable;
     }
 
     // The pick category the world pick ranks by (cObject::Vtable::pickCategory): Alt puts 2 first, the things lying
@@ -209,7 +238,7 @@ namespace
         }
         if (isFixed(id))
         {
-            return true;
+            return fixedUsable(id);
         }
         cObjectManager* objects = cObjectManager::instance();
         cObject* object = objects ? objects->object(id) : nullptr;
