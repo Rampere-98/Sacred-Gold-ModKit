@@ -51,7 +51,16 @@ namespace
     {
         if (g_down)
         {
-            Inject::button(VK_LBUTTON, false);
+            // The player pressing the button themselves: only drop our held state, so our button-up message does
+            // not cut their own click short.
+            if (physicallyDown(VK_LBUTTON))
+            {
+                Inject::hold(VK_LBUTTON, false);
+            }
+            else
+            {
+                Inject::button(VK_LBUTTON, false);
+            }
             g_down = false;
         }
         if (g_target)
