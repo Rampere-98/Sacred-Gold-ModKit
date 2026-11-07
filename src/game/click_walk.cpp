@@ -22,6 +22,8 @@ namespace
 
     constexpr double kTileSize = 53.66563;      // world units per tile (the world -> tile conversion, ENG 006224E0)
     constexpr double kMaxTiles = 30.0;          // inside the path finders' +-32 tile grid, a margin for rounding
+    constexpr double kMinLegTiles = 6.0;        // shorter legs than this: give up
+    constexpr double kLegShrink = 0.6;          // a leg that found no way is tried again this much shorter
     constexpr double kArrivedTiles = 1.5;       // close enough to the clicked spot
     constexpr double kProgressTiles = 1.0;      // a leg that got the hero less than this much closer was blocked
     constexpr DWORD kCheckMs = 150;             // how often a far walk looks whether the hero stopped
@@ -33,6 +35,7 @@ namespace
     int32_t g_goalX = 0, g_goalY = 0;           // where the player clicked
     int32_t g_lastX = 0, g_lastY = 0;           // the hero at the last check
     double g_legStartTiles = 0.0;               // distance to the goal when the current leg went out
+    double g_legTiles = kMaxTiles;              // how far out the next leg goes (shorter after one found no way)
     DWORD g_legStart = 0;
     DWORD g_nextCheck = 0;                      // the render thread's
 
@@ -68,16 +71,18 @@ namespace
                 const double dx = static_cast<double>(order->x) - creature->x;
                 const double dy = static_cast<double>(order->y) - creature->y;
                 const double tiles = std::max(std::abs(dx), std::abs(dy)) / kTileSize;
-                if (tiles > kMaxTiles)
+                const double leg = ours ? g_legTiles : kMaxTiles;
+                if (tiles > leg)
                 {
                     if (!ours)
                     {
                         // Remember the clicked spot; the hero walks there leg by leg.
                         g_goalX = order->x;
                         g_goalY = order->y;
+                        g_legTiles = kMaxTiles;
                         g_active = true;
                     }
-                    const double scale = kMaxTiles / tiles;
+                    const double scale = leg / tiles;
                     const int32_t x = creature->x + static_cast<int32_t>(std::lround(dx * scale));
                     const int32_t y = creature->y + static_cast<int32_t>(std::lround(dy * scale));
                     if (Config::debug.uiTrace)
@@ -131,8 +136,18 @@ namespace
         }
         if (g_legStartTiles - left < kProgressTiles)
         {
-            finish("blocked");
-            return;
+            // The leg's end may lie in water or behind a wall, where the path finder finds no way: a shorter one,
+            // until even that gets nowhere.
+            g_legTiles *= kLegShrink;
+            if (g_legTiles < kMinLegTiles)
+            {
+                finish("blocked");
+                return;
+            }
+        }
+        else
+        {
+            g_legTiles = kMaxTiles;
         }
         cOrder order;
         order.type = cOrder::move;
