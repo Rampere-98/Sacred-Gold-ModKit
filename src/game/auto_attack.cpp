@@ -142,6 +142,9 @@ namespace
     // A loot order is given once (giving it again restarts the pick up, so gold farther than a second away was
     // never taken); again only after this long without the hero getting nearer.
     constexpr DWORD kLootNudgeMs = 1200;
+    // Loot gone from the ground is being picked up: no new order for this long, which would cut the hero's
+    // stooping short and cancel the pick up.
+    constexpr DWORD kPickupMs = 1300;
     constexpr float kLootAtDistance = 2.5f * 53.66563f;   // world units, 2.5 tiles
 
     bool g_on = false;
@@ -153,6 +156,7 @@ namespace
     DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
     DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
+    DWORD g_pickupUntil = 0;        // a pick up under way: no new order before this tick
 
     // The physical state: SacredBild's GetAsyncKeyState is not the game's patched import, so injected input and
     // the controller never show here.
@@ -348,15 +352,33 @@ void AutoAttack::onFrame()
         return;
     }
 
+    if (static_cast<int>(now - g_pickupUntil) < 0)
+    {
+        return;
+    }
+
     // Loot on the ground first, always; then the nearest enemy within Range.
     AimAssist::Target t;
     bool looting = false;
     if (Config::autoAttack.pickup)
     {
-        if (g_looting && g_target && lootDone(g_target, now))
+        if (g_looting && g_target)
         {
-            lootFailed(g_target, now);
-            g_target = 0;
+            AimAssist::Target current;
+            const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
+            if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
+            {
+                // Gone from the ground: the hero is picking it up. Let it finish.
+                g_target = 0;
+                g_looting = false;
+                g_pickupUntil = now + kPickupMs;
+                return;
+            }
+            if (lootDone(g_target, now))
+            {
+                lootFailed(g_target, now);
+                g_target = 0;
+            }
         }
         looting = chooseLoot(t);
     }
@@ -370,10 +392,9 @@ void AutoAttack::onFrame()
         // Enemies: the order again every Repeat ms. Loot: only when the hero stalls.
         const int repeat = Config::autoAttack.repeatMs;
         const int sinceSent = static_cast<int>(now - g_sentAt);
-        // At the loot, the pick up may take a moment: once more only after twice the stall time.
-        const bool lootAgain = g_lootAtSince ? sinceSent > static_cast<int>(2 * kLootNudgeMs)
-                                             : static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs) &&
-                                                   sinceSent > static_cast<int>(kLootNudgeMs);
+        // Never once the hero stands at it: a new order would cut its stooping short.
+        const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
+        const bool lootAgain = !g_lootAtSince && stalled && sinceSent > static_cast<int>(kLootNudgeMs);
         const bool again = looting ? lootAgain : repeat > 0 && sinceSent >= repeat;
         if (!again)
         {
