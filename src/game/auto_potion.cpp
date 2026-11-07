@@ -2,6 +2,7 @@
 #include "config/auto_potion.h"
 #include "game/focus.h"
 #include "game/frame_hooks.h"
+#include "game/modkit_menu.h"
 #include "game/ui_nav.h"
 #include "input/inject.h"
 #include "log.h"
@@ -9,9 +10,11 @@
 #include "sacred/object.h"
 #include "sacred/ui.h"
 
+#include <imgui.h>
 #include <windows.h>
 #include <algorithm>
 #include <mutex>
+#include <string>
 
 using namespace Sacred;
 
@@ -59,10 +62,37 @@ namespace
         Inject::key(VK_SPACE, true);
         Inject::key(VK_SPACE, false);
     }
+
+    void drawMenu()
+    {
+        Config::AutoPotion& c = Config::autoPotion;
+        ImGui::Checkbox("Activo", &c.enabled);
+        ImGui::SliderInt("Primera poción: falta (%)", &c.firstPercent, 5, 95);
+        ImGui::SetItemTooltip("Hasta saber cuánto cura una poción, bebe cuando falta este porcentaje de vida.");
+        ImGui::SliderInt("Emergencia: vida (%)", &c.emergencyPercent, 0, 90);
+        ImGui::SetItemTooltip("Con esta vida o menos bebe siempre.");
+        ImGui::SliderInt("Entre pociones (ms)", &c.intervalMs, 250, 10000);
+        if (g_heal > 0)
+        {
+            ImGui::TextDisabled("Una poción cura %d de vida (medido).", g_heal);
+        }
+    }
+
+    void saveMenu(const std::wstring& ini)
+    {
+        const Config::AutoPotion& c = Config::autoPotion;
+        ModkitMenu::write(ini, L"AutoPotion", L"Enabled", c.enabled);
+        ModkitMenu::write(ini, L"AutoPotion", L"FirstPercent", c.firstPercent);
+        ModkitMenu::write(ini, L"AutoPotion", L"EmergencyPercent", c.emergencyPercent);
+        ModkitMenu::write(ini, L"AutoPotion", L"Interval", c.intervalMs);
+    }
 }
 
 void AutoPotion::onFrame()
 {
+    // Its menu section, once (this mod has no install step).
+    static std::once_flag menu;
+    std::call_once(menu, [] { ModkitMenu::add({"Pociones automáticas", &drawMenu, &saveMenu}); });
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
     const std::unique_lock lock(frameLock, std::try_to_lock);
