@@ -791,10 +791,12 @@ namespace
 
     void __fastcall diagHandler(void* self, void* edx, const uint8_t* order)
     {
-        if (g_diagLogs < 400)
+        const uint32_t id = *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self) + 0x0C);
+        cEngine* engine = FrameHooks::engine();
+        const bool mine = id == 1 || (engine && id == engine->controlled);
+        if (mine && g_diagLogs < 3000)
         {
             ++g_diagLogs;
-            const uint32_t id = *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self) + 0x0C);
             std::string hex;
             for (int i = 4; i < 0x44; i += 4)
             {
