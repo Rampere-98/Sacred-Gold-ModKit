@@ -79,6 +79,7 @@ namespace
     constexpr int kSide = WideSectors::kTiles;
     constexpr int kCells = kSide * kSide;
     constexpr int kLegTiles = 24;               // route legs, well inside the path finders' grid
+    constexpr int kMinLegTiles = 6;             // a stuck leg is tried again half as long, down to this
     constexpr int kAheadTiles = 6;              // the next route leg goes out this close to the current one's end
     constexpr int kOffRouteTiles = 6;           // further from the route than this: plan again
     constexpr int kMaxReplans = 8;
@@ -179,6 +180,7 @@ namespace
         std::vector<Cell> cells;                // hero's tile .. goal's tile
         size_t from = 0;                        // the route tile nearest the hero when the current leg went out
         size_t legEnd = 0;                      // the current leg's end
+        int legTiles = kLegTiles;               // how far out legs end (shorter after a stuck one)
         int replans = 0;
     };
 
@@ -306,6 +308,7 @@ namespace
         std::reverse(cells.begin(), cells.end());
         g_route.from = 0;
         g_route.legEnd = 0;
+        g_route.legTiles = kLegTiles;
         return true;
     }
 
@@ -331,7 +334,7 @@ namespace
             return false;
         }
         size_t j = nearest;
-        while (j + 1 < cells.size() && chebyshev(cells[j + 1], hero.x, hero.y) <= kLegTiles)
+        while (j + 1 < cells.size() && chebyshev(cells[j + 1], hero.x, hero.y) <= g_route.legTiles)
         {
             ++j;
         }
@@ -499,7 +502,19 @@ namespace
             std::max(std::abs(hero->x - g_legX), std::abs(hero->y - g_legY)) / kTileSize < kMovedTiles;
         Cell next{};
         const bool stuck = stopped && movedLittle && toEnd > 2;
-        if (stuck || !nextLeg(at, next))
+        if (!stuck && !movedLittle)
+        {
+            g_route.legTiles = kLegTiles;
+        }
+        bool shorter = false;
+        if (stuck && g_route.legTiles > kMinLegTiles)
+        {
+            // The game's path finder may not find a long leg where it finds short ones (over a bridge): the same
+            // route in shorter legs first.
+            g_route.legTiles = std::max(kMinLegTiles, g_route.legTiles / 2);
+            shorter = nextLeg(at, next);
+        }
+        if (!shorter && (stuck || !nextLeg(at, next)))
         {
             // Stuck on the way (the tile test lets through what the game's path finder does not: under a bridge,
             // a closed gate) or off the route (pushed aside): the next stretch of the route counts as blocked
@@ -525,8 +540,8 @@ namespace
         target(next, x, y);
         if (Config::debug.uiTrace)
         {
-            LOG("Click walk: leg from {},{} to {},{} (route tile {} of {}{})", at.x, at.y, next.x, next.y,
-                g_route.legEnd, g_route.cells.size(), stuck ? ", after a stuck leg" : "");
+            LOG("Click walk: leg from {},{} to {},{} (route tile {} of {}, legs up to {} tiles{})", at.x, at.y, next.x,
+                next.y, g_route.legEnd, g_route.cells.size(), g_route.legTiles, stuck ? ", after a stuck leg" : "");
         }
         sendLeg(engine, hero, x, y);
     }
