@@ -29,10 +29,9 @@ namespace Controller
     // game's buttons.
     void clickAt(int x, int y);
 
-    // The game's cursor at `client` (client pixels) for `ms` milliseconds, whatever the mouse does: for AutoAttack.
-    void pointAt(int x, int y, DWORD ms);
     // The controller drives the game (its cursor, its attacks).
     bool drives();
-    // In the game world: in game, no menu, dialog, book or window open, a hero on the screen.
-    bool inGameWorld();
+    // The game world runs: in game, no menu, dialog, book or modal popup, a hero on the screen; windows such as the
+    // inventory may be open.
+    bool worldRunning();
 }

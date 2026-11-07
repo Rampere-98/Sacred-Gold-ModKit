@@ -27,10 +27,11 @@ tabs, Start is Play. Text fields need the keyboard.
 | UI.Layout | Inventory | 0,4096 | |
 | UI.Layout | Stats, Equipment, Minimap | 4096,0 | |
 | UI.Layout | Portraits, Shops | 0,0 | Party portraits; blacksmith, merchant, combat art master, chest, cube and trade. |
-| AutoAttack | Enabled | 0 | Auto attack is on when the game starts; `Key` toggles it either way. While it is on and the mouse is left alone, in the game world, the hero attacks the nearest enemy within `Range` (holding the left button on it, the game's cursor on it) and takes the next one once it dies. Never while the controller drives. |
+| AutoAttack | Enabled | 0 | Auto attack is on when the game starts; `Key` toggles it either way. While it is on, in the game world (windows such as the inventory may be open), the hero attacks the nearest enemy within `Range` through the game's own attack order, without the mouse, and takes the next one once it dies. Never while the controller drives. |
 | AutoAttack | Key | 122 | Virtual-key code of the toggle key (122 = F11); a beep says on or off. |
 | AutoAttack | Range | 400 | Enemies within this many screen pixels of the hero; the current one is chased up to 1.5 times as far. |
-| AutoAttack | Pause | 700 | Milliseconds without auto attack after the player moves the mouse or presses a mouse button. |
+| AutoAttack | Pause | 700 | Milliseconds without auto attack after the player presses a mouse button (moving the mouse does not pause it). |
+| AutoAttack | Repeat | 1000 | The attack order is given again this often while the target lives; 0 = once per target. |
 | Render | TextureBudgetMB | 0 | Texture memory the game may keep loaded; 0 = the game's value, at least 256. |
 | Render | Batch | 1 | Merge the world view's draw calls. |
 | Render | BatchNoClip | 1 | Merged draws skip Direct3D 7's software clipping; the GPU clips. |
