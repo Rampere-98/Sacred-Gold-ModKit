@@ -10,7 +10,7 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 | Rama | Mod | Ajuste en `SacredBild.ini` |
 |---|---|---|
 | `main` | Cuerpo principal: SacredBild sin mods. | - |
-| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): el héroe ataca solo al enemigo más cercano con la orden de ataque del juego; el ratón queda libre para el inventario. | `[AutoAttack]` |
+| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): el héroe ataca solo al enemigo más cercano con la orden de ataque del juego y, sin enemigos, recoge objetos y abre cofres; el ratón queda libre para el inventario. | `[AutoAttack]` |
 | [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
 | [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
 | [`mod/click-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/click-walk) | Ruta automática: un clic lejano planifica la ruta (A*) sobre los sectores cargados y la recorre por tramos. Necesita `mod/wide-sectors` (parte de ella). | - |
