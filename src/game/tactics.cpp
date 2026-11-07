@@ -104,12 +104,14 @@ namespace
     {
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
-        if (!g_players || !hero || hero->id >= 0x20)
+        // The player index is the id's low word (usePotion, ENG 00612FBC).
+        const uint32_t index = hero ? hero->id & 0xFFFF : 0x20;
+        if (!g_players || index >= 0x20)
         {
             return nullptr;
         }
         const uint8_t* players = *reinterpret_cast<const uint8_t* const*>(g_players);
-        return players ? players + hero->id * kPlayerSize : nullptr;
+        return players ? players + index * kPlayerSize : nullptr;
     }
 
     struct SlotArt
