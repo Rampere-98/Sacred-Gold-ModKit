@@ -14,6 +14,7 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 | [`mod/auto-potion`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-potion) | Pociones de curación automáticas: bebe (tecla Espacio del juego) cuando falta tanta vida como cura una poción, cantidad que aprende de las que bebe. | `[AutoPotion]` |
 | [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
 | [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
+| [`mod/no-minimize`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/no-minimize) | Con `FULLSCREEN : 1` en `Settings.cfg` (ventana sin bordes en SacredBild), el juego ya no se minimiza al seleccionar otra ventana: se parchean sus dos procedimientos de ventana (pausa y `ShowWindow(SW_MINIMIZE)`). | - |
 | [`mod/click-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/click-walk) | Ruta automática: un clic lejano (más de 30 casillas, o cuando el juego no encuentra camino) planifica la ruta (A*) sobre los sectores cargados y la recorre por tramos; los clics cercanos van al juego tal cual, que sabe entrar por puertas y escaleras. Necesita `mod/wide-sectors` (parte de ella). | - |
 | [`modkit`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/modkit) | Todos los mods juntos. | todos |
 
