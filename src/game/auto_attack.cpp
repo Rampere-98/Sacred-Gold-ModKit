@@ -134,8 +134,6 @@ namespace
     // A loot order is given once (giving it again restarts the pick up, so gold farther than a second away was
     // never taken); again only after this long without the hero getting nearer.
     constexpr DWORD kLootNudgeMs = 1200;
-    // A dialog that opens this soon after a loot order is that loot's.
-    constexpr DWORD kFixtureDialogMs = 3000;
     constexpr float kLootAtDistance = 2.5f * 53.66563f;   // world units, 2.5 tiles
 
     bool g_on = false;
@@ -327,10 +325,10 @@ void AutoAttack::onFrame()
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         g_target = 0;
     }
-    // Our loot order opened a dialog (a signpost's text): close it and never go there again.
-    const bool justSent = static_cast<int>(now - g_sentAt) < static_cast<int>(kFixtureDialogMs);
-    if (g_on && foreground && g_looting && g_target && justSent && static_cast<int>(now - g_quietUntil) >= 0 &&
-        (UiNav::npcDialogOpen() || UiNav::modal()))
+    // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a signpost
+    // and the dialog its text. Close it and never go there again.
+    if (g_on && foreground && g_looting && g_target && static_cast<int>(now - g_quietUntil) >= 0 &&
+        UiNav::npcDialogOpen())
     {
         LOG("AutoAttack: loot {:x} opened a dialog, closed and left", g_target);
         g_fixtures.insert(g_target);
