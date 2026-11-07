@@ -155,6 +155,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.key = std::clamp(readInt(ini, L"AutoAttack", L"Key", Config::autoAttack.key), 1, 254);
     Config::autoAttack.range = std::clamp(readInt(ini, L"AutoAttack", L"Range", Config::autoAttack.range), 50, 3000);
     Config::autoAttack.pauseMs = std::clamp(readInt(ini, L"AutoAttack", L"Pause", Config::autoAttack.pauseMs), 0, 10000);
+    Config::autoAttack.repeatMs = std::clamp(readInt(ini, L"AutoAttack", L"Repeat", Config::autoAttack.repeatMs), 0, 10000);
     Config::debug.d3dStats = readInt(ini, L"Debug", L"D3DStats", Config::debug.d3dStats) != 0;
     Config::debug.profiler = readInt(ini, L"Debug", L"Profiler", Config::debug.profiler) != 0;
     Config::debug.profilerIntervalUs = readInt(ini, L"Debug", L"ProfilerIntervalUs", Config::debug.profilerIntervalUs);
@@ -178,8 +179,8 @@ void ConfigFile::load(const std::wstring& gameDir)
         Config::controller.enabled, Config::controller.deadzone, Config::controller.cursorSpeed, Config::controller.moveRadius,
         Config::controller.aimRange, Config::controller.aimCone, Config::controller.artClick, Config::controller.walk,
         Config::controller.prompts);
-    LOG("Config: AutoAttack Enabled={} Key={} Range={} Pause={}", Config::autoAttack.enabled, Config::autoAttack.key,
-        Config::autoAttack.range, Config::autoAttack.pauseMs);
+    LOG("Config: AutoAttack Enabled={} Key={} Range={} Pause={} Repeat={}", Config::autoAttack.enabled,
+        Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
     const auto pos = [](const Config::Ui::Position& p) { return Fmt::format("{},{}", p.x, p.y); };
     LOG("Config: UI.Layout Taskbar={} Chat={} Inventory={} Equipment={} Stats={} Minimap={} Portraits={} Shops={}",
         pos(Config::ui.taskbar), pos(Config::ui.chat), pos(Config::ui.inventory), pos(Config::ui.equipment),

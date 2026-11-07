@@ -1336,21 +1336,27 @@ bool Controller::hideGameCursor(uintptr_t caller)
     return !(caller && caller == Addr::worldCursorSpecialRenderReturn && g_focusCursor.load(std::memory_order_relaxed));
 }
 
-void Controller::pointAt(int x, int y, DWORD ms)
-{
-    g_override = pack(x, y);
-    g_overrideUntil = GetTickCount() + ms;
-    g_overrideOn = true;
-}
-
 bool Controller::drives()
 {
     return g_drive.load(std::memory_order_relaxed);
 }
 
-bool Controller::inGameWorld()
+bool Controller::worldRunning()
 {
-    return detect() == Context::Game;
+    const Context context = detect();
+    if (context == Context::Game)
+    {
+        return true;
+    }
+    if (context != Context::Ui)
+    {
+        return false;
+    }
+    // Ui also covers open windows (inventory, character, ...): the world runs on behind them.
+    cUI_Manager* manager = cUI_Manager::instance();
+    float hx, hy;
+    return manager && (manager->flags & cUI_Manager::inGame) && !(manager->flags & cUI_Manager::inMenus) &&
+           !UiNav::modal() && AimAssist::hero(hx, hy);
 }
 
 void Controller::clickAt(int x, int y)

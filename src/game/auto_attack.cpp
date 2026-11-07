@@ -4,23 +4,44 @@
 #include "game/aim_assist.h"
 #include "game/controller.h"
 #include "game/focus.h"
-#include "input/inject.h"
+#include "game/frame_hooks.h"
 #include "log.h"
+#include "sacred/engine.h"
+#include "sacred/object.h"
 
 #include <windows.h>
+#include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <mutex>
+
+using namespace Sacred;
 
 namespace
 {
+    // The order a left click on a creature or object gives (the world mouse handler, ENG 006172C0, at 00617935):
+    // cOrder's layout with type 7, the picked id at +0x18 and the clicked world point after it. The handler hands
+    // it straight to the controlled creature's order handler (vtable +0x18), not through cEngine::sendOrder, which
+    // would snap +0x18/+0x1C as a walk target. On an enemy the hero walks up to it and attacks it.
+    struct UseOrder
+    {
+        uintptr_t vtable = Addr::cOrder_vtable;
+        uint32_t type = 7;
+        uint8_t _08[0x18 - 0x08] = {};
+        uint32_t target = 0;
+        int32_t x = 0, y = 0;
+        uint8_t _24[0x44 - 0x24] = {};
+    };
+    static_assert(sizeof(UseOrder) == sizeof(cOrder));
+    static_assert(offsetof(UseOrder, target) == 0x18 && offsetof(UseOrder, x) == 0x1C && offsetof(UseOrder, y) == 0x20);
+
+    // cCreature's order handler, thiscall (order*), callee pops.
+    using OrderHandler = void(__fastcall*)(cCreature* self, void* edx, UseOrder* order);
+
     bool g_on = false;
     bool g_keyWasDown = false;
-    bool g_down = false;            // the left button is held by us
     uint32_t g_target = 0;          // the enemy we attack, 0 for none
-    DWORD g_quietUntil = 0;         // the player's own input: no auto attack before this tick
-    POINT g_lastCursor{};
-    bool g_haveCursor = false;
+    DWORD g_sentAt = 0;             // when the last order went out
+    DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
 
     // The physical state: SacredBild's GetAsyncKeyState is not the game's patched import, so injected input and
     // the controller never show here.
@@ -29,45 +50,11 @@ namespace
         return (GetAsyncKeyState(vk) & 0x8000) != 0;
     }
 
-    // A mouse button held, or the system cursor moved a few pixels since the last frame.
-    bool playerUsesMouse()
+    // A mouse button held: the player gives their own orders. Moving the mouse does not count, so the cursor stays
+    // free for the inventory and other windows while the hero fights.
+    bool playerClicks()
     {
-        bool used = physicallyDown(VK_LBUTTON) || physicallyDown(VK_RBUTTON) || physicallyDown(VK_MBUTTON);
-        POINT p;
-        if (GetCursorPos(&p))
-        {
-            if (g_haveCursor && (std::abs(p.x - g_lastCursor.x) > 3 || std::abs(p.y - g_lastCursor.y) > 3))
-            {
-                used = true;
-            }
-            g_lastCursor = p;
-            g_haveCursor = true;
-        }
-        return used;
-    }
-
-    // Lets go of the button and the target; the world pick is the game's own again.
-    void release()
-    {
-        if (g_down)
-        {
-            // The player pressing the button themselves: only drop our held state, so our button-up message does
-            // not cut their own click short.
-            if (physicallyDown(VK_LBUTTON))
-            {
-                Inject::hold(VK_LBUTTON, false);
-            }
-            else
-            {
-                Inject::button(VK_LBUTTON, false);
-            }
-            g_down = false;
-        }
-        if (g_target)
-        {
-            AimAssist::pickGame();
-            g_target = 0;
-        }
+        return physicallyDown(VK_LBUTTON) || physicallyDown(VK_RBUTTON) || physicallyDown(VK_MBUTTON);
     }
 
     bool heroAlive()
@@ -97,6 +84,30 @@ namespace
         }
         return AimAssist::find(AimAssist::Kind::Enemy, 0.0f, 0.0f, range, 360.0f, t);
     }
+
+    // Orders the creature the mouse commands (the hero, or its mount) to attack `id`, as a click on it does.
+    bool attack(uint32_t id)
+    {
+        cEngine* engine = FrameHooks::engine();
+        cObjectManager* objects = cObjectManager::instance();
+        if (!engine || !objects)
+        {
+            return false;
+        }
+        cCreature* self = objects->creature(engine->controlled);
+        cObject* target = objects->object(id);
+        if (!self || !target)
+        {
+            return false;
+        }
+        UseOrder order;
+        order.target = id;
+        order.x = target->x;
+        order.y = target->y;
+        const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
+        handler(self, nullptr, &order);
+        return true;
+    }
 }
 
 void AutoAttack::install()
@@ -107,8 +118,8 @@ void AutoAttack::install()
         AimAssist::install();
     }
     g_on = Config::autoAttack.enabled;
-    LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms)", g_on ? "on" : "off", Config::autoAttack.key,
-        Config::autoAttack.range, Config::autoAttack.pauseMs);
+    LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
+        Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
 
 void AutoAttack::onFrame()
@@ -133,39 +144,36 @@ void AutoAttack::onFrame()
     }
     g_keyWasDown = keyDown;
 
-    if (playerUsesMouse())
+    if (foreground && playerClicks())
     {
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
+        g_target = 0;
     }
-    if (!g_on || !foreground || Controller::drives() || !Controller::inGameWorld() || !heroAlive() ||
+    if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
         static_cast<int>(now - g_quietUntil) < 0)
     {
-        release();
+        g_target = 0;
         return;
     }
 
     AimAssist::Target t;
     if (!chooseTarget(t))
     {
-        release();
+        g_target = 0;
         return;
     }
-    if (t.id != g_target)
+    const int repeat = Config::autoAttack.repeatMs;
+    if (t.id == g_target && (repeat <= 0 || static_cast<int>(now - g_sentAt) < repeat))
     {
-        // A new target: the game keeps attacking what the button went down on, so press again for it.
-        release();
+        return;
+    }
+    if (attack(t.id))
+    {
+        if (t.id != g_target)
+        {
+            LOG("AutoAttack: target {:x}", t.id);
+        }
         g_target = t.id;
-        AimAssist::pickTarget(g_target);
-        Controller::pointAt(static_cast<int>(t.x), static_cast<int>(t.y), 250);
-        return;
-    }
-    AimAssist::pickTarget(g_target);
-    // The game's cursor on the enemy, so the click never lands on the HUD under the mouse.
-    Controller::pointAt(static_cast<int>(t.x), static_cast<int>(t.y), 250);
-    if (!g_down)
-    {
-        Inject::mouseMove();
-        Inject::button(VK_LBUTTON, true);
-        g_down = true;
+        g_sentAt = now;
     }
 }
