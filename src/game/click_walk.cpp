@@ -22,21 +22,34 @@ namespace
 
     constexpr double kTileSize = 53.66563;      // world units per tile (the world -> tile conversion, ENG 006224E0)
     constexpr double kMaxTiles = 30.0;          // inside the path finders' +-32 tile grid, a margin for rounding
-    constexpr double kMinLegTiles = 6.0;        // shorter legs than this: give up
-    constexpr double kLegShrink = 0.6;          // a leg that found no way is tried again this much shorter
     constexpr double kArrivedTiles = 1.5;       // close enough to the clicked spot
-    constexpr double kProgressTiles = 1.0;      // a leg that got the hero less than this much closer was blocked
-    constexpr DWORD kCheckMs = 150;             // how often a far walk looks whether the hero stopped
-    constexpr DWORD kSettleMs = 300;            // a new leg's grace before a standing hero counts as stopped
+    constexpr double kMovedTiles = 2.0;         // a leg that moved the hero less than this found no way
+    constexpr int kMaxStaleLegs = 10;           // legs in a row that got no closer than the best so far: give up
+    constexpr DWORD kCheckMs = 100;             // how often a far walk looks whether the hero stopped
+    constexpr DWORD kSettleMs = 1000;           // a new leg's grace (path finding, starting to walk)
+    constexpr DWORD kStillMs = 500;             // the hero's position steps a tile at a time: still this long = stopped
+
+    // When the leg straight at the goal finds no way (its end in water, behind a wall, or no path inside the path
+    // finder's grid), legs turned aside and shorter ones: around a river bend or a wall end. Degrees, tiles.
+    struct Try
+    {
+        double degrees, tiles;
+    };
+    constexpr Try kTries[] = {{0, kMaxTiles}, {45, 22}, {-45, 22}, {90, 16}, {-90, 16}, {0, 14}, {135, 10},
+        {-135, 10}, {0, 7}};
+    constexpr int kTryCount = static_cast<int>(sizeof(kTries) / sizeof(kTries[0]));
 
     // A far walk in progress (the window thread's, but for g_active, which the render thread reads).
     std::atomic<bool> g_active{false};
     bool g_ours = false;                        // the order going out is our next leg
     int32_t g_goalX = 0, g_goalY = 0;           // where the player clicked
     int32_t g_lastX = 0, g_lastY = 0;           // the hero at the last check
-    double g_legStartTiles = 0.0;               // distance to the goal when the current leg went out
-    double g_legTiles = kMaxTiles;              // how far out the next leg goes (shorter after one found no way)
+    int32_t g_legX = 0, g_legY = 0;             // the hero when the current leg went out
+    int g_try = 0;                              // kTries index of the next leg
+    double g_best = 0.0;                        // the closest the hero got to the goal, in tiles
+    int g_staleLegs = 0;                        // legs since the hero last got closer than g_best
     DWORD g_legStart = 0;
+    DWORD g_stillSince = 0;                     // the hero's position last changed
     DWORD g_nextCheck = 0;                      // the render thread's
 
     double tilesTo(const cCreature* creature)
@@ -71,34 +84,38 @@ namespace
                 const double dx = static_cast<double>(order->x) - creature->x;
                 const double dy = static_cast<double>(order->y) - creature->y;
                 const double tiles = std::max(std::abs(dx), std::abs(dy)) / kTileSize;
-                const double leg = ours ? g_legTiles : kMaxTiles;
-                if (tiles > leg)
+                const Try t = ours ? kTries[g_try] : kTries[0];
+                if (tiles > t.tiles || (ours && t.degrees != 0.0))
                 {
                     if (!ours)
                     {
                         // Remember the clicked spot; the hero walks there leg by leg.
                         g_goalX = order->x;
                         g_goalY = order->y;
-                        g_legTiles = kMaxTiles;
+                        g_try = 0;
+                        g_best = tiles;
+                        g_staleLegs = 0;
                         g_active = true;
                     }
-                    const double scale = leg / tiles;
-                    const int32_t x = creature->x + static_cast<int32_t>(std::lround(dx * scale));
-                    const int32_t y = creature->y + static_cast<int32_t>(std::lround(dy * scale));
+                    const double scale = std::min(1.0, t.tiles / tiles);
+                    const double a = t.degrees * 3.14159265358979 / 180.0;
+                    const double rx = (dx * std::cos(a) - dy * std::sin(a)) * scale;
+                    const double ry = (dx * std::sin(a) + dy * std::cos(a)) * scale;
+                    const int32_t x = creature->x + static_cast<int32_t>(std::lround(rx));
+                    const int32_t y = creature->y + static_cast<int32_t>(std::lround(ry));
                     if (Config::debug.uiTrace)
                     {
-                        LOG("Click walk: target {},{} is {:.0f} tiles out, walking to {},{} first", order->x,
-                            order->y, tiles, x, y);
+                        LOG("Click walk: target {},{} is {:.0f} tiles out, walking to {},{} first (turned {})",
+                            order->x, order->y, tiles, x, y, t.degrees);
                     }
                     order->x = x;
                     order->y = y;
                 }
                 if (g_active)
                 {
-                    g_lastX = creature->x;
-                    g_lastY = creature->y;
-                    g_legStartTiles = tilesTo(creature);
-                    g_legStart = GetTickCount();
+                    g_lastX = g_legX = creature->x;
+                    g_lastY = g_legY = creature->y;
+                    g_legStart = g_stillSince = GetTickCount();
                 }
             }
         }
@@ -121,10 +138,14 @@ namespace
             finish("no hero to walk");
             return;
         }
-        const bool moved = hero->x != g_lastX || hero->y != g_lastY;
-        g_lastX = hero->x;
-        g_lastY = hero->y;
-        if (moved || GetTickCount() - g_legStart < kSettleMs)
+        const DWORD now = GetTickCount();
+        if (hero->x != g_lastX || hero->y != g_lastY)
+        {
+            g_lastX = hero->x;
+            g_lastY = hero->y;
+            g_stillSince = now;
+        }
+        if (now - g_legStart < kSettleMs || now - g_stillSince < kStillMs)
         {
             return;
         }
@@ -134,12 +155,22 @@ namespace
             finish("arrived");
             return;
         }
-        if (g_legStartTiles - left < kProgressTiles)
+        if (left < g_best - 0.5)
         {
-            // The leg's end may lie in water or behind a wall, where the path finder finds no way: a shorter one,
-            // until even that gets nowhere.
-            g_legTiles *= kLegShrink;
-            if (g_legTiles < kMinLegTiles)
+            g_best = left;
+            g_staleLegs = 0;
+        }
+        else if (++g_staleLegs >= kMaxStaleLegs)
+        {
+            finish("blocked");
+            return;
+        }
+        const double movedTiles = std::max(std::abs(static_cast<double>(hero->x) - g_legX),
+                                      std::abs(static_cast<double>(hero->y) - g_legY)) / kTileSize;
+        if (movedTiles < kMovedTiles)
+        {
+            // No way to the leg's end: the next try (turned aside, shorter), until none is left.
+            if (++g_try >= kTryCount)
             {
                 finish("blocked");
                 return;
@@ -147,7 +178,8 @@ namespace
         }
         else
         {
-            g_legTiles = kMaxTiles;
+            // Moved: straight at the goal again from here.
+            g_try = 0;
         }
         cOrder order;
         order.type = cOrder::move;
