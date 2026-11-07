@@ -9,6 +9,10 @@ A controller works the window too: the D-pad or left stick moves between the set
 value), A ticks a box, presses a button or opens a list, B closes an open list without changing it, LB and RB switch
 tabs, Start is Play. Text fields need the keyboard.
 
+In game, Home opens and closes the ModKit menu over the game (and its menus): every installed mod's settings, applied
+at once; "Guardar en SacredBild.ini" writes them to the ini. Esc or Home closes it. It needs `[DDraw] Backend=d3d9`
+(the overlay's backend).
+
 | Section | Key | Default | Meaning |
 |---|---|---|---|
 | Launcher | HideSettingsWindow | 0 | 1 = no settings window before the game starts; holding Shift as the game starts shows it anyway. |

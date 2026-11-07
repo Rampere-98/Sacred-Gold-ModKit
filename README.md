@@ -21,7 +21,10 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 todos. El workflow del repo (Actions → *Build*, *Run workflow* sobre la rama) genera el `ddraw.dll`; se copia en la
 carpeta del juego con `SacredBild.ini` y `SacredBild\` como en SacredBild.
 
-**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini, y después
+**Menú del ModKit:** la tecla Inicio abre y cierra sobre el juego (también en los menús) los ajustes de cada mod
+instalado; los cambios se aplican al momento y *Guardar en SacredBild.ini* los conserva. Necesita `[DDraw] Backend=d3d9`.
+
+**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini y en el menú (`ModkitMenu::add`), y después
 merge en `modkit`. Notas de ingeniería inversa y herramientas: [sacred-gold-ultrawide](https://github.com/Rampere-98/sacred-gold-ultrawide).
 
 ---
