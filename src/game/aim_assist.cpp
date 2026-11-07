@@ -276,13 +276,15 @@ bool AimAssist::findObject(float range, bool (*accept)(uint32_t id, void* contex
     float best = 0.0f;
     bool found = false;
     scan(view, [&](const PickEntry& e) {
-        if (e.id == 0 || e.id == heroId || (e.id & 0x80000000u))
+        if (e.id == 0 || e.id == heroId)
         {
             return true;
         }
         const float vx = e.centerX() - hx, vy = e.centerY() - hy;
         const float d = vx * vx + vy * vy;
-        if (d > range * range || (found && d >= best) || isEnemy(hero, creatureOf(e.id)) || !accept(e.id, context))
+        const bool fixed = (e.id & 0x80000000u) != 0;
+        if (d > range * range || (found && d >= best) || (!fixed && isEnemy(hero, creatureOf(e.id))) ||
+            !accept(e.id, context))
         {
             return true;
         }
