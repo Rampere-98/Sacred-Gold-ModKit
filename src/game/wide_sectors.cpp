@@ -22,8 +22,11 @@ namespace
 
     // Read by the patched game code: its address is in their instructions.
     Sector* g_table[kCount] = {};
-    // Ring sectors this module set the keep flag on (cleared again once they leave the ring).
-    Sector* g_kept[kCount] = {};
+    // Ring sectors this module set the keep flag on (cleared again once they leave the ring), by sector id + 1 (0:
+    // none) in the map they were kept in: loading a game clears the map, which frees its sectors, so pointers kept
+    // from before would be stale (clearing the flag through them wrote into freed memory).
+    uint32_t g_kept[kCount] = {};
+    cMapData* g_keptMap = nullptr;
     bool g_active = false;
     uint32_t g_mismatchLogs = 0;
 
@@ -175,6 +178,7 @@ void WideSectors::update(cWorldView* view)
         return;
     }
     Sector* next[kCount] = {};
+    uint32_t ids[kCount] = {};  // ring sectors' ids + 1
     for (int s = 0; s < 9; ++s)
     {
         next[fromGame(s)] = view->sectors[s];
@@ -202,7 +206,8 @@ void WideSectors::update(cWorldView* view)
         {
             ++dir;
         }
-        Sector* s = g_getSector(map, nullptr, inner->neighbors[dir]);
+        const uint32_t id = inner->neighbors[dir];
+        Sector* s = g_getSector(map, nullptr, id);
         if (!s || !(s->flags & Sector::loaded) || !s->tiles)
         {
             continue;
@@ -218,31 +223,38 @@ void WideSectors::update(cWorldView* view)
             continue;
         }
         next[slot] = s;
+        ids[slot] = id + 1;
     }
 
     // Keep the ring loaded while it is in the table; let go of what left it (unless the game's 3x3 has it now).
-    Sector* nowKept[kCount] = {};
+    if (g_keptMap != map)
+    {
+        std::fill(std::begin(g_kept), std::end(g_kept), 0u);
+        g_keptMap = map;
+    }
+    uint32_t nowKept[kCount] = {};
     int n = 0;
     for (int slot = 0; slot < kCount; ++slot)
     {
         Sector* s = next[slot];
-        if (!s || inner3x3(slot))
+        if (!s || inner3x3(slot) || !ids[slot])
         {
             continue;
         }
-        const bool ours = std::find(std::begin(g_kept), std::end(g_kept), s) != std::end(g_kept);
+        const bool ours = std::find(std::begin(g_kept), std::end(g_kept), ids[slot]) != std::end(g_kept);
         if (ours || !(s->flags & Sector::keep))
         {
             s->flags |= Sector::keep;
-            nowKept[n++] = s;
+            nowKept[n++] = ids[slot];
         }
     }
-    for (Sector* old : g_kept)
+    for (uint32_t old : g_kept)
     {
-        if (old && std::find(nowKept, nowKept + n, old) == nowKept + n &&
-            std::find(view->sectors, view->sectors + 9, old) == view->sectors + 9)
+        Sector* s = old && map ? map->sector(old - 1) : nullptr;
+        if (s && std::find(nowKept, nowKept + n, old) == nowKept + n &&
+            std::find(view->sectors, view->sectors + 9, s) == view->sectors + 9)
         {
-            old->flags &= ~Sector::keep;
+            s->flags &= ~Sector::keep;
         }
     }
     std::copy(std::begin(nowKept), std::end(nowKept), std::begin(g_kept));
