@@ -359,31 +359,42 @@ void AutoAttack::onFrame()
     g_lastHealth = health;
     const bool hurt = static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
 
-    // Enemies first; under attack, also those farther (as far as loot is looked for); with none, and none hurting
-    // the hero, the loot around.
+    // The nearest enemy (under attack also those farther, as far as loot is looked for). While nothing hurts the
+    // hero, loot competes with it: whichever is nearer, with a margin for the one it already goes for so it does
+    // not switch back and forth. Under attack, no loot.
     const float range = static_cast<float>(Config::autoAttack.range);
     const float hurtRange = std::max(range, static_cast<float>(Config::autoAttack.lootRange));
-    AimAssist::Target t;
-    bool looting = false;
-    if (!chooseTarget(t, range) && !(hurt && chooseTarget(t, hurtRange)))
+    AimAssist::Target enemy, loot;
+    const bool haveEnemy = chooseTarget(enemy, range) || (hurt && chooseTarget(enemy, hurtRange));
+    bool haveLoot = false;
+    if (!hurt && Config::autoAttack.pickup)
     {
-        if (hurt)
-        {
-            g_target = 0;
-            return;
-        }
         if (g_looting && g_target && lootDone(g_target, now))
         {
             lootFailed(g_target, now);
             g_target = 0;
         }
-        if (!Config::autoAttack.pickup || !chooseLoot(t))
-        {
-            g_target = 0;
-            return;
-        }
-        looting = true;
+        haveLoot = chooseLoot(loot);
     }
+    bool looting = false;
+    if (haveLoot && haveEnemy)
+    {
+        float hx, hy;
+        AimAssist::hero(hx, hy);
+        const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
+        const float enemyDistance = std::hypot(enemy.x - hx, enemy.y - hy);
+        looting = lootDistance * (g_looting ? 0.8f : 1.25f) < enemyDistance;
+    }
+    else if (!haveLoot && !haveEnemy)
+    {
+        g_target = 0;
+        return;
+    }
+    else
+    {
+        looting = haveLoot;
+    }
+    const AimAssist::Target t = looting ? loot : enemy;
     if (t.id == g_target && looting == g_looting)
     {
         // Enemies: the order again every Repeat ms. Loot: only when the hero stalls.
