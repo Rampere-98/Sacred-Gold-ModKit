@@ -206,6 +206,37 @@ bool AimAssist::find(Kind kind, float dirX, float dirY, float range, float cone,
     return found;
 }
 
+bool AimAssist::findObject(float range, bool (*accept)(uint32_t id, void* context), void* context, Target& out)
+{
+    cWorldView* view = worldView();
+    cCreature* hero = heroCreature();
+    float hx, hy;
+    if (!view || !hero || !AimAssist::hero(hx, hy))
+    {
+        return false;
+    }
+    const uint32_t heroId = hero->id;
+    float best = 0.0f;
+    bool found = false;
+    scan(view, [&](const PickEntry& e) {
+        if (e.id == 0 || e.id == heroId || (e.id & 0x80000000u))
+        {
+            return true;
+        }
+        const float vx = e.centerX() - hx, vy = e.centerY() - hy;
+        const float d = vx * vx + vy * vy;
+        if (d > range * range || (found && d >= best) || isEnemy(hero, creatureOf(e.id)) || !accept(e.id, context))
+        {
+            return true;
+        }
+        best = d;
+        out = {e.id, e.centerX(), e.centerY()};
+        found = true;
+        return true;
+    });
+    return found;
+}
+
 bool AimAssist::locate(uint32_t id, Kind kind, Target& out)
 {
     cWorldView* view = worldView();

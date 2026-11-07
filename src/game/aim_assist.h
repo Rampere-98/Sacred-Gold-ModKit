@@ -31,6 +31,10 @@ namespace AimAssist
     // within `cone` degrees around it come first, the nearest of them; else the nearest.
     bool find(Kind kind, float dirX, float dirY, float range, float cone, Target& out);
 
+    // The nearest thing on the screen within `range` pixels of the hero (not the hero, not an enemy) that
+    // `accept(id, context)` takes.
+    bool findObject(float range, bool (*accept)(uint32_t id, void* context), void* context, Target& out);
+
     // Where target `id` is now; false once it is gone (or, for an enemy, dead or no longer hostile).
     bool locate(uint32_t id, Kind kind, Target& out);
 

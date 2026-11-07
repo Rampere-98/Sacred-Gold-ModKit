@@ -12,7 +12,11 @@
 #include <windows.h>
 #include <cstddef>
 #include <cstdint>
+#include <cmath>
+#include <cstring>
 #include <mutex>
+#include <unordered_map>
+#include <unordered_set>
 
 using namespace Sacred;
 
@@ -37,9 +41,82 @@ namespace
     // cCreature's order handler, thiscall (order*), callee pops.
     using OrderHandler = void(__fastcall*)(cCreature* self, void* edx, UseOrder* order);
 
+    // MSVC's RTTI behind every vtable (vtable[-1], the complete object locator): the class and all its bases.
+    struct TypeDescriptor
+    {
+        const void* vtable;
+        void* spare;
+        char name[1];
+    };
+    struct BaseClassDescriptor
+    {
+        const TypeDescriptor* type;
+    };
+    struct ClassHierarchyDescriptor
+    {
+        uint32_t signature, attributes, count;
+        const BaseClassDescriptor* const* bases;
+    };
+    struct CompleteObjectLocator
+    {
+        uint32_t signature, offset, cdOffset;
+        const TypeDescriptor* type;
+        const ClassHierarchyDescriptor* hierarchy;
+    };
+
+    enum class Loot : uint8_t
+    {
+        None,
+        Item,       // cItemBase: lying on the ground, a click picks it up
+        Container,  // cChest3D: chests, coffers and the like, a click opens them
+    };
+
+    // What the object is, by its class or a base of it (cached per vtable).
+    Loot lootOf(const cObject* object)
+    {
+        static std::unordered_map<const void*, Loot> cache;
+        const void* vtable = object->vtable;
+        if (const auto it = cache.find(vtable); it != cache.end())
+        {
+            return it->second;
+        }
+        Loot loot = Loot::None;
+        const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(vtable)[-1];
+        const ClassHierarchyDescriptor* hierarchy = locator ? locator->hierarchy : nullptr;
+        if (hierarchy && hierarchy->bases && hierarchy->count < 64)
+        {
+            for (uint32_t i = 0; i < hierarchy->count && loot == Loot::None; ++i)
+            {
+                const char* name = hierarchy->bases[i]->type->name;
+                if (std::strcmp(name, ".?AVcItemBase@@") == 0)
+                {
+                    loot = Loot::Item;
+                }
+                else if (std::strcmp(name, ".?AVcChest3D@@") == 0)
+                {
+                    loot = Loot::Container;
+                }
+            }
+        }
+        cache.emplace(vtable, loot);
+        return loot;
+    }
+
+    // Loot already dealt with: opened containers, items the hero stood at without picking them up (a full
+    // inventory) or could not reach.
+    std::unordered_set<uint32_t> g_doneLoot;
+
+    // How long the hero may take for loot, and how long it may stand at it, before we leave it.
+    constexpr DWORD kLootGiveUpMs = 10000;
+    constexpr DWORD kLootAtMs = 1500;
+    constexpr float kLootAtDistance = 2.5f * 53.66563f;   // world units, 2.5 tiles
+
     bool g_on = false;
     bool g_keyWasDown = false;
-    uint32_t g_target = 0;          // the enemy we attack, 0 for none
+    uint32_t g_target = 0;          // the enemy we attack or the loot we go for, 0 for none
+    bool g_looting = false;         // g_target is loot
+    DWORD g_lootSince = 0;          // when we went for it
+    DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
     DWORD g_sentAt = 0;             // when the last order went out
     DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
 
@@ -85,7 +162,64 @@ namespace
         return AimAssist::find(AimAssist::Kind::Enemy, 0.0f, 0.0f, range, 360.0f, t);
     }
 
-    // Orders the creature the mouse commands (the hero, or its mount) to attack `id`, as a click on it does.
+    bool acceptLoot(uint32_t id, void*)
+    {
+        if (g_doneLoot.count(id))
+        {
+            return false;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* object = objects ? objects->object(id) : nullptr;
+        return object && lootOf(object) != Loot::None;
+    }
+
+    bool isCurrent(uint32_t id, void*)
+    {
+        return id == g_target;
+    }
+
+    // The loot we go for while it is there, else the nearest within range.
+    bool chooseLoot(AimAssist::Target& t)
+    {
+        const float range = static_cast<float>(Config::autoAttack.range);
+        if (g_looting && g_target && !g_doneLoot.count(g_target) &&
+            AimAssist::findObject(range * 1.5f, &isCurrent, nullptr, t))
+        {
+            return true;
+        }
+        if (g_doneLoot.size() > 1024)
+        {
+            g_doneLoot.clear();
+        }
+        return AimAssist::findObject(range, &acceptLoot, nullptr, t);
+    }
+
+    // Whether the hero is done with the loot it goes for: it gives up after a while, or after standing at it (an
+    // opened container stays, and so does an item when the inventory is full).
+    bool lootDone(uint32_t id, DWORD now)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        cObject* loot = objects ? objects->object(id) : nullptr;
+        if (!hero || !loot || static_cast<int>(now - g_lootSince) > static_cast<int>(kLootGiveUpMs))
+        {
+            return true;
+        }
+        const float dx = static_cast<float>(loot->x - hero->x), dy = static_cast<float>(loot->y - hero->y);
+        if (std::sqrt(dx * dx + dy * dy) > kLootAtDistance)
+        {
+            g_lootAtSince = 0;
+            return false;
+        }
+        if (!g_lootAtSince)
+        {
+            g_lootAtSince = now;
+        }
+        return static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs);
+    }
+
+    // Orders the creature the mouse commands (the hero, or its mount) to attack, pick up or open `id`, as a click
+    // on it does.
     bool attack(uint32_t id)
     {
         cEngine* engine = FrameHooks::engine();
@@ -156,24 +290,38 @@ void AutoAttack::onFrame()
         return;
     }
 
+    // Enemies first; with none in range, the loot around.
     AimAssist::Target t;
+    bool looting = false;
     if (!chooseTarget(t))
     {
-        g_target = 0;
-        return;
+        if (g_looting && g_target && lootDone(g_target, now))
+        {
+            g_doneLoot.insert(g_target);
+            g_target = 0;
+        }
+        if (!Config::autoAttack.pickup || !chooseLoot(t))
+        {
+            g_target = 0;
+            return;
+        }
+        looting = true;
     }
     const int repeat = Config::autoAttack.repeatMs;
-    if (t.id == g_target && (repeat <= 0 || static_cast<int>(now - g_sentAt) < repeat))
+    if (t.id == g_target && looting == g_looting && (repeat <= 0 || static_cast<int>(now - g_sentAt) < repeat))
     {
         return;
     }
     if (attack(t.id))
     {
-        if (t.id != g_target)
+        if (t.id != g_target || looting != g_looting)
         {
-            LOG("AutoAttack: target {:x}", t.id);
+            LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", t.id);
+            g_lootSince = now;
+            g_lootAtSince = 0;
         }
         g_target = t.id;
+        g_looting = looting;
         g_sentAt = now;
     }
 }
