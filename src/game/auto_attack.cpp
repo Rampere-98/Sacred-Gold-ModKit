@@ -152,6 +152,9 @@ namespace
     // Fixtures the game ranks as ground items (signposts, plaques: cSpecial3D like some loot) whose click opened a
     // dialog; they keep their ids, so they stay here.
     std::unordered_set<uint32_t> g_fixtures;
+    // Closing a fixture's text: until when, and the next try.
+    constexpr DWORD kDialogCloseMs = 2500, kDialogRetryMs = 400;
+    DWORD g_dialogCloseUntil = 0, g_dialogCloseAt = 0;
     // Loot the hero stood at and that stayed: an opened container, an item that did not fit. Never gone for again.
     std::unordered_set<uint32_t> g_lootDone;
 
@@ -877,14 +880,33 @@ void AutoAttack::onFrame()
     }
     // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
     // flags did not give away, and the dialog its text. Close it and never go there again.
+    // Its button (Accept) is clicked, as the player would; again a moment later while it stays (the click can land
+    // before the box takes input).
     if (g_collecting && foreground && g_looting && g_target && UiNav::npcDialogOpen())
     {
         LOG("AutoAttack: loot {:x} opened a dialog, closed and left", g_target);
         g_fixtures.insert(g_target);
-        Inject::key(VK_RETURN, true);
-        Inject::key(VK_RETURN, false);
         g_target = 0;
         g_looting = false;
+        g_dialogCloseUntil = now + kDialogCloseMs;
+        g_dialogCloseAt = now;
+    }
+    if (static_cast<int>(now - g_dialogCloseUntil) < 0 && foreground && UiNav::npcDialogOpen())
+    {
+        if (static_cast<int>(now - g_dialogCloseAt) >= 0)
+        {
+            g_dialogCloseAt = now + kDialogRetryMs;
+            float x, y;
+            if (UiNav::npcAnswer(0, x, y))
+            {
+                Controller::clickAt(static_cast<int>(std::lround(x)), static_cast<int>(std::lround(y)));
+            }
+            else
+            {
+                Inject::key(VK_RETURN, true);
+                Inject::key(VK_RETURN, false);
+            }
+        }
         return;
     }
     if (g_collecting)
