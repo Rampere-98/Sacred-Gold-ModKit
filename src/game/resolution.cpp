@@ -151,7 +151,9 @@ namespace
         case Kind::ImmCullW: return static_cast<uint32_t>(g_width + 200);
         case Kind::ImmCullH: return static_cast<uint32_t>(g_height + 200);
         case Kind::ImmPickLimit: return 8000;
-        case Kind::ImmLayerCache: return 0x8000;
+        // 32:9 at 5120x1440 shows twice the tiles 0x8000 was sized for; when full, every miss scans the whole map
+        // for the oldest entry (~1 ms at 0x8000), dozens per frame while walking into new ground. ~48 bytes each.
+        case Kind::ImmLayerCache: return 0x40000;
         case Kind::MemUnzX: return reinterpret_cast<uint32_t>(&g_unzXF);
         case Kind::MemUnzY: return reinterpret_cast<uint32_t>(&g_unzYF);
         case Kind::ImmNear: return floatBits(g_near);

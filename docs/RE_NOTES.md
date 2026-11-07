@@ -271,7 +271,7 @@ procedure with `0x811A20` through the delay-loaded `SetWindowLongA` (`[0xA23FB4]
   owner and depth; an unlock by a non-owner is ignored, as ReleaseMutex fails then).
 - Tile layer records come from `0x635FE0`: a map cache of 0x1000 entries filled from the data file
   (fseek/fread per miss) with an O(n) LRU scan per insert when full. A zoomed-out high-resolution view needs
-  more entries and thrashed every frame (~140 ms); the limit is raised to 0x8000. The texture manager budget (`0x65E7A0`, set by `initApp`) is not a limit on modern
+  more entries and thrashed every frame (~140 ms); the limit is raised to 0x8000, and to 0x40000 for 32:9 at 5120x1440 (walking into new ground thrashed again at 0x8000). The texture manager budget (`0x65E7A0`, set by `initApp`) is not a limit on modern
   machines (computes to ~4 GB).
 - In game the frame only clears Z (`cEngine_renderThreadRun`); the ground has to cover the screen.
   SacredBild clears the target before `cWorldView0_render`.

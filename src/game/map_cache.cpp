@@ -38,6 +38,7 @@ namespace
         SharedSpinLock mutex;       // the game calls some of these from its logic thread as well
         Index indexes[4];
         uint32_t next = 0;
+        bool loggedFull = false;
     };
 
     Cache g_layers{nullptr, &cMapData::layerRecords, 0x14 + sizeof(LayerRecord)};
@@ -107,6 +108,12 @@ namespace
             uint8_t* record = c.original(owner, edx, id);
             if (map.size != ix->size + 1)
             {
+                if (!c.loggedFull)
+                {
+                    c.loggedFull = true;
+                    LOG("Record caches: {} cache full at {} entries, evicting (a whole-map scan per miss)",
+                        &c == &g_layers ? "layer" : "record", map.size);
+                }
                 ix->nodes.clear();  // a node was evicted: it may be one the index knows
             }
             ix->head = map.head;
