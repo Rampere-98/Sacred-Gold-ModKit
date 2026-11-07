@@ -19,6 +19,8 @@
 #include <cstdint>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
+#include <iterator>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -290,15 +292,76 @@ namespace
         return lo + state % (hi - lo + 1);
     }
 
+    // A creature's aim (seen live, 2026-11-07): attacking, +0x104 holds its target's id and +0x108/+0x10C where the
+    // target stands; walking or idle, +0x104/+0x108 hold the point it goes to (world coordinates, far above any id).
+    // The id counts only when the position after it is its object's, give or take its last steps.
+    constexpr size_t kAimId = 0x104, kAimX = 0x108, kAimY = 0x10C;
+    constexpr int32_t kAimSlack = 400;     // world units, about 7 tiles
+
+    uint32_t aimOf(cObjectManager* objects, cObject* creature)
+    {
+        const auto* base = reinterpret_cast<const uint8_t*>(creature);
+        const uint32_t id = *reinterpret_cast<const uint32_t*>(base + kAimId);
+        cObject* target = id && id != creature->id ? objects->object(id) : nullptr;
+        if (!target)
+        {
+            return 0;
+        }
+        const int32_t x = *reinterpret_cast<const int32_t*>(base + kAimX);
+        const int32_t y = *reinterpret_cast<const int32_t*>(base + kAimY);
+        return std::abs(x - target->x) <= kAimSlack && std::abs(y - target->y) <= kAimSlack ? id : 0;
+    }
+
+    // Enemies the player attacked themself (the hero's aim after a click of theirs): fought to the end.
+    std::unordered_set<uint32_t> g_playerTargets;
+
+    // Who the auto attack fights: only the enemies attacking the hero (or what it rides) and those the player
+    // attacked; the rest are left alone, however close.
+    bool engaged(cObjectManager* objects, uint32_t id, uint32_t self, uint32_t hero)
+    {
+        if (g_playerTargets.count(id))
+        {
+            return true;
+        }
+        cObject* foe = objects->object(id);
+        const uint32_t aim = foe ? aimOf(objects, foe) : 0;
+        return aim && (aim == hero || aim == self);
+    }
+
+    // After a click of the player's: the enemy they set the hero on is theirs to the end. Dead or gone ones are
+    // dropped.
+    void notePlayerTarget()
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cEngine* engine = FrameHooks::engine();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!objects || !engine || !hero)
+        {
+            return;
+        }
+        cObject* controlled = objects->object(engine->controlled);
+        const uint32_t aim = controlled ? aimOf(objects, controlled) : 0;
+        cCreature* foe = aim ? objects->creature(aim) : nullptr;
+        if (foe && foe->health > 0 && hero->isEnemy(foe) && g_playerTargets.insert(aim).second)
+        {
+            LOG("AutoAttack: the player attacks {:x}", aim);
+        }
+        for (auto it = g_playerTargets.begin(); it != g_playerTargets.end();)
+        {
+            cCreature* c = objects->creature(*it);
+            it = c && c->health > 0 ? std::next(it) : g_playerTargets.erase(it);
+        }
+    }
+
     struct Choice
     {
         uint32_t id = 0;
         bool urgent = false;    // under threat: acted on sooner
     };
 
-    // Which enemy to fight, weighing the situation: those close, closing in or hurting the hero first, the badly
-    // wounded finished off, the current one kept unless another is clearly better. Loot is not the auto attack's:
-    // the player collects with A (see collectFrame).
+    // Which enemy to fight. Only those attacking the hero and those the player attacked (engaged); of them, weighing
+    // the situation: those close, closing in or hurting the hero first, the badly wounded finished off, the current
+    // one kept unless another is clearly better. Loot is not the auto attack's: the player collects with A.
     bool decide(DWORD now, Choice& out)
     {
         float hx, hy;
@@ -317,6 +380,16 @@ namespace
         }
         const bool hurt = g_hurtAt && static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
 
+        cObjectManager* objects = cObjectManager::instance();
+        cEngine* engine = FrameHooks::engine();
+        cCreature* heroObject = objects ? objects->hero() : nullptr;
+        if (!objects || !engine || !heroObject)
+        {
+            return false;
+        }
+        const uint32_t heroId = heroObject->id;
+        const uint32_t self = engine->controlled;
+
         const float range = static_cast<float>(Config::autoAttack.range);
         AimAssist::Foe foes[kMaxFoes];
         const int count = AimAssist::enemies(range * 1.5f, foes, kMaxFoes);
@@ -331,7 +404,8 @@ namespace
             const float d = std::sqrt(dx * dx + dy * dy);
             distances[f.id] = d;
             const bool current = f.id == g_target;
-            if (d > range && !current)
+            // Within the look's reach (1.5 Range): an archer shooting from afar is fought too.
+            if (!current && !engaged(objects, f.id, self, heroId))
             {
                 continue;
             }
@@ -624,6 +698,11 @@ void AutoAttack::onFrame()
         }
     }
     g_collectKeyWasDown = collectDown;
+    // The player's own attacks, while their click holds the auto attack back and a moment after.
+    if (static_cast<int>(now - g_quietUntil) < 1500)
+    {
+        notePlayerTarget();
+    }
     // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
     // flags did not give away, and the dialog its text. Close it and never go there again.
     if (g_collecting && foreground && g_looting && g_target && UiNav::npcDialogOpen())
