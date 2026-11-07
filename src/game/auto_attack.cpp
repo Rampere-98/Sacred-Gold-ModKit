@@ -89,16 +89,41 @@ namespace
     constexpr size_t kFixedSize = 0x58, kFixedKind = 0x04, kFixedName = 0x18;
     constexpr uint32_t kFixedUsable = 0x00010000;
 
-    bool fixedUsable(uint32_t id)
+    size_t fixedCount()
     {
         const auto* begin = *reinterpret_cast<const uint8_t* const*>(kFixedBegin);
         const auto* end = *reinterpret_cast<const uint8_t* const*>(kFixedEnd);
+        return begin && end >= begin ? static_cast<size_t>(end - begin) / kFixedSize : 0;
+    }
+
+    const uint8_t* fixedRecord(uint32_t id)
+    {
         const size_t index = id & 0xFFFF;
-        if (!begin || end < begin || index >= static_cast<size_t>(end - begin) / kFixedSize)
+        return index < fixedCount() ? *reinterpret_cast<const uint8_t* const*>(kFixedBegin) + index * kFixedSize
+                                    : nullptr;
+    }
+
+    // Where the fixed thing stands (world): its tile (+0, +2), where the game sends a creature using it (ENG 0053B784).
+    constexpr double kFixedTile = 53.66563;
+    bool fixedPosition(uint32_t id, int32_t& x, int32_t& y)
+    {
+        const uint8_t* record = fixedRecord(id);
+        if (!record)
         {
             return false;
         }
-        const uint8_t* record = begin + index * kFixedSize;
+        x = static_cast<int32_t>((*reinterpret_cast<const uint16_t*>(record) + 0.5) * kFixedTile);
+        y = static_cast<int32_t>((*reinterpret_cast<const uint16_t*>(record + 2) + 0.5) * kFixedTile);
+        return true;
+    }
+
+    bool fixedUsable(uint32_t id)
+    {
+        const uint8_t* record = fixedRecord(id);
+        if (!record)
+        {
+            return false;
+        }
         const bool usable = *reinterpret_cast<const uint32_t*>(record + kFixedKind) == kFixedUsable;
         static std::unordered_set<uint32_t> logged;
         if (logged.insert(id).second && logged.size() < 512)
@@ -251,6 +276,54 @@ namespace
         return id == g_target;
     }
 
+    // Magic hiding places (VERSTECK) have no picture and are not in the pick list: the cursor finds them by the tile
+    // under it, shows the hand and their name. Gone for by their record's tile, within LootRange / 40 tiles (about
+    // the screen pixels LootRange stands for) on either axis.
+    bool findHidingPlace(uint32_t& out)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        const size_t count = fixedCount();
+        if (!hero || !count)
+        {
+            return false;
+        }
+        const double reach = Config::autoAttack.lootRange / 40.0 * kFixedTile;
+        double best = 1e30;
+        for (size_t i = 0; i < count; ++i)
+        {
+            const uint32_t id = kFixedId | static_cast<uint32_t>(i);
+            const uint8_t* record = fixedRecord(id);
+            if (std::memcmp(record + kFixedName, "VERSTECK", 9) != 0)
+            {
+                continue;
+            }
+            int32_t x = 0, y = 0;
+            fixedPosition(id, x, y);
+            const double dx = x - hero->x, dy = y - hero->y;
+            if (std::abs(dx) > reach || std::abs(dy) > reach || dx * dx + dy * dy >= best ||
+                lootBlocked(id, GetTickCount()) || g_lootDone.count(id))
+            {
+                continue;
+            }
+            best = dx * dx + dy * dy;
+            out = id;
+        }
+        return best < 1e30;
+    }
+
+    // The nearest loot: on the screen (items, containers, wells) or a hiding place.
+    bool findLoot(uint32_t& out)
+    {
+        AimAssist::Target t;
+        if (AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, t))
+        {
+            out = t.id;
+            return true;
+        }
+        return findHidingPlace(out);
+    }
+
     // Whether the hero is done with the loot it goes for: it gives up after a while, or after standing at it (an
     // opened container stays, and so does an item when the inventory is full).
     int32_t g_fixedX = 0, g_fixedY = 0;  // where the fixed thing gone for stands (world), see attack
@@ -350,25 +423,22 @@ namespace
         cCreature* self = objects->creature(engine->controlled);
         if (self && isFixed(id))
         {
-            // As a click on it: the order 7 with its id and the world point under it (the middle of its rect).
-            AimAssist::Target t;
-            cWorldView* view = engine->worldView();
-            if (!view || !AimAssist::locate(id, AimAssist::Kind::Interact, t))
+            // As a click on it: the order 7 with its id and where it stands.
+            int32_t x = 0, y = 0;
+            if (!fixedPosition(id, x, y))
             {
                 return false;
             }
-            WorldPoint point{};
-            view->screenToWorld(static_cast<int>(t.x), static_cast<int>(t.y), point);
-            g_fixedX = point.x;
-            g_fixedY = point.y;
-            if (walkFirst(self, point.x, point.y))
+            g_fixedX = x;
+            g_fixedY = y;
+            if (walkFirst(self, x, y))
             {
                 return true;
             }
             UseOrder order;
             order.target = id;
-            order.x = point.x;
-            order.y = point.y;
+            order.x = x;
+            order.y = y;
             const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
             handler(self, nullptr, &order);
             return true;
@@ -711,7 +781,7 @@ namespace
         {
             AimAssist::Target current;
             const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
-            if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
+            if (!isFixed(g_target) && !AimAssist::findObject(reach, &isCurrent, nullptr, current))
             {
                 g_target = 0;           // gone from the ground: being picked up
                 g_pickupUntil = now + kPickupMs;
@@ -742,16 +812,16 @@ namespace
             }
             g_target = 0;
         }
-        AimAssist::Target next;
-        if (!AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, next))
+        uint32_t next = 0;
+        if (!findLoot(next))
         {
             endCollect("nothing left");
             return;
         }
-        if (attack(next.id))
+        if (attack(next))
         {
-            LOG("AutoAttack: collect {:x}", next.id);
-            g_target = next.id;
+            LOG("AutoAttack: collect {:x}", next);
+            g_target = next;
             g_looting = true;
             g_sentAt = now;
             g_lootAtSince = 0;
@@ -760,7 +830,7 @@ namespace
         }
         else
         {
-            lootFailed(next.id, now);
+            lootFailed(next, now);
         }
     }
 
@@ -833,15 +903,12 @@ namespace
         {
             return;
         }
-        AimAssist::Target loot;
-        const bool found = AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr,
-            loot);
-        if (!found ||
-            underAttack())
+        uint32_t loot = 0;
+        if (!findLoot(loot) || underAttack())
         {
             return;
         }
-        LOG("AutoAttack: loot about ({:x}), collecting", loot.id);
+        LOG("AutoAttack: loot about ({:x}), collecting", loot);
         Inject::key(kCollectKey, true);
         Inject::key(kCollectKey, false);
         startCollect(now);
