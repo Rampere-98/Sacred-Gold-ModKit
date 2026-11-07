@@ -68,8 +68,14 @@ namespace
     // on the ground that Alt shows the names of.
     constexpr uint16_t kPickItem = 2;
 
+    // The object's flags (cObject +0x14). Bit 0 marks fixtures the game still ranks as ground items: signposts and
+    // plaques (cSpecial3D like gold and quest items, whose click only opens their text). Seen: signpost 04000001;
+    // weapons, rings, gold 04000000, gold a monster dropped 04100000.
+    constexpr size_t kObjectFlags = 0x14;
+    constexpr uint32_t kFixtureFlag = 0x1;
+
     // What the object is: a cChest3D (its own class, by RTTI; it derives from cItemBase) is a container; anything
-    // else the game ranks as a ground item is an item, whatever its class (gold included).
+    // else the game ranks as a ground item is an item, whatever its class (gold included), but fixtures.
     Loot lootOf(cObject* object)
     {
         const void* vtable = object->vtable;
@@ -83,7 +89,9 @@ namespace
         }
         else if (category == kPickItem)
         {
-            loot = Loot::Item;
+            const uint32_t flags = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) +
+                                                                     kObjectFlags);
+            loot = (flags & kFixtureFlag) ? Loot::None : Loot::Item;
         }
         // Each class and category once, to see in the log what is taken and what is not.
         static std::unordered_set<uint64_t> logged;
@@ -145,11 +153,6 @@ namespace
     DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
     DWORD g_quietUntil = 0;         // the player's own clicks: no auto attack before this tick
-    int g_lastHealth = 0;           // the hero's health on the last frame
-    DWORD g_hurtAt = 0;             // when it last lost health
-
-    // After the hero loses health, this long the enemies within Range come before any loot.
-    constexpr DWORD kHurtMs = 4000;
 
     // The physical state: SacredBild's GetAsyncKeyState is not the game's patched import, so injected input and
     // the controller never show here.
@@ -325,8 +328,8 @@ void AutoAttack::onFrame()
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         g_target = 0;
     }
-    // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a signpost
-    // and the dialog its text. Close it and never go there again.
+    // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
+    // flags did not give away, and the dialog its text. Close it and never go there again.
     if (g_on && foreground && g_looting && g_target && static_cast<int>(now - g_quietUntil) >= 0 &&
         UiNav::npcDialogOpen())
     {
@@ -345,50 +348,23 @@ void AutoAttack::onFrame()
         return;
     }
 
-    // Whether the hero is under attack: it lost health lately.
-    int health = 0, maximum = 0;
-    AimAssist::heroHealth(health, maximum);
-    if (health < g_lastHealth)
-    {
-        g_hurtAt = now;
-    }
-    g_lastHealth = health;
-    const bool hurt = static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
-
-    // The nearest enemy within Range. While nothing hurts the hero, loot competes with it: whichever is nearer,
-    // with a margin for the one it already goes for so it does not switch back and forth. Under attack, the enemies
-    // around come first, and loot only once none is left.
-    AimAssist::Target enemy, loot;
-    const bool haveEnemy = chooseTarget(enemy, static_cast<float>(Config::autoAttack.range));
-    bool haveLoot = false;
-    if (!(hurt && haveEnemy) && Config::autoAttack.pickup)
+    // Loot on the ground first, always; then the nearest enemy within Range.
+    AimAssist::Target t;
+    bool looting = false;
+    if (Config::autoAttack.pickup)
     {
         if (g_looting && g_target && lootDone(g_target, now))
         {
             lootFailed(g_target, now);
             g_target = 0;
         }
-        haveLoot = chooseLoot(loot);
+        looting = chooseLoot(t);
     }
-    bool looting = false;
-    if (haveLoot && haveEnemy)
-    {
-        float hx, hy;
-        AimAssist::hero(hx, hy);
-        const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
-        const float enemyDistance = std::hypot(enemy.x - hx, enemy.y - hy);
-        looting = lootDistance * (g_looting ? 0.8f : 1.25f) < enemyDistance;
-    }
-    else if (!haveLoot && !haveEnemy)
+    if (!looting && !chooseTarget(t, static_cast<float>(Config::autoAttack.range)))
     {
         g_target = 0;
         return;
     }
-    else
-    {
-        looting = haveLoot;
-    }
-    const AimAssist::Target t = looting ? loot : enemy;
     if (t.id == g_target && looting == g_looting)
     {
         // Enemies: the order again every Repeat ms. Loot: only when the hero stalls.
