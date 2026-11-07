@@ -35,6 +35,16 @@ namespace AimAssist
     // `accept(id, context)` takes.
     bool findObject(float range, bool (*accept)(uint32_t id, void* context), void* context, Target& out);
 
+    // An enemy on the screen with its health, for weighing the situation.
+    struct Foe
+    {
+        uint32_t id = 0;
+        float x = 0.0f, y = 0.0f;   // center of its rect, physical pixels
+        int health = 0, maxHealth = 0;
+    };
+    // The enemies within `range` pixels of the hero, at most `capacity` of them, into `out`; how many.
+    int enemies(float range, Foe* out, int capacity);
+
     // Where target `id` is now; false once it is gone (or, for an enemy, dead or no longer hostile).
     bool locate(uint32_t id, Kind kind, Target& out);
 

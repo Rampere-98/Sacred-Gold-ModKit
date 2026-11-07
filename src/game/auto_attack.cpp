@@ -181,27 +181,6 @@ namespace
         return AimAssist::heroHealth(health, maximum) && health > 0;
     }
 
-    // The current target if it is still there and within reach, else the nearest enemy in range (`range` pixels).
-    bool chooseTarget(AimAssist::Target& t, float range)
-    {
-        float hx, hy;
-        if (!AimAssist::hero(hx, hy))
-        {
-            return false;
-        }
-        if (g_target && AimAssist::locate(g_target, AimAssist::Kind::Enemy, t))
-        {
-            // Keep chasing it up to half again the range, then look for a closer one.
-            const float dx = t.x - hx, dy = t.y - hy;
-            const float reach = range * 1.5f;
-            if (dx * dx + dy * dy <= reach * reach)
-            {
-                return true;
-            }
-        }
-        return AimAssist::find(AimAssist::Kind::Enemy, 0.0f, 0.0f, range, 360.0f, t);
-    }
-
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id))
@@ -295,6 +274,141 @@ namespace
         return true;
     }
 
+    // Natural pace: a look at the situation every so often, a moment before acting on a new aim, orders repeated at
+    // slightly uneven intervals.
+    constexpr DWORD kThinkMinMs = 180, kThinkMaxMs = 340;
+    constexpr DWORD kReactMinMs = 220, kReactMaxMs = 480;
+    constexpr DWORD kReactUrgentMinMs = 90, kReactUrgentMaxMs = 220;
+    // Hurt this recently: the hero is under attack.
+    constexpr DWORD kHurtMs = 2500;
+    constexpr int kMaxFoes = 32;
+
+    DWORD g_thinkAt = 0;            // the next look at the situation
+    uint32_t g_pending = 0;         // the new aim not acted on yet, 0 for none
+    bool g_pendingLoot = false;
+    DWORD g_actAt = 0;              // ... acted on from this tick
+    int g_repeatMs = 1000;          // this target's repeat interval: Repeat with some spread
+    int g_lastHealth = 0;
+    DWORD g_hurtAt = 0;             // when the hero last lost health, 0 for never
+    std::unordered_map<uint32_t, float> g_lastDistance;   // each enemy's distance at the last look, pixels
+
+    DWORD jitter(DWORD lo, DWORD hi)
+    {
+        static uint32_t state = GetTickCount() | 1;
+        state ^= state << 13;
+        state ^= state >> 17;
+        state ^= state << 5;
+        return lo + state % (hi - lo + 1);
+    }
+
+    struct Choice
+    {
+        uint32_t id = 0;
+        bool loot = false;
+        bool urgent = false;    // under threat: acted on sooner
+    };
+
+    // What to do now, weighing the situation. Enemies close, closing in or hurting the hero come before loot; with
+    // nothing threatening, whichever is nearer, loot or enemy; loot at the hero's feet is taken even mid-fight while
+    // the enemies are farther away. The current aim is kept unless another is clearly better.
+    bool decide(DWORD now, Choice& out)
+    {
+        float hx, hy;
+        if (!AimAssist::hero(hx, hy))
+        {
+            return false;
+        }
+        int health = 0, maximum = 0;
+        if (AimAssist::heroHealth(health, maximum))
+        {
+            if (g_lastHealth && health < g_lastHealth)
+            {
+                g_hurtAt = now;
+            }
+            g_lastHealth = health;
+        }
+        const bool hurt = g_hurtAt && static_cast<int>(now - g_hurtAt) < static_cast<int>(kHurtMs);
+
+        const float range = static_cast<float>(Config::autoAttack.range);
+        AimAssist::Foe foes[kMaxFoes];
+        const int count = AimAssist::enemies(range * 1.5f, foes, kMaxFoes);
+        std::unordered_map<uint32_t, float> distances;
+        bool threat = hurt;
+        float enemyCost = 0.0f, enemyDistance = 0.0f;
+        uint32_t enemy = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            const AimAssist::Foe& f = foes[i];
+            const float dx = f.x - hx, dy = f.y - hy;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            distances[f.id] = d;
+            const bool current = !g_looting && f.id == g_target;
+            if (d > range && !current)
+            {
+                continue;
+            }
+            const auto last = g_lastDistance.find(f.id);
+            const bool closing = last != g_lastDistance.end() && last->second - d > 12.0f;
+            if (d < range * 0.45f || closing)
+            {
+                threat = true;
+            }
+            float cost = d;
+            if (closing)
+            {
+                cost *= 0.7f;       // the one coming at the hero first
+            }
+            if (f.maxHealth > 0 && f.health * 10 < f.maxHealth * 3)
+            {
+                cost *= 0.8f;       // finish off the badly wounded
+            }
+            if (current)
+            {
+                cost *= 0.7f;       // no flitting between enemies
+            }
+            if (!enemy || cost < enemyCost)
+            {
+                enemy = f.id;
+                enemyCost = cost;
+                enemyDistance = d;
+            }
+        }
+        g_lastDistance = std::move(distances);
+
+        AimAssist::Target loot;
+        bool haveLoot = Config::autoAttack.pickup && chooseLoot(loot);
+        float lootCost = 0.0f;
+        if (haveLoot)
+        {
+            const float dx = loot.x - hx, dy = loot.y - hy;
+            lootCost = std::sqrt(dx * dx + dy * dy);
+            const bool current = g_looting && loot.id == g_target;
+            if (current)
+            {
+                lootCost *= 0.7f;
+            }
+            if (enemy && threat)
+            {
+                // Under threat only what lies at the hero's feet with the enemies farther away, and the pick up
+                // the hero is already stooping for.
+                const bool atFeet = lootCost < enemyDistance * 0.35f && lootCost < range * 0.3f;
+                const bool stooping = current && g_lootAtSince && !hurt;
+                haveLoot = atFeet || stooping;
+            }
+        }
+        if (haveLoot && (!enemy || lootCost <= enemyCost))
+        {
+            out = {loot.id, true, false};
+            return true;
+        }
+        if (enemy)
+        {
+            out = {enemy, false, threat};
+            return true;
+        }
+        return false;
+    }
+
     // The ModKit menu's section: what changes applies at once.
     void drawMenu()
     {
@@ -364,6 +478,7 @@ void AutoAttack::onFrame()
     {
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         g_target = 0;
+        g_pending = 0;
     }
     // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
     // flags did not give away, and the dialog its text. Close it and never go there again.
@@ -382,6 +497,8 @@ void AutoAttack::onFrame()
         static_cast<int>(now - g_quietUntil) < 0)
     {
         g_target = 0;
+        g_pending = 0;
+        g_lastHealth = 0;
         return;
     }
 
@@ -390,61 +507,97 @@ void AutoAttack::onFrame()
         return;
     }
 
-    // Loot on the ground first, always; then the nearest enemy within Range.
-    AimAssist::Target t;
-    bool looting = false;
-    if (Config::autoAttack.pickup)
+    // The loot under way: picked up (gone from the ground), or given up.
+    if (g_looting && g_target)
     {
-        if (g_looting && g_target)
+        AimAssist::Target current;
+        const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
+        if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
         {
-            AimAssist::Target current;
-            const float reach = static_cast<float>(Config::autoAttack.lootRange) * 1.5f;
-            if (!AimAssist::findObject(reach, &isCurrent, nullptr, current))
-            {
-                // Gone from the ground: the hero is picking it up. Let it finish.
-                g_target = 0;
-                g_looting = false;
-                g_pickupUntil = now + kPickupMs;
-                return;
-            }
-            if (lootDone(g_target, now))
-            {
-                lootFailed(g_target, now);
-                g_target = 0;
-            }
+            // Gone from the ground: the hero is picking it up. Let it finish.
+            g_target = 0;
+            g_looting = false;
+            g_pending = 0;
+            g_pickupUntil = now + kPickupMs;
+            return;
         }
-        looting = chooseLoot(t);
+        if (lootDone(g_target, now))
+        {
+            lootFailed(g_target, now);
+            g_target = 0;
+            g_looting = false;
+        }
     }
-    if (!looting && !chooseTarget(t, static_cast<float>(Config::autoAttack.range)))
+
+    // A look at the situation now and then, as a player glances around, not every frame.
+    if (static_cast<int>(now - g_thinkAt) >= 0 || (!g_target && !g_pending))
     {
-        g_target = 0;
+        g_thinkAt = now + jitter(kThinkMinMs, kThinkMaxMs);
+        Choice choice;
+        if (!decide(now, choice))
+        {
+            g_target = 0;
+            g_looting = false;
+            g_pending = 0;
+            return;
+        }
+        if (choice.id == g_target && choice.loot == g_looting)
+        {
+            g_pending = 0;
+        }
+        else if (choice.id != g_pending || choice.loot != g_pendingLoot)
+        {
+            // A new aim: acted on after a moment, sooner under threat.
+            g_pending = choice.id;
+            g_pendingLoot = choice.loot;
+            g_actAt = now + (choice.urgent ? jitter(kReactUrgentMinMs, kReactUrgentMaxMs)
+                                           : jitter(kReactMinMs, kReactMaxMs));
+        }
+    }
+
+    uint32_t id = g_target;
+    bool looting = g_looting;
+    if (g_pending && static_cast<int>(now - g_actAt) >= 0)
+    {
+        id = g_pending;
+        looting = g_pendingLoot;
+        g_pending = 0;
+    }
+    if (!id)
+    {
         return;
     }
-    if (t.id == g_target && looting == g_looting)
+    if (id == g_target && looting == g_looting)
     {
-        // Enemies: the order again every Repeat ms. Loot: only when the hero stalls.
-        const int repeat = Config::autoAttack.repeatMs;
+        // Enemies: the order again about every Repeat ms. Loot: only when the hero stalls.
         const int sinceSent = static_cast<int>(now - g_sentAt);
         // Never once the hero stands at it: a new order would cut its stooping short.
         const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
         const bool lootAgain = !g_lootAtSince && stalled && sinceSent > static_cast<int>(kLootNudgeMs);
-        const bool again = looting ? lootAgain : repeat > 0 && sinceSent >= repeat;
+        const bool again = looting ? lootAgain : g_repeatMs > 0 && sinceSent >= g_repeatMs;
         if (!again)
         {
             return;
         }
     }
-    if (attack(t.id))
+    if (attack(id))
     {
-        if (t.id != g_target || looting != g_looting)
+        if (id != g_target || looting != g_looting)
         {
-            LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", t.id);
+            LOG("AutoAttack: {} {:x}", looting ? "loot" : "target", id);
             g_lootAtSince = 0;
             g_lootBestAt = now;
             g_lootBest = 1e9f;
         }
-        g_target = t.id;
+        g_target = id;
         g_looting = looting;
         g_sentAt = now;
+        const int repeat = Config::autoAttack.repeatMs;
+        g_repeatMs = repeat > 0 ? repeat * static_cast<int>(jitter(80, 125)) / 100 : 0;
+    }
+    else if (id == g_target)
+    {
+        g_target = 0;
+        g_looting = false;
     }
 }

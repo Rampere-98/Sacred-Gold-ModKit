@@ -1,10 +1,12 @@
 #pragma once
 
-// Auto attack for keyboard and mouse play ([AutoAttack]): a key toggles it; while it is on, the hero attacks the enemy
-// nearest to it within a range (AimAssist finds it on the screen) and takes the next one once it dies. Before that,
-// always, it picks up the items around (gold too) and opens chests and other containers ([AutoAttack] Pickup);
-// signposts and other fixtures are left alone. It gives the
-// hero the order a click on the enemy gives, directly, so the mouse and the game's cursor stay the player's: the
+// Auto attack for keyboard and mouse play ([AutoAttack]): a key toggles it; while it is on, the hero fights the
+// enemies within a range (AimAssist finds them on the screen), picks up the items around (gold too) and opens chests
+// and other containers ([AutoAttack] Pickup); signposts and other fixtures are left alone. What comes first is weighed
+// as a player would: enemies close by, closing in or hurting the hero before loot (but for what lies at its feet);
+// with nothing threatening, whichever is nearer. It looks around every few hundred ms and acts on a new aim after a
+// short, uneven reaction time, keeping its aim unless another is clearly better. It gives the
+// hero the order a click on the target gives, directly, so the mouse and the game's cursor stay the player's: the
 // inventory and other windows can be used meanwhile. A mouse button hands control back at once, for [AutoAttack]
 // Pause ms. It only acts in the running game world (no menus, dialogs or popups) and never while the controller
 // drives the game.
