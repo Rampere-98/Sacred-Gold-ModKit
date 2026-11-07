@@ -31,6 +31,7 @@ tabs, Start is Play. Text fields need the keyboard.
 | AutoAttack | Key | 122 | Virtual-key code of the toggle key (122 = F11); a beep says on or off. |
 | AutoAttack | Range | 400 | Enemies within this many screen pixels of the hero; the current one is chased up to 1.5 times as far. |
 | AutoAttack | Pause | 700 | Milliseconds without auto attack after the player presses a mouse button (moving the mouse does not pause it). |
+| AutoAttack | Pickup | 1 | With no enemy in range, the hero picks up the items lying within `Range` and opens chests and other containers (the same order a click gives). Items it cannot take (a full inventory) and opened containers are left after a moment. |
 | AutoAttack | Repeat | 1000 | The attack order is given again this often while the target lives; 0 = once per target. |
 | Render | TextureBudgetMB | 0 | Texture memory the game may keep loaded; 0 = the game's value, at least 256. |
 | Render | Batch | 1 | Merge the world view's draw calls. |
