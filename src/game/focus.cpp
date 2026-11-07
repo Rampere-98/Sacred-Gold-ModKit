@@ -7,6 +7,7 @@
 #include "config/display.h"
 #include "log.h"
 #include "patch.h"
+#include "sig.h"
 
 #include <atomic>
 #include <mutex>
@@ -253,6 +254,22 @@ void Focus::install()
         Patch::write(Sacred::Addr::activateAppPauseOr, kKeep, sizeof(kKeep)))
     {
         LOG("Focus: rendering continues in the background");
+    }
+    // With the game's fullscreen mode (Settings.cfg FULLSCREEN : 1, what SacredBild shows as a borderless window) the
+    // deactivation took another branch: the same pause, then ShowWindow(SW_MINIMIZE), so selecting another window
+    // minimized the game. The pause goes as above and SW_MINIMIZE becomes SW_SHOWNA (the window stays as it is).
+    constexpr size_t kMinimizeAt = 0x27;
+    constexpr uint8_t kShowNa[] = {0x6A, SW_SHOWNA};
+    // The fullscreen mode's deactivation (ENG 00812EC0): or eax, edi; push 0x32; ...; push 6 (SW_MINIMIZE) at +0x27.
+    static uintptr_t full = 0;
+    const Sig::Entry fullSigs[] = {
+        {"focus: fullscreen deactivation", "0B C7 6A 32 A3 ?? ?? ?? ?? FF 15 ?? ?? ?? ?? 8B 15 ?? ?? ?? ?? 8B 82 B4 00 "
+         "00 00 50 8B 08 FF 51 4C 8B 15 ?? ?? ?? ?? 6A 06", 0, Sig::Take::Match, &full},
+    };
+    if (Sig::resolve(fullSigs) == 0 && Patch::verify(full, {0x0B, 0xC7}) && Patch::verify(full + kMinimizeAt, {0x6A, SW_MINIMIZE}) &&
+        Patch::write(full, kKeep, sizeof(kKeep)) && Patch::write(full + kMinimizeAt, kShowNa, sizeof(kShowNa)))
+    {
+        LOG("Focus: the fullscreen mode no longer minimizes the window in the background");
     }
 }
 
