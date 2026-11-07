@@ -10,7 +10,7 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 | Rama | Mod | Ajuste en `SacredBild.ini` |
 |---|---|---|
 | `main` | Cuerpo principal: SacredBild sin mods. | - |
-| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): ataca según la situación con las órdenes del propio juego; la recogida es la del juego (tecla A), mejorada: al terminar toma lo que quedó en el radio y abre los cofres, y el autoataque espera a que acabe; el ratón queda libre para el inventario. | `[AutoAttack]` |
+| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): decide como un jugador (enemigos cerca, acercándose o hiriéndole primero) y ataca con las órdenes del propio juego, con tiempos de reacción naturales; la recogida es la del juego (tecla A), mejorada: al terminar toma lo que quedó en el radio y abre los cofres, y el autoataque espera a que acabe; además usa las artes de combate según para qué sirven (curas solo si falta vida, área solo con varios enemigos, golpes fuertes solo contra enemigos duros, mejoras al empezar una pelea dura; aprende qué hace cada una) y los consumibles (Mentor, Antídoto, Concentración, Muerte de no-muertos, curar mercenarios); el ratón queda libre para el inventario. | `[AutoAttack]` |
 | [`mod/auto-potion`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-potion) | Pociones de curación automáticas: bebe (tecla Espacio del juego) cuando falta tanta vida como cura una poción, cantidad que aprende de las que bebe. | `[AutoPotion]` |
 | [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
 | [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
@@ -21,7 +21,10 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 todos. El workflow del repo (Actions → *Build*, *Run workflow* sobre la rama) genera el `ddraw.dll`; se copia en la
 carpeta del juego con `SacredBild.ini` y `SacredBild\` como en SacredBild.
 
-**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini, y después
+**Menú del ModKit:** la tecla Inicio abre y cierra sobre el juego (también en los menús) los ajustes de cada mod
+instalado; los cambios se aplican al momento y *Guardar en SacredBild.ini* los conserva. Necesita `[DDraw] Backend=d3d9`.
+
+**Añadir un mod:** rama `mod/<nombre>` desde `main`, un módulo en `src/game/` con su sección en el ini y en el menú (`ModkitMenu::add`), y después
 merge en `modkit`. Notas de ingeniería inversa y herramientas: [sacred-gold-ultrawide](https://github.com/Rampere-98/sacred-gold-ultrawide).
 
 ---
