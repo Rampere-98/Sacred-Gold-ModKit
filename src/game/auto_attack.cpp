@@ -1,6 +1,7 @@
 #include "game/auto_attack.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
+#include "config/tactics.h"
 #include "game/aim_assist.h"
 #include "game/controller.h"
 #include "game/focus.h"
@@ -694,6 +695,9 @@ namespace
         ImGui::RadioButton("Solo quien me ataca (y a quien ataco yo)", &mode, 0);
         ImGui::RadioButton("Buscar combate (cualquier enemigo en el radio)", &mode, 1);
         c.seek = mode == 1;
+        // The same switches as in the tactics section, here with the fight.
+        ImGui::Checkbox("Usar habilidades (artes de combate)##fight", &Config::tactics.arts);
+        ImGui::Checkbox("Usar consumibles##fight", &Config::tactics.consumables);
         int collect = c.autoCollect ? 1 : 0;
         ImGui::TextUnformatted("Recogida:");
         ImGui::RadioButton("Solo al pulsar A", &collect, 0);
