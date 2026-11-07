@@ -1,15 +1,18 @@
 #include "game/wide_sectors.h"
 #include "config/render.h"
+#include "game/modkit_menu.h"
 #include "log.h"
 #include "patch.h"
 #include "sacred/world.h"
 #include "sig.h"
 
+#include <imgui.h>
 #include <windows.h>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
 #include <iterator>
+#include <string>
 
 namespace
 {
@@ -107,10 +110,28 @@ namespace
         const int r = slot / kSide, c = slot % kSide;
         return r >= 1 && r <= 3 && c >= 1 && c <= 3;
     }
+
+    // The menu edits the next start's choice: the patch is applied once, at start.
+    bool g_wanted = true;
+
+    void drawMenu()
+    {
+        ImGui::Checkbox("Sectores amplios (5x5)", &g_wanted);
+        ImGui::SetItemTooltip("Carga el mundo en 5x5 sectores para que las esquinas de la pantalla ancha no queden negras.");
+        ImGui::TextDisabled(g_wanted == g_active ? "Ahora: %s." : "Ahora: %s. Guarda y reinicia el juego para cambiarlo.",
+            g_active ? "activos" : "inactivos");
+    }
+
+    void saveMenu(const std::wstring& ini)
+    {
+        ModkitMenu::write(ini, L"Render", L"WideSectors", g_wanted);
+    }
 }
 
 void WideSectors::install()
 {
+    g_wanted = Config::render.wideSectors;
+    ModkitMenu::add({"Sectores amplios", &drawMenu, &saveMenu});
     if (!Config::render.wideSectors)
     {
         return;
