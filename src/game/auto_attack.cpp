@@ -309,7 +309,8 @@ namespace
         ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
         ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 2000);
         ImGui::SliderInt("Pausa tras tu clic (ms)", &c.pauseMs, 0, 3000);
-        ImGui::SliderInt("Repetir orden (ms, 0 = una vez)", &c.repeatMs, 0, 3000);
+        ImGui::SliderInt("Repetir orden (ms)", &c.repeatMs, 0, 3000);
+        ImGui::SetItemTooltip("Cada cuánto se repite la orden de ataque; 0 = una sola vez por objetivo.");
     }
 
     void saveMenu(const std::wstring& ini)
