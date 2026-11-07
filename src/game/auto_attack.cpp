@@ -69,7 +69,17 @@ namespace
         None,
         Item,       // cItemBase: lying on the ground, a click picks it up
         Container,  // cChest3D: chests, coffers and the like, a click opens them
+        Fixed,      // a fixed thing of the map the cursor shows the hand on (id with bit 31): magic hiding places,
+                    // wells, graves; a click uses it. No object behind it, only its place in the pick list.
     };
+
+    // The pick list's ids with bit 31 set are the map's fixed things the cursor can use (the world mouse handler,
+    // ENG 00617939, gives them the same order 7 as objects, with the world point under the cursor).
+    constexpr uint32_t kFixedId = 0x80000000u;
+    bool isFixed(uint32_t id)
+    {
+        return (id & kFixedId) != 0;
+    }
 
     // The pick category the world pick ranks by (cObject::Vtable::pickCategory): Alt puts 2 first, the things lying
     // on the ground that Alt shows the names of.
@@ -188,20 +198,20 @@ namespace
         return AimAssist::heroHealth(health, maximum) && health > 0;
     }
 
-    // Collecting by itself (AutoCollect): items only. Containers open windows (a storage chest in town), which only
-    // the player's own A should do.
-    bool g_itemsOnly = false;
-
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_fixtures.count(id) || g_lootDone.count(id))
         {
             return false;
         }
+        if (isFixed(id))
+        {
+            return true;
+        }
         cObjectManager* objects = cObjectManager::instance();
         cObject* object = objects ? objects->object(id) : nullptr;
         const Loot loot = object ? lootOf(object) : Loot::None;
-        return loot == Loot::Item || (loot == Loot::Container && !g_itemsOnly);
+        return loot == Loot::Item || loot == Loot::Container;
     }
 
     bool isCurrent(uint32_t id, void*)
@@ -211,16 +221,19 @@ namespace
 
     // Whether the hero is done with the loot it goes for: it gives up after a while, or after standing at it (an
     // opened container stays, and so does an item when the inventory is full).
+    int32_t g_fixedX = 0, g_fixedY = 0;  // where the fixed thing gone for stands (world), see attack
+
     bool lootDone(uint32_t id, DWORD now)
     {
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
-        cObject* loot = objects ? objects->object(id) : nullptr;
-        if (!hero || !loot)
+        cObject* loot = objects && !isFixed(id) ? objects->object(id) : nullptr;
+        if (!hero || (!loot && !isFixed(id)))
         {
             return true;
         }
-        const float dx = static_cast<float>(loot->x - hero->x), dy = static_cast<float>(loot->y - hero->y);
+        const int32_t lx = loot ? loot->x : g_fixedX, ly = loot ? loot->y : g_fixedY;
+        const float dx = static_cast<float>(lx - hero->x), dy = static_cast<float>(ly - hero->y);
         const float distance = std::sqrt(dx * dx + dy * dy);
         // Progress: half a tile nearer than ever before.
         if (!g_lootBestAt || distance < g_lootBest - 0.5f * 53.66563f)
@@ -261,6 +274,28 @@ namespace
             return false;
         }
         cCreature* self = objects->creature(engine->controlled);
+        if (self && isFixed(id))
+        {
+            // As a click on it: the order 7 with its id and the world point under it (the middle of its rect,
+            // a little low, where it stands).
+            AimAssist::Target t;
+            cWorldView* view = engine->worldView();
+            if (!view || !AimAssist::locate(id, AimAssist::Kind::Interact, t))
+            {
+                return false;
+            }
+            WorldPoint point{};
+            view->screenToWorld(static_cast<int>(t.x), static_cast<int>(t.y), point);
+            g_fixedX = point.x;
+            g_fixedY = point.y;
+            UseOrder order;
+            order.target = id;
+            order.x = point.x;
+            order.y = point.y;
+            const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
+            handler(self, nullptr, &order);
+            return true;
+        }
         cObject* target = objects->object(id);
         if (!self || !target)
         {
@@ -515,9 +550,8 @@ namespace
         g_pending = 0;
     }
 
-    void startCollect(DWORD now, bool itemsOnly = false)
+    void startCollect(DWORD now)
     {
-        g_itemsOnly = itemsOnly;
         g_collecting = true;
         g_collectRest = false;
         g_collectStart = now;
@@ -551,6 +585,12 @@ namespace
     {
         if (!Controller::worldRunning() || !heroAlive())
         {
+            // A window the loot opened (the storage chest in town, a trader): never gone for again.
+            if (g_target && heroAlive())
+            {
+                LOG("AutoAttack: loot {:x} opened a window, left for good", g_target);
+                g_lootDone.insert(g_target);
+            }
             endCollect("no hero or world");
             return;
         }
@@ -713,10 +753,8 @@ namespace
             return;
         }
         AimAssist::Target loot;
-        g_itemsOnly = true;
         const bool found = AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr,
             loot);
-        g_itemsOnly = false;
         if (!found ||
             underAttack())
         {
@@ -725,7 +763,7 @@ namespace
         LOG("AutoAttack: loot about ({:x}), collecting", loot.id);
         Inject::key(kCollectKey, true);
         Inject::key(kCollectKey, false);
-        startCollect(now, true);
+        startCollect(now);
     }
 
     // The ModKit menu's section: what changes applies at once.
