@@ -11,6 +11,7 @@
 #include "game/resolution.h"
 #include "game/sacred_addr.h"
 #include "game/ui_canvas.h"
+#include "game/wide_sectors.h"
 #include "config/debug.h"
 #include "config/display.h"
 #include "config/render.h"
@@ -189,6 +190,7 @@ namespace
             hr = g_origFlip(self, edx);
         }
         D3DStats::mark(D3DStats::TOwnAfterFlip);
+        WideSectors::release();
         // Texture memory the texture manager loaded during this frame.
         if (cTextureManager* textures = cTextureManager::instance())
         {

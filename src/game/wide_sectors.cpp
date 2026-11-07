@@ -261,6 +261,22 @@ void WideSectors::update(cWorldView* view)
     std::copy(std::begin(next), std::end(next), std::begin(g_table));
 }
 
+void WideSectors::release()
+{
+    if (!g_active || !g_keptMap)
+    {
+        return;
+    }
+    for (uint32_t& id : g_kept)
+    {
+        if (Sector* s = id ? g_keptMap->sector(id - 1) : nullptr)
+        {
+            s->flags &= ~Sector::keep;
+        }
+        id = 0;
+    }
+}
+
 Sector* WideSectors::at(int slot)
 {
     return slot >= 0 && slot < kCount ? g_table[slot] : nullptr;

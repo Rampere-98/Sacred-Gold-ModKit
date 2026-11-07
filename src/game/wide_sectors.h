@@ -14,8 +14,8 @@ namespace Sacred
 // table: their reads of the view's array become absolute reads of the table, the "< 9" checks "< 25", and the
 // sector steps at a sector edge those of a 5-wide grid (one row up: -5 instead of -3; up and right: -4 instead of
 // -2). Rows then carry 5x5 indices (Resolution's row walk computes them), and the water list stores them too.
-// Ring sectors get the sector's keep flag while they are in the table, so a full sector cache does not unload them
-// under the walk.
+// Ring sectors get the sector's keep flag from update() until the frame is drawn (release()), so a full sector cache
+// does not unload them under the walk, and only then.
 namespace WideSectors
 {
     constexpr int kSide = 5;
@@ -29,6 +29,12 @@ namespace WideSectors
 
     // Once per frame, on the render thread, before the row walk: the game's 3x3 in the middle, the ring around it.
     void update(Sacred::cWorldView* view);
+
+    // After the frame is drawn (the flip): lets go of the ring sectors' keep flag, so the game's sector cache may
+    // unload them between frames as it would without the ring. The game puts a part of the map's doors and other
+    // objects back only when it loads their sector again: a ring that stayed loaded kept the doors of a place left
+    // by two sectors parked (gone) when the hero came back. update() takes them again (loading them if they went).
+    void release();
 
     // The sector at 5x5 index `slot` (row * 5 + column), nullptr if none is loaded there.
     Sacred::Sector* at(int slot);
