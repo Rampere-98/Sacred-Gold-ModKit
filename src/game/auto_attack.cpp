@@ -282,7 +282,9 @@ namespace
     constexpr DWORD kReactUrgentMinMs = 90, kReactUrgentMaxMs = 220;
     // Hurt this recently: the hero is under attack.
     constexpr DWORD kHurtMs = 2500;
-    constexpr int kMaxFoes = 32;
+    constexpr int kMaxFoes = 64;
+    // Enemies attacking the hero are fought this far away (times Range): archers and casters shoot from afar.
+    constexpr float kEngagedReach = 4.0f;
 
     DWORD g_thinkAt = 0;            // the next look at the situation
     uint32_t g_pending = 0;         // the new aim not acted on yet, 0 for none
@@ -402,7 +404,7 @@ namespace
 
         const float range = static_cast<float>(Config::autoAttack.range);
         AimAssist::Foe foes[kMaxFoes];
-        const int count = AimAssist::enemies(range * 1.5f, foes, kMaxFoes);
+        const int count = AimAssist::enemies(range * kEngagedReach, foes, kMaxFoes);
         std::unordered_map<uint32_t, float> distances;
         bool threat = hurt;
         float enemyCost = 0.0f, enemyDistance = 0.0f;
@@ -414,8 +416,8 @@ namespace
             const float d = std::sqrt(dx * dx + dy * dy);
             distances[f.id] = d;
             const bool current = f.id == g_target;
-            // Engaged ones within the look's reach (1.5 Range): an archer shooting from afar is fought too. Seeking
-            // fights, any other enemy within Range as well.
+            // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
+            // too. Seeking fights, any other enemy within Range as well.
             if (!current && !engaged(objects, f.id, self, heroId) && (!Config::autoAttack.seek || d > range))
             {
                 continue;
@@ -660,7 +662,8 @@ namespace
             return true;
         }
         AimAssist::Foe foes[kMaxFoes];
-        const int count = AimAssist::enemies(static_cast<float>(Config::autoAttack.range) * 1.5f, foes, kMaxFoes);
+        const int count =
+            AimAssist::enemies(static_cast<float>(Config::autoAttack.range) * kEngagedReach, foes, kMaxFoes);
         for (int i = 0; i < count; ++i)
         {
             if (engaged(objects, foes[i].id, engine->controlled, hero->id))
