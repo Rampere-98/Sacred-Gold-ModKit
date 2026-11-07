@@ -81,7 +81,8 @@ namespace
     constexpr int kLegTiles = 24;               // route legs, well inside the path finders' grid
     constexpr int kAheadTiles = 6;              // the next route leg goes out this close to the current one's end
     constexpr int kOffRouteTiles = 6;           // further from the route than this: plan again
-    constexpr int kMaxReplans = 3;
+    constexpr int kMaxReplans = 8;
+    constexpr int kAvoidTiles = 8;              // route tiles past the hero marked blocked when a leg got nowhere
 
     struct Cell
     {
@@ -105,6 +106,7 @@ namespace
         Sector* sectors[WideSectors::kCount] = {};
         cMapData* map = nullptr;
         std::vector<uint8_t> state;             // 0 not tested yet, 1 walkable, 2 blocked
+        std::vector<Cell> avoid;                // tiles the game's path finder found no way over during this walk
 
         bool load()
         {
@@ -125,6 +127,13 @@ namespace
                 sectors[slot] = s && s->originX == wantX && s->originY == wantY ? s : nullptr;
             }
             state.assign(kCells, 0);
+            for (const Cell& c : avoid)
+            {
+                if (inside(c.x, c.y))
+                {
+                    state[(c.y - baseY) * kSide + (c.x - baseX)] = 2;
+                }
+            }
             return true;
         }
 
@@ -390,6 +399,7 @@ namespace
                 {
                     g_goalX = order->x;
                     g_goalY = order->y;
+                    g_grid.avoid.clear();
                     const Cell from = cellOf(creature->x, creature->y);
                     Cell end{};
                     if (plan(from, cellOf(order->x, order->y)) && nextLeg(from, end))
@@ -479,9 +489,21 @@ namespace
         const bool movedLittle =
             std::max(std::abs(hero->x - g_legX), std::abs(hero->y - g_legY)) / kTileSize < kMovedTiles;
         Cell next{};
-        if ((stopped && movedLittle && toEnd > 2) || !nextLeg(at, next))
+        const bool stuck = stopped && movedLittle && toEnd > 2;
+        if (stuck || !nextLeg(at, next))
         {
-            // Stuck on the way or off the route (pushed aside, a door shut): the route again from here.
+            // Stuck on the way (the tile test lets through what the game's path finder does not: under a bridge,
+            // a closed gate) or off the route (pushed aside): the next stretch of the route counts as blocked
+            // for this walk, and the route is planned again from here.
+            if (stuck)
+            {
+                const size_t first = std::min(g_route.from + 1, g_route.cells.size() - 1);
+                const size_t last = std::min(first + kAvoidTiles, g_route.cells.size() - 1);
+                for (size_t i = first; i < last; ++i)
+                {
+                    g_grid.avoid.push_back(g_route.cells[i]);
+                }
+            }
             if (++g_route.replans > kMaxReplans || !plan(at, cellOf(g_goalX, g_goalY)) || !nextLeg(at, next))
             {
                 finish("blocked");
@@ -490,6 +512,11 @@ namespace
         }
         int32_t x, y;
         target(next, x, y);
+        if (Config::debug.uiTrace)
+        {
+            LOG("Click walk: leg from {},{} to {},{} (route tile {} of {}{})", at.x, at.y, next.x, next.y,
+                g_route.legEnd, g_route.cells.size(), stuck ? ", after a stuck leg" : "");
+        }
         sendLeg(engine, hero, x, y);
     }
 
