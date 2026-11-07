@@ -133,8 +133,11 @@ void ModkitMenu::onFrame()
         return;
     }
     // The physical key, only while the game has the focus.
-    const bool down = Focus::foreground() && (GetAsyncKeyState(kMenuKey) & 0x8000) != 0;
-    const bool pressed = down && !g_keyWasDown;
+    // Bit 0: pressed since the last poll, so a tap shorter than a frame (slow frames while loading) still counts.
+    const SHORT state = GetAsyncKeyState(kMenuKey);
+    const bool foreground = Focus::foreground();
+    const bool down = foreground && (state & 0x8000) != 0;
+    const bool pressed = (down && !g_keyWasDown) || (foreground && !down && (state & 0x1) != 0);
     g_keyWasDown = down;
     if (!pressed)
     {
