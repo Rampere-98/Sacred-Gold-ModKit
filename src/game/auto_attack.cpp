@@ -6,6 +6,7 @@
 #include "game/focus.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
+#include "game/tactics.h"
 #include "game/ui_nav.h"
 #include "input/inject.h"
 #include "log.h"
@@ -399,17 +400,33 @@ namespace
                 haveLoot = atFeet || stooping;
             }
         }
+        bool chosen = false;
         if (haveLoot && (!enemy || lootCost <= enemyCost))
         {
             out = {loot.id, true, false};
-            return true;
+            chosen = true;
         }
-        if (enemy)
+        else if (enemy)
         {
             out = {enemy, false, threat};
-            return true;
+            chosen = true;
         }
-        return false;
+
+        // Combat arts and consumables, on the same look.
+        Tactics::Situation situation;
+        situation.now = now;
+        situation.health = health;
+        situation.maxHealth = maximum;
+        situation.hurt = hurt;
+        situation.threat = threat;
+        situation.target = chosen && !out.loot ? out.id : (!g_looting ? g_target : 0);
+        situation.foes = foes;
+        situation.count = count;
+        situation.hx = hx;
+        situation.hy = hy;
+        situation.range = range;
+        Tactics::think(situation);
+        return chosen;
     }
 
     // The ModKit menu's section: what changes applies at once.
@@ -451,6 +468,7 @@ void AutoAttack::install()
     }
     g_on = Config::autoAttack.enabled;
     ModkitMenu::add({"Ataque automático", &drawMenu, &saveMenu});
+    Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
@@ -482,6 +500,7 @@ void AutoAttack::onFrame()
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         g_target = 0;
         g_pending = 0;
+        Tactics::reset();
     }
     // A dialog opened while the hero went for loot, the player leaving the mouse alone: the loot was a fixture the
     // flags did not give away, and the dialog its text. Close it and never go there again.
@@ -502,10 +521,13 @@ void AutoAttack::onFrame()
         g_target = 0;
         g_pending = 0;
         g_lastHealth = 0;
+        Tactics::reset();
         return;
     }
 
-    if (static_cast<int>(now - g_pickupUntil) < 0)
+    // A combat art under way: no order that would cut it short.
+    Tactics::onFrame(now);
+    if (Tactics::busy(now) || static_cast<int>(now - g_pickupUntil) < 0)
     {
         return;
     }
