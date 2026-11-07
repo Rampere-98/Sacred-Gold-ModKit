@@ -459,8 +459,8 @@ namespace
             }
             const int typical = g_seenMaxima.size() >= 5 ? median(g_seenMaxima) : 0;
             const float seconds = g_dps > 0.0f && g_dpsSeconds >= 3.0f ? target->health / g_dps : 0.0f;
-            strong = (typical > 0 && target->maxHealth * 10 >= typical * 18) || seconds > 6.0f;
-            easy = (seconds > 0.0f && seconds < 2.5f) || target->health * 10 < target->maxHealth * 2;
+            strong = (typical > 0 && target->maxHealth * 10 >= typical * 18) || seconds > 8.0f;
+            easy = (seconds > 0.0f && seconds < 3.0f) || target->health * 10 < target->maxHealth * 2;
         }
 
         // Each slot by its use; the best one that is ready.
