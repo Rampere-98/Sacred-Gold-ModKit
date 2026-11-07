@@ -10,7 +10,7 @@ es una rama que parte de `main` y añade una sola cosa; la rama `modkit` los jun
 | Rama | Mod | Ajuste en `SacredBild.ini` |
 |---|---|---|
 | `main` | Cuerpo principal: SacredBild sin mods. | - |
-| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): el héroe recoge primero los objetos del suelo (oro incluido, nunca postes) y abre cofres, y ataca al enemigo más cercano con las órdenes del propio juego; el ratón queda libre para el inventario. | `[AutoAttack]` |
+| [`mod/auto-attack`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-attack) | Autoataque con ratón y teclado (F11): decide como un jugador: enemigos cerca, acercándose o hiriéndole antes que el botín (salvo lo que tiene a sus pies), si no lo más cercano; recoge objetos (oro incluido, nunca postes), abre cofres y ataca con las órdenes del propio juego, con tiempos de reacción naturales; el ratón queda libre para el inventario. | `[AutoAttack]` |
 | [`mod/auto-potion`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/auto-potion) | Pociones de curación automáticas: bebe (tecla Espacio del juego) cuando falta tanta vida como cura una poción, cantidad que aprende de las que bebe. | `[AutoPotion]` |
 | [`mod/smooth-walk`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/smooth-walk) | Sin tirones al andar en pantallas anchas: caché de capas del suelo de 0x40000 entradas. | - |
 | [`mod/wide-sectors`](https://github.com/Rampere-98/Sacred-Gold-ModKit/tree/mod/wide-sectors) | Sin esquinas negras: carga y dibuja 5x5 sectores alrededor de la cámara en vez de 3x3. | `[Render] WideSectors` |
