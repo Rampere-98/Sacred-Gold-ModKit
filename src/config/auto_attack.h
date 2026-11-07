@@ -10,6 +10,7 @@ namespace Config
         int range = 400;        // enemies within this many screen pixels of the hero
         int pauseMs = 700;      // no auto attack for this long after the player's own mouse click
         bool pickup = true;     // with no enemy in range, pick up items and open chests and other containers
+        int lootRange = 800;    // ... within this many screen pixels of the hero
         int repeatMs = 1000;    // the attack order again this often while the target lives; 0 = once per target
     };
     inline AutoAttack autoAttack;

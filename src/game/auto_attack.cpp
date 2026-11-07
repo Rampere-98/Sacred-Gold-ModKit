@@ -15,7 +15,6 @@
 #include <cmath>
 #include <cstring>
 #include <mutex>
-#include <unordered_map>
 #include <unordered_set>
 
 using namespace Sacred;
@@ -62,36 +61,34 @@ namespace
         Container,  // cChest3D: chests, coffers and the like, a click opens them
     };
 
-    // What the object is, by its own class (cached per vtable). Every cItemBase has a class of its own: the ones
-    // the hero can carry, cChest3D for containers (it derives from cItemBase too) and others for world fixtures
-    // (cSpecial3D: signposts and plaques, whose text a click opens; cBsItem3D).
-    Loot lootOf(const cObject* object)
+    // The pick category the world pick ranks by (cObject::Vtable::pickCategory): Alt puts 2 first, the things lying
+    // on the ground that Alt shows the names of.
+    constexpr uint16_t kPickItem = 2;
+
+    // What the object is: a cChest3D (its own class, by RTTI; it derives from cItemBase) is a container; anything
+    // else the game ranks as a ground item is an item, whatever its class (gold included).
+    Loot lootOf(cObject* object)
     {
-        static std::unordered_map<const void*, Loot> cache;
         const void* vtable = object->vtable;
-        if (const auto it = cache.find(vtable); it != cache.end())
-        {
-            return it->second;
-        }
-        static constexpr const char* kItems[] = {".?AVcArmor3D@@", ".?AVcArrow3D@@", ".?AVcPotion3D@@",
-            ".?AVcRing3D@@", ".?AVcScroll3D@@", ".?AVcShield3D@@", ".?AVcWeapon3D@@", ".?AVcItemUpgrade@@"};
-        Loot loot = Loot::None;
         const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(vtable)[-1];
         const char* name = locator && locator->type ? locator->type->name : "?";
+        const uint16_t category = object->vtable->pickCategory(object, nullptr, 1, 0);
+        Loot loot = Loot::None;
         if (std::strcmp(name, ".?AVcChest3D@@") == 0)
         {
             loot = Loot::Container;
         }
-        for (const char* item : kItems)
+        else if (category == kPickItem)
         {
-            if (std::strcmp(name, item) == 0)
-            {
-                loot = Loot::Item;
-            }
+            loot = Loot::Item;
         }
-        LOG("AutoAttack: class {} (id {:x}) is {}", name, object->id,
-            loot == Loot::Item ? "an item" : loot == Loot::Container ? "a container" : "left alone");
-        cache.emplace(vtable, loot);
+        // Each class and category once, to see in the log what is taken and what is not.
+        static std::unordered_set<uint64_t> logged;
+        if (logged.insert(reinterpret_cast<uintptr_t>(vtable) | (static_cast<uint64_t>(category) << 32)).second)
+        {
+            LOG("AutoAttack: class {} category {} (id {:x}) is {}", name, category, object->id,
+                loot == Loot::Item ? "an item" : loot == Loot::Container ? "a container" : "left alone");
+        }
         return loot;
     }
 
@@ -174,7 +171,7 @@ namespace
     // The loot we go for while it is there, else the nearest within range.
     bool chooseLoot(AimAssist::Target& t)
     {
-        const float range = static_cast<float>(Config::autoAttack.range);
+        const float range = static_cast<float>(Config::autoAttack.lootRange);
         if (g_looting && g_target && !g_doneLoot.count(g_target) &&
             AimAssist::findObject(range * 1.5f, &isCurrent, nullptr, t))
         {
@@ -194,8 +191,13 @@ namespace
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         cObject* loot = objects ? objects->object(id) : nullptr;
-        if (!hero || !loot || static_cast<int>(now - g_lootSince) > static_cast<int>(kLootGiveUpMs))
+        if (!hero || !loot)
         {
+            return true;
+        }
+        if (static_cast<int>(now - g_lootSince) > static_cast<int>(kLootGiveUpMs))
+        {
+            LOG("AutoAttack: loot {:x} not reached, left", id);
             return true;
         }
         const float dx = static_cast<float>(loot->x - hero->x), dy = static_cast<float>(loot->y - hero->y);
@@ -208,7 +210,12 @@ namespace
         {
             g_lootAtSince = now;
         }
-        return static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs);
+        if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
+        {
+            LOG("AutoAttack: loot {:x} still there with the hero at it, left", id);
+            return true;
+        }
+        return false;
     }
 
     // Orders the creature the mouse commands (the hero, or its mount) to attack, pick up or open `id`, as a click
