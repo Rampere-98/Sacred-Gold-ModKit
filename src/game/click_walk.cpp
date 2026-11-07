@@ -82,7 +82,6 @@ namespace
     constexpr int kAheadTiles = 6;              // the next route leg goes out this close to the current one's end
     constexpr int kOffRouteTiles = 6;           // further from the route than this: plan again
     constexpr int kMaxReplans = 8;
-    constexpr int kAvoidTiles = 8;              // route tiles past the hero marked blocked when a leg got nowhere
 
     struct Cell
     {
@@ -99,12 +98,20 @@ namespace
         return {static_cast<int>(worldX / kTileSize), static_cast<int>(worldY / kTileSize)};
     }
 
+    // An object's map position starts at +0x18 (the walk target snap, ENG 00616B9B, passes it): the sector id
+    // cache, x, y, then the layer byte at +0x24.
+    uint8_t layerOf(const cCreature* creature)
+    {
+        return reinterpret_cast<const uint8_t*>(creature)[0x24];
+    }
+
     // The loaded sectors' tiles; each tile is tested once per plan.
     struct Grid
     {
         int baseX = 0, baseY = 0;               // world tile of the 5x5's corner
         Sector* sectors[WideSectors::kCount] = {};
         cMapData* map = nullptr;
+        uint8_t layer = 0;                      // the walker's (its position's +0xC), as the path finders test with
         std::vector<uint8_t> state;             // 0 not tested yet, 1 walkable, 2 blocked
         std::vector<Cell> avoid;                // tiles the game's path finder found no way over during this walk
 
@@ -158,6 +165,7 @@ namespace
                     TilePos p{};
                     p.x = x;
                     p.y = y;
+                    p.layer = layer;
                     ok = g_walkable(map, nullptr, &p, 0) != 0;
                 }
                 s = ok ? 1 : 2;
@@ -278,8 +286,8 @@ namespace
         }
         if (Config::debug.uiTrace)
         {
-            LOG("Click walk: route from {},{} to {},{}: {} ({} tiles searched, {} ms)", start.x, start.y, goal.x,
-                goal.y, reached ? "found" : "none", expanded, GetTickCount() - t0);
+            LOG("Click walk: route from {},{} to {},{} on layer {}: {} ({} tiles searched, {} ms)", start.x, start.y,
+                goal.x, goal.y, g_grid.layer, reached ? "found" : "none", expanded, GetTickCount() - t0);
         }
         if (!reached)
         {
@@ -400,6 +408,7 @@ namespace
                     g_goalX = order->x;
                     g_goalY = order->y;
                     g_grid.avoid.clear();
+                    g_grid.layer = layerOf(creature);
                     const Cell from = cellOf(creature->x, creature->y);
                     Cell end{};
                     if (plan(from, cellOf(order->x, order->y)) && nextLeg(from, end))
@@ -495,10 +504,12 @@ namespace
             // Stuck on the way (the tile test lets through what the game's path finder does not: under a bridge,
             // a closed gate) or off the route (pushed aside): the next stretch of the route counts as blocked
             // for this walk, and the route is planned again from here.
+            g_grid.layer = layerOf(hero);
             if (stuck)
             {
-                const size_t first = std::min(g_route.from + 1, g_route.cells.size() - 1);
-                const size_t last = std::min(first + kAvoidTiles, g_route.cells.size() - 1);
+                // From past the hero to the leg's end (not the goal): somewhere on it the game found no way.
+                const size_t first = std::min(g_route.from + 2, g_route.cells.size() - 1);
+                const size_t last = std::min(g_route.legEnd + 1, g_route.cells.size() - 1);
                 for (size_t i = first; i < last; ++i)
                 {
                     g_grid.avoid.push_back(g_route.cells[i]);
