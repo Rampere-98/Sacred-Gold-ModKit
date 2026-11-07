@@ -800,7 +800,7 @@ namespace
         const uint32_t id = *reinterpret_cast<const uint32_t*>(static_cast<const uint8_t*>(self) + 0x0C);
         cEngine* engine = FrameHooks::engine();
         const bool mine = id == 1 || (engine && id == engine->controlled);
-        if (mine && g_diagLogs < 3000)
+        if (false && mine && g_diagLogs < 3000)
         {
             ++g_diagLogs;
             std::string hex;
@@ -833,11 +833,43 @@ namespace
     }
 }
 
+namespace
+{
+    // DIAG: every class and pick category in the world pick list near the hero, once each, with its flags.
+    bool diagSeen(uint32_t id, void*)
+    {
+        static std::unordered_set<uint64_t> seen;
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* o = objects ? objects->object(id) : nullptr;
+        if (!o || o->asCreature())
+        {
+            return false;
+        }
+        const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(o->vtable)[-1];
+        const char* name = locator && locator->type ? locator->type->name : "?";
+        const uint16_t category = o->vtable->pickCategory(o, nullptr, 1, 0);
+        const uint32_t type = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(o) + 0x10);
+        if (seen.insert((static_cast<uint64_t>(reinterpret_cast<uintptr_t>(o->vtable)) << 20) ^ (type << 4) ^ category).second)
+        {
+            LOG("DIAG pick: {} type {:x} category {} flags {:08x} (id {:x})", name, type, category,
+                *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(o) + 0x14), id);
+        }
+        return false;
+    }
+}
+
 void AutoAttack::onFrame()
 {
     if (cObjectManager* m = cObjectManager::instance())
     {
         diagPatch(m->hero());
+    }
+    static DWORD diagAt = 0;
+    if (GetTickCount() - diagAt > 1000)
+    {
+        diagAt = GetTickCount();
+        AimAssist::Target t;
+        AimAssist::findObject(5000.0f, &diagSeen, nullptr, t);
     }
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
