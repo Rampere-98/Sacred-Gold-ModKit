@@ -108,7 +108,7 @@ namespace
             uint8_t* record = c.original(owner, edx, id);
             if (map.size != ix->size + 1)
             {
-                if (!c.loggedFull)
+                if (!c.loggedFull && map.size == ix->size)
                 {
                     c.loggedFull = true;
                     LOG("Record caches: {} cache full at {} entries, evicting (a whole-map scan per miss)",
