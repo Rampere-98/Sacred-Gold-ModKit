@@ -187,6 +187,10 @@ namespace
     Grid g_grid;
     Route g_route;
     bool g_routed = false;                      // the far walk follows g_route
+    // A click within the path finders' grid goes to the game unchanged: its path finder knows doors and stairs into
+    // houses and cellars (another layer, which a route planned here over the hero's layer misses). Only when the hero
+    // does not move (no way inside the grid: around a river) does the walk get a route.
+    bool g_native = false;
 
     // A* with 8 neighbours (no corner cutting) from the hero's tile to the goal's, or to the nearest walkable tile
     // around it. Fills g_route.cells.
@@ -369,6 +373,7 @@ namespace
     void finish(const char* why)
     {
         g_routed = false;
+        g_native = false;
         if (g_active.exchange(false) && Config::debug.uiTrace)
         {
             LOG("Click walk: {} ({},{})", why, g_goalX, g_goalY);
@@ -406,7 +411,15 @@ namespace
                 const double dx = static_cast<double>(order->x) - creature->x;
                 const double dy = static_cast<double>(order->y) - creature->y;
                 const double tiles = std::max(std::abs(dx), std::abs(dy)) / kTileSize;
-                if (!ours && tiles > kPlanTiles)
+                if (!ours && tiles <= kMaxTiles)
+                {
+                    g_native = true;
+                    g_routed = false;
+                    g_goalX = order->x;
+                    g_goalY = order->y;
+                    g_active = true;
+                }
+                else if (!ours && tiles > kPlanTiles)
                 {
                     g_goalX = order->x;
                     g_goalY = order->y;
@@ -427,7 +440,7 @@ namespace
                         }
                     }
                 }
-                if (!g_routed)
+                if (!g_routed && !g_native)
                 {
                     const Try t = ours ? kTries[g_try] : kTries[0];
                     if (tiles > t.tiles || (ours && t.degrees != 0.0))
@@ -587,6 +600,44 @@ namespace
         if (left <= kArrivedTiles)
         {
             finish("arrived");
+            return;
+        }
+        if (g_native)
+        {
+            if (!stopped)
+            {
+                return;
+            }
+            const double moved = std::max(std::abs(static_cast<double>(hero->x) - g_legX),
+                                     std::abs(static_cast<double>(hero->y) - g_legY)) / kTileSize;
+            if (moved >= kMovedTiles)
+            {
+                finish("walked by the game");
+                return;
+            }
+            // The game found no way: a route over the loaded sectors, else legs turned aside.
+            g_native = false;
+            g_grid.avoid.clear();
+            g_grid.layer = layerOf(hero);
+            const Cell from = cellOf(hero->x, hero->y);
+            Cell end{};
+            if (plan(from, cellOf(g_goalX, g_goalY)) && nextLeg(from, end))
+            {
+                g_routed = true;
+                g_route.replans = 0;
+                int32_t x, y;
+                target(end, x, y);
+                if (Config::debug.uiTrace)
+                {
+                    LOG("Click walk: the game found no way to {},{}, routing", g_goalX, g_goalY);
+                }
+                sendLeg(engine, hero, x, y);
+                return;
+            }
+            g_try = 1;
+            g_best = left;
+            g_staleLegs = 0;
+            sendLeg(engine, hero, g_goalX, g_goalY);
             return;
         }
         if (g_routed)
