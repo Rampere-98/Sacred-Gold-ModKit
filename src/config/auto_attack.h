@@ -13,7 +13,7 @@ namespace Config
         bool pickup = true;     // after the game's collect (A): take what it left, open chests and other containers
         bool autoCollect = false;   // collect (A) by itself whenever loot lies about and no fight is on
         int lootRange = 800;    // ... within this many screen pixels of the hero
-        int repeatMs = 1000;    // the attack order again this often while the target lives; 0 = once per target
+        int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
     };
     inline AutoAttack autoAttack;
 }
