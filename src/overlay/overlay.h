@@ -18,6 +18,11 @@ namespace Overlay
     void open(DrawFn draw);
     bool isOpen();
 
+    // Drawn on every presented frame over the game (an ImGui window or draw list), a screen open or not; it takes no
+    // input. nullptr removes it.
+    using HudFn = void (*)();
+    void setHud(HudFn hud);
+
     // The window's thread: while a screen is open, its keyboard and mouse messages go to ImGui; true if the game
     // must not see the message.
     bool message(HWND window, UINT message, WPARAM wParam, LPARAM lParam);

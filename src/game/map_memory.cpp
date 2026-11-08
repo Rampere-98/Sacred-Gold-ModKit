@@ -1,6 +1,7 @@
 #include "game/map_memory.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
+#include "overlay/overlay.h"
 #include "log.h"
 #include "sacred/render.h"
 
@@ -189,33 +190,15 @@ namespace
     }
 
     int g_zoom = 4;     // pixels per square
+    bool g_hud = true;  // the map on the screen's side, the menu closed too
 
-    void drawMenu()
+    // The map around the hero, `size` pixels square, at the cursor of the current ImGui window. Under g_lock.
+    void drawMap(float size)
     {
-        ImGui::TextWrapped("Lo explorado alrededor del héroe, una casilla por coordenada: en el color del suelo que pisó; "
-                           "transparente donde no consiguió pasar; negro lo inexplorado.");
-        ImGui::SliderInt("Tamaño de casilla (px)", &g_zoom, 2, 10);
-        const std::lock_guard lock(g_lock);
-        ensureLoaded();
-        if (!g_heroKnown)
-        {
-            ImGui::TextDisabled("Sin héroe en el mundo.");
-            return;
-        }
-        int seen = 0;
-        for (const auto& [k, c] : g_cells)
-        {
-            seen += static_cast<int>(k >> 48) == g_heroLayer && c.visits ? 1 : 0;
-        }
-        ImGui::Text("Capa %d: %d casillas pisadas (%d en total). Casilla del héroe: %d, %d.", g_heroLayer, seen,
-                    static_cast<int>(g_cells.size()), g_heroTx, g_heroTy);
-        const float size = 300.0f;
         const int half = static_cast<int>(size / g_zoom / 2);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
         dl->AddRectFilled(origin, ImVec2(origin.x + size, origin.y + size), IM_COL32(0, 0, 0, 255));
-        // The world's x/y axes run diagonally on the screen in Sacred; the map shows them as rows and columns, north up
-        // as the tiles' own grid.
         for (int dy = -half; dy < half; ++dy)
         {
             for (int dx = -half; dx < half; ++dx)
@@ -230,8 +213,9 @@ namespace
                 const ImVec2 b(a.x + g_zoom, a.y + g_zoom);
                 if (!c.visits)
                 {
-                    // Never reached (blocked): clear, the menu's background showing through a faint outline.
-                    dl->AddRectFilled(a, b, ImGui::GetColorU32(ImGuiCol_WindowBg));
+                    // Never reached (blocked): clear, a hollow square.
+                    dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 0));
+                    dl->AddRect(a, b, IM_COL32(120, 120, 140, 160));
                     continue;
                 }
                 dl->AddRectFilled(a, b, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
@@ -242,15 +226,82 @@ namespace
         ImGui::Dummy(ImVec2(size, size));
     }
 
-    void saveMenu(const std::wstring&)
+    int seenOnLayer()
     {
+        int seen = 0;
+        for (const auto& [k, c] : g_cells)
+        {
+            seen += static_cast<int>(k >> 48) == g_heroLayer && c.visits ? 1 : 0;
+        }
+        return seen;
+    }
+
+    void drawMenu()
+    {
+        ImGui::TextWrapped("Lo explorado alrededor del héroe, una casilla por coordenada: en el color del suelo que pisó; "
+                           "transparente donde no consiguió pasar; negro lo inexplorado.");
+        ImGui::Checkbox("Mostrar en un lado de la pantalla", &g_hud);
+        ImGui::SliderInt("Tamaño de casilla (px)", &g_zoom, 2, 10);
+        const std::lock_guard lock(g_lock);
+        ensureLoaded();
+        if (!g_heroKnown)
+        {
+            ImGui::TextDisabled("Sin héroe en el mundo.");
+            return;
+        }
+        ImGui::Text("Capa %d: %d casillas pisadas (%d en total). Casilla del héroe: %d, %d.", g_heroLayer, seenOnLayer(),
+                    static_cast<int>(g_cells.size()), g_heroTx, g_heroTy);
+        drawMap(300.0f);
+    }
+
+    // The agent's view on the screen's right side, under the minimap.
+    void drawHud()
+    {
+        if (!g_hud)
+        {
+            return;
+        }
+        const std::lock_guard lock(g_lock);
+        if (!g_heroKnown)
+        {
+            return;
+        }
+        const ImGuiIO& io = ImGui::GetIO();
+        const float size = std::round(io.DisplaySize.y * 0.26f);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y * 0.22f), ImGuiCond_Always,
+                                ImVec2(1.0f, 0.0f));
+        ImGui::SetNextWindowBgAlpha(0.55f);
+        const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
+                                       ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
+                                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
+        if (ImGui::Begin("##agentmap", nullptr, flags))
+        {
+            ImGui::Text("Visión del agente  capa %d  %d casillas", g_heroLayer, seenOnLayer());
+            drawMap(size);
+        }
+        ImGui::End();
+    }
+
+    void saveMenu(const std::wstring& ini)
+    {
+        ModkitMenu::write(ini, L"Map", L"Hud", g_hud);
+        ModkitMenu::write(ini, L"Map", L"Zoom", g_zoom);
     }
 }
 
 void MapMemory::install()
 {
     static std::once_flag once;
-    std::call_once(once, [] { ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu}); });
+    std::call_once(once, [] {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring ini = exe;
+        ini = ini.substr(0, ini.find_last_of(L"\\/") + 1) + L"SacredBild.ini";
+        g_hud = GetPrivateProfileIntW(L"Map", L"Hud", 1, ini.c_str()) != 0;
+        g_zoom = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"Zoom", 4, ini.c_str())), 2, 10);
+        ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu});
+        Overlay::setHud(&drawHud);
+    });
 }
 
 void MapMemory::setHero(int layer, int32_t x, int32_t y)

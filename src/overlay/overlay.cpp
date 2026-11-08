@@ -22,6 +22,7 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg
 namespace
 {
     std::atomic<Overlay::DrawFn> g_draw{nullptr};
+    std::atomic<Overlay::HudFn> g_hud{nullptr};
     std::atomic<DWORD> g_lastPresent{0};            // presents pass by: the overlay can show
     std::atomic<bool> g_gamepadNavigation{true};
 
@@ -203,7 +204,7 @@ namespace
     }
 
     // One ImGui frame of the open screen; false closes it.
-    bool frame(Overlay::DrawFn draw, HWND window)
+    bool frame(Overlay::DrawFn draw, Overlay::HudFn hud, HWND window)
     {
         {
             std::vector<Message> queue;
@@ -231,10 +232,14 @@ namespace
         feedGamepad(io);
         // With the controller: no mouse cursor, and the selected item always marked (and drawn as hovered).
         const bool controller = InputMode::controller();
-        io.MouseDrawCursor = !controller;
+        io.MouseDrawCursor = draw && !controller;     // the HUD alone: the game's own cursor
         io.ConfigNavCursorVisibleAlways = controller;
         ImGui::NewFrame();
-        const bool keep = draw();
+        if (hud)
+        {
+            hud();
+        }
+        const bool keep = draw ? draw() : true;
         ImGui::Render();
         return keep;
     }
@@ -244,21 +249,24 @@ namespace
     {
         g_lastPresent = GetTickCount();
         Overlay::DrawFn draw = g_draw.load(std::memory_order_acquire);
+        Overlay::HudFn hud = g_hud.load(std::memory_order_acquire);
         const bool prompts = Prompts::pending();
-        if (!draw && !prompts)
+        if (!draw && !hud && !prompts)
         {
             return;
         }
-        if (draw && !init(device, backBuffer, window))
+        if ((draw || hud) && !init(device, backBuffer, window))
         {
             g_draw = nullptr;
             draw = nullptr;
+            hud = nullptr;
             if (!prompts)
             {
                 return;
             }
         }
-        const bool keep = draw ? frame(draw, window) : true;
+        const bool imgui = draw || hud;
+        const bool keep = imgui ? frame(draw, hud, window) : true;
 
         d9::IDirect3DSurface9* target = nullptr;
         d9::IDirect3DSurface9* depth = nullptr;
@@ -276,7 +284,7 @@ namespace
                 backBuffer->GetDesc(&desc);
                 Prompts::draw(device, static_cast<float>(desc.Width), static_cast<float>(desc.Height));
             }
-            if (draw)
+            if (imgui)
             {
                 ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
             }
@@ -326,6 +334,11 @@ void Overlay::open(DrawFn draw)
     g_gamepadNavigation = true;
     g_lastPresent = GetTickCount();
     g_draw.store(draw, std::memory_order_release);
+}
+
+void Overlay::setHud(HudFn hud)
+{
+    g_hud.store(hud, std::memory_order_release);
 }
 
 bool Overlay::isOpen()
