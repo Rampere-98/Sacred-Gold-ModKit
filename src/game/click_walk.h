@@ -18,4 +18,8 @@ namespace ClickWalk
 
     // Once per presented frame: while a far walk lasts, asks the window's thread now and then for the next leg.
     void onFrame();
+
+    // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test: 1 yes, 0 no, -1 not
+    // known (the tile outside the loaded sectors, or no tile test in this build).
+    int walkable(int layer, int tx, int ty);
 }

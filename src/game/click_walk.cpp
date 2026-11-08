@@ -679,6 +679,33 @@ namespace
     }
 }
 
+int ClickWalk::walkable(int layer, int tx, int ty)
+{
+    cMapData* map = WideSectors::map();
+    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
+    if (!g_walkable || !WideSectors::active() || !map || !center)
+    {
+        return -1;
+    }
+    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
+    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
+    {
+        return -1;
+    }
+    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
+    const Sector* sector = WideSectors::at(slot);
+    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
+        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
+    {
+        return -1;
+    }
+    TilePos p{};
+    p.x = tx;
+    p.y = ty;
+    p.layer = static_cast<uint8_t>(layer);
+    return g_walkable(map, nullptr, &p, 0) ? 1 : 0;
+}
+
 void ClickWalk::install()
 {
     if (!Addr::cObjectManager_hero || !Addr::g_pObjectManager)

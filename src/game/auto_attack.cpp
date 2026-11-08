@@ -1,6 +1,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
+#include "game/click_walk.h"
 #include "game/map_memory.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
@@ -1109,8 +1110,10 @@ namespace
             // Progress along the way it was sent: under half the step is blocked (a pathfinder stopping at the water
             // after a tile, as much as no step at all).
             const double mx = self->x - g_roamFromX, my = self->y - g_roamFromY;
-            const double along = mx * std::cos(g_roamAngle) + my * std::sin(g_roamAngle);
-            if (along < 0.5 * kRoamWay)
+            const double wx = g_walkX - g_roamFromX, wy = g_walkY - g_roamFromY;
+            const double way = std::max(std::sqrt(wx * wx + wy * wy), 0.5 * kTileSize);
+            const double along = (mx * wx + my * wy) / way;     // toward the step's end
+            if (along < 0.5 * std::min(way, kRoamWay))
             {
                 ++g_roamStuck;
                 // The square just ahead of where it stopped is what it could not step on.
@@ -1137,16 +1140,44 @@ namespace
         double bestAngle = g_roamAngle;
         float bestCost = 1e9f;
         // The way is kept for some steps unless blocked or past the leash: steps that wander back and forth see nothing.
+        // A step's end the hero can stand on, by the game's own tile test: the path finder drops a walk to a tree, a
+        // rock or water at once (seen live in a forest: walking, then standing, not a pixel moved, step after step).
+        // Two tiles out, else three, four or one; none: that way is closed (marked so on the map). The tile's middle.
+        const auto stepEnd = [&](double a, int32_t& x, int32_t& y) {
+            for (const double tiles : {2.0, 3.0, 4.0, 1.0})
+            {
+                const int tx = static_cast<int>(std::floor((self->x + std::cos(a) * tiles * kTileSize) / kTileSize));
+                const int ty = static_cast<int>(std::floor((self->y + std::sin(a) * tiles * kTileSize) / kTileSize));
+                const int ok = ClickWalk::walkable(layer, tx, ty);
+                if (ok != 0)
+                {
+                    x = static_cast<int32_t>((tx + 0.5) * kTileSize);
+                    y = static_cast<int32_t>((ty + 0.5) * kTileSize);
+                    return true;
+                }
+                MapMemory::blocked(layer, static_cast<int32_t>((tx + 0.5) * kTileSize), static_cast<int32_t>((ty + 0.5) * kTileSize));
+            }
+            return false;
+        };
+        int32_t keptX = 0, keptY = 0;
         ++g_roamSteps;
-        const bool rethink = g_roamStuck > 0 || g_roamSteps >= 6 || homeDistance > kRoamLeash || !g_roamAt;
+        const bool rethink = g_roamStuck > 0 || g_roamSteps >= 6 || homeDistance > kRoamLeash || !g_roamAt ||
+                             !stepEnd(g_roamAngle, keptX, keptY);
         if (rethink)
         {
             g_roamSteps = 0;
         }
+        bool found = !rethink;
+        int32_t bestX = keptX, bestY = keptY;
         for (int k = 0; k < 16 && rethink; ++k)
         {
             const double a = k * 3.14159265 / 8.0;
             const double ux = std::cos(a), uy = std::sin(a);
+            int32_t endX = 0, endY = 0;
+            if (!stepEnd(a, endX, endY))
+            {
+                continue;
+            }
             float cost = 0.0f;
             for (int d = 1; d <= 4; ++d)
             {
@@ -1168,14 +1199,25 @@ namespace
             {
                 bestCost = cost;
                 bestAngle = a;
+                bestX = endX;
+                bestY = endY;
+                found = true;
             }
         }
-        g_roamAngle = bestAngle;
         MapMemory::save(now, 60000);
+        if (!found)
+        {
+            // Closed in on every side as far as the tile test tells: wait, as a hit or the player may free it.
+            g_roamAt = now;
+            g_roamStuck = 0;
+            MapMemory::setRoute(false);
+            return;
+        }
+        g_roamAngle = bestAngle;
         g_roamFromX = self->x;
         g_roamFromY = self->y;
-        g_walkX = static_cast<int32_t>(self->x + std::cos(g_roamAngle) * kRoamWay);
-        g_walkY = static_cast<int32_t>(self->y + std::sin(g_roamAngle) * kRoamWay);
+        g_walkX = bestX;
+        g_walkY = bestY;
         Inject::call(&walkThere, nullptr);
         MapMemory::setRoute(true, g_walkX, g_walkY);
         if (!g_roamAt || now - g_roamAt > 10000)
