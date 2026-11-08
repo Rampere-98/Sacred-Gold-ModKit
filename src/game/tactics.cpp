@@ -39,12 +39,21 @@ namespace
     uintptr_t g_usePotion = 0;
     uintptr_t g_artValue = 0;
     uintptr_t g_players = 0;        // the address of the players' data pointer (ENG 00AD4448)
+    // The game's art tables: moveInfo (ENG 004D1AF0, 0x78-byte entries) and spellInfo (ENG 004D2310, 0x94-byte
+    // entries), cdecl (id) -> the art's entry or null.
+    using ArtInfo = const uint8_t*(__cdecl*)(uint32_t id);
+    uintptr_t g_moveInfo = 0;
+    uintptr_t g_spellInfo = 0;
 
     const Sig::Entry kSigs[] = {
         {"usePotion", "8B 0D ?? ?? ?? ?? 83 EC 08 53 55 56 57 E8 ?? ?? ?? ?? 8B F8 85 FF 0F 84 ?? ?? ?? ?? 8B 47 0C", 0,
             Sig::Take::Match, &g_usePotion},
         {"artValue", "83 EC 08 8B 41 10 8B 54 24 0C 83 F8 09 53 89 4C 24 08", 0, Sig::Take::Match, &g_artValue},
         {"players", "A1 ?? ?? ?? ?? 85 C0 75 ?? 56 68 08 30 02 00", 1, Sig::Take::Abs32, &g_players},
+        {"moveInfo", "66 8B 54 24 04 B9 01 00 00 00 B8 ?? ?? ?? ?? 66 39 10 74 ?? 83 C0 78 41", 0, Sig::Take::Match,
+            &g_moveInfo},
+        {"spellInfo", "66 8B 54 24 04 B9 01 00 00 00 B8 ?? ?? ?? ?? 66 39 10 74 ?? 05 94 00 00 00 41", 0,
+            Sig::Take::Match, &g_spellInfo},
     };
     bool g_ready = false;
 
@@ -130,6 +139,16 @@ namespace
         return {at<uint16_t>(player, entry), at<uint32_t>(player, entry + 4)};
     }
 
+    // How the game aims an art (a spell's byte +0x3C, a weapon art's +0x4C): 2 = at the hero himself (the slot key
+    // casts it at the hero's own position, ENG 00548D56), 1 = at a target, others at a place. Weapon arts of the
+    // Seraphim: 1, but 3FA/3FB 5; spells: 0F 3, 10 5, 11 14 15 16 2 (also the heal 7), 0D 12 13 1.
+    bool selfCast(uint16_t slotKind, uint32_t art)
+    {
+        const uintptr_t info = slotKind == 2 ? g_spellInfo : slotKind == 3 ? g_moveInfo : 0;
+        const uint8_t* entry = info && art < 0x10000 ? reinterpret_cast<ArtInfo>(info)(art) : nullptr;
+        return entry && entry[slotKind == 2 ? 0x3C : 0x4C] == 2;
+    }
+
     int slotKey(int slot)
     {
         return slot == 4 ? '0' : '6' + slot;
@@ -158,7 +177,9 @@ namespace
         int heal = 0, area = 0, single = 0, none = 0;   // what each cast seemed to do
         DWORD readyAt = 0;                              // not cast again before (recharging)
         int unselected = 0;                             // slot keys in a row the game did not take (a locked slot)
+        int refusals = 0;                               // casts in a row the game refused
         int tries = 0;                                  // casts taken and measured, whatever they showed
+        bool self = false;                              // the game casts it at the hero himself (selfCast)
         DWORD lastCast = 0;
         // The recharge, timed from the end of the last cast taken (0: not seen yet). A cast taken after a gap says the
         // recharge is no longer than that; one refused, that it is longer. Gaps over kMaxRechargeMs say nothing (a
@@ -176,6 +197,7 @@ namespace
 
         void taken(DWORD now)
         {
+            refusals = 0;
             if (lastEnd)
             {
                 const DWORD gap = now - lastEnd;
@@ -213,7 +235,9 @@ namespace
             {
                 return Art::Single;
             }
-            return none >= 4 ? Art::Buff : Art::Auto;   // Auto: not known yet
+            // Nothing seen while a heal would have shown: a buff. Cast at the hero himself it can be nothing else (no
+            // strike at a target), so two casts are enough.
+            return none >= (self ? 2 : 4) ? Art::Buff : Art::Auto;   // Auto: not known yet
         }
     };
     std::unordered_map<uint32_t, Learned> g_learned;
@@ -261,13 +285,16 @@ namespace
     void remember(uint32_t art, Art kind)
     {
         const std::wstring& ini = ConfigFile::path();
-        if (ini.empty() || kind == Art::Auto)
+        if (ini.empty())
         {
             return;
         }
         wchar_t key[24];
         swprintf_s(key, L"Art%X", art);
-        WritePrivateProfileStringW(L"Tactics.Learned", key, Config::artKey(kind), ini.c_str());
+        // Not known any more (taken for a heal once, then it healed nothing): the key goes, else the next start brings
+        // the mistake back.
+        WritePrivateProfileStringW(L"Tactics.Learned", key, kind == Art::Auto ? nullptr : Config::artKey(kind),
+                                   ini.c_str());
     }
 
     // --- The fight, as seen ------------------------------------------------------------------------------------------
@@ -280,8 +307,9 @@ namespace
     float g_dpsSeconds = 0.0f;
     DWORD g_lastThink = 0;
 
-    int g_drainTicks = 0;           // looks in a row the hero lost health with no enemy about
+    int g_drainTicks = 0;           // seconds in a row the hero lost health with no enemy about
     int g_prevHealth = 0;
+    DWORD g_drainSampleAt = 0;      // when the health was last sampled for it (once a second, whatever the look rate)
     bool g_artsRecharging = false;  // an art was wanted but all were recharging
 
     // --- The art under way -------------------------------------------------------------------------------------
@@ -342,12 +370,40 @@ namespace
         float left = 0.0f;      // seconds of recharge still to go
     };
 
+    // Combos (slot kind 4, ids 0x200-0x204, the combo master's five; ENG 004D2B30): their recharge is kept in 38-byte
+    // records, one per combo, at the pointer at stats +0x10E: a float total at +0x1A and the part recharged so far at
+    // +0x22, ready once it reaches the total (ENG 00581A20 / 00581A60).
+    constexpr size_t kCombos = 0x3A8 + 0x10E;
+    constexpr size_t kComboSize = 38;
+    constexpr uint32_t kFirstCombo = 0x200, kLastCombo = 0x203;   // four records (the fifth is not one)
+
     // The hero's entry for the art in a slot; found false when the list cannot be read or does not have the art.
     HeroArt heroArt(uint16_t slotKind, uint32_t art)
     {
         HeroArt r;
         const uint32_t kind = slotKind == 3 ? 2 : slotKind == 2 ? 1 : 0;
         const cCreature* hero = heroCreature();
+        if (slotKind == 4 && hero && art >= kFirstCombo && art <= kLastCombo)
+        {
+            const uintptr_t combos = at<uintptr_t>(hero, kCombos);
+            if (combos)
+            {
+                const auto* p = reinterpret_cast<const uint8_t*>(combos + (art - kFirstCombo) * kComboSize);
+                const float total = at<float>(p, 0x1A), done = at<float>(p, 0x22);
+                // Its arts in the words before (all zero: an empty combo, nothing to cast; seen live, 2026-11-08).
+                bool any = false;
+                for (size_t o = 2; o < 0x1A; o += 2)
+                {
+                    any = any || at<uint16_t>(p, o) != 0;
+                }
+                if (at<uint16_t>(p, 0) == art && any && total > 0.0f && total < 1000.0f)
+                {
+                    r.found = true;
+                    r.left = done < total ? total - done : 0.0f;
+                }
+            }
+            return r;
+        }
         if (!kind || !hero)
         {
             return r;
@@ -445,7 +501,8 @@ namespace
         g_retapped = false;
         // AutoPotion waits with drinks that are not urgent until the art is measured (a bound, moved up as it ends).
         CombatState::measuringUntil = s.now + kSelectMaxMs + kConfirmWalkMs + kCastMaxMs;
-        g_castClose = !target;
+        // An art the game casts at the hero acts there, wherever the target is.
+        g_castClose = !target || learned(art).self;
         for (int i = 0; i < s.count; ++i)
         {
             const AimAssist::Foe& f = s.foes[i];
@@ -510,10 +567,21 @@ namespace
             ++l.area;
             seen = "hurt several";
         }
+        else if (l.self && (hurtTarget || hurtOthers > 0))
+        {
+            // Cast at the hero himself yet it hurt: it strikes around him.
+            ++l.area;
+            seen = "hurt around the hero";
+        }
         else if (hurtTarget)
         {
             ++l.single;
             seen = "hurt the target";
+        }
+        else if (potionMeanwhile)
+        {
+            // A potion's healing hides a heal's: nothing can be told.
+            seen = "nothing told (a potion was drunk meanwhile)";
         }
         else if (g_castClose && g_maxHealth - g_healthAtCast < healThreshold)
         {
@@ -523,7 +591,7 @@ namespace
         else if (g_castClose)
         {
             ++l.none;
-            seen = potionMeanwhile ? "did nothing seen (a potion was drunk meanwhile)" : "did nothing seen";
+            seen = "did nothing seen";
         }
         else
         {
@@ -580,8 +648,15 @@ namespace
 
     void chooseArt(const Tactics::Situation& s)
     {
+        // Set again below each look: a stale "recharging" would have Concentration drunk (mounted, between arts).
+        g_artsRecharging = false;
         const uint8_t* player = playerData();
         if (!player || (g_nextArtAt && static_cast<int>(s.now - g_nextArtAt) < 0))
+        {
+            return;
+        }
+        // The player casts an art himself: nothing of ours now (it would cut his short and pass for ours).
+        if (CombatState::casting(heroCreature()))
         {
             return;
         }
@@ -652,12 +727,14 @@ namespace
             {
                 continue;
             }
-            // An art the hero has not learned is never cast (the game would refuse it).
+            // An art the hero has not learned (or an empty combo) is never cast: the game would refuse it.
+            const bool listed = sa.kind == 2 || sa.kind == 3 || sa.kind == 4;
             const HeroArt ha = readable ? heroArt(sa.kind, sa.art) : HeroArt{};
-            if (readable && !ha.found)
+            if (readable && listed && !ha.found)
             {
                 continue;
             }
+            learned(sa.art).self = selfCast(sa.kind, sa.art);
             const Art use = slotUse(slot, sa.art);
             int rank = 0;
             uint32_t at_ = 0;
@@ -688,7 +765,8 @@ namespace
                 }
                 break;
             case Art::Buff:
-                if ((close >= 3 || strong || danger) && s.threat &&
+                // Before the blows, as a good player does: once a fight is on its way (two near, or more about).
+                if ((close >= 2 || s.count >= 3 || strong || danger) && s.threat &&
                     (!learned(sa.art).lastCast ||
                      static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
                 {
@@ -755,7 +833,7 @@ namespace
 
     bool potionReady(Potion type, DWORD now)
     {
-        return static_cast<int>(now - g_potionReady[type]) >= 0;
+        return !g_potionReady[type] || static_cast<int>(now - g_potionReady[type]) >= 0;
     }
 
     void tryPotion(Potion type, bool toHirelings, DWORD now, DWORD coolDownMs, const char* name, const char* why)
@@ -806,18 +884,27 @@ namespace
         const bool danger = s.health * 100 <= s.maxHealth * 45 || (s.hurt && close >= 3);
         const bool bigFight = s.count >= 4 || strong;
 
-        // Poison: health draining with no enemy about.
-        if (s.count == 0 && g_prevHealth && s.health < g_prevHealth)
-        {
-            ++g_drainTicks;
-        }
-        else if (s.count > 0 || s.health >= g_prevHealth)
+        // Poison: health draining with no enemy about, sampled once a second (the looks come at any rate).
+        if (s.count > 0)
         {
             g_drainTicks = 0;
+            g_prevHealth = 0;
         }
-        g_prevHealth = s.health;
+        else if (!g_drainSampleAt || s.now - g_drainSampleAt >= 1000)
+        {
+            if (g_prevHealth && s.health < g_prevHealth)
+            {
+                ++g_drainTicks;
+            }
+            else if (s.health > g_prevHealth)
+            {
+                g_drainTicks = 0;
+            }
+            g_prevHealth = s.health;
+            g_drainSampleAt = s.now;
+        }
 
-        if (c.antidote && g_drainTicks >= 4 && potionReady(Antidote, s.now))
+        if (c.antidote && g_drainTicks >= 3 && potionReady(Antidote, s.now))
         {
             g_drainTicks = 0;
             tryPotion(Antidote, false, s.now, 15000, "an antidote", "health drains with no enemy about");
@@ -1110,18 +1197,55 @@ void Tactics::onFrame(DWORD now)
             finishArt(now);
             return;
         }
-        // Otherwise the game refused the art, which still recharges.
+        // Otherwise the game refused the art. With its recharge read from the game, the reason is another (the
+        // weapon, the place): tried again later and later, not taken for a recharge (nor a cause for Concentration).
+        const int refusals = ++l.refusals;
+        const uint8_t* player = playerData();
+        const SlotArt sa = player ? slotArt(player, g_slot) : SlotArt{};
+        const HeroArt ha = sa.art == g_art && heroArtsReadable() ? heroArt(sa.kind, g_art) : HeroArt{};
+        if (ha.found)
+        {
+            const DWORD wait = ha.left > 0.0f ? static_cast<DWORD>(ha.left * 1000.0f) + 200
+                                              : std::min<DWORD>(3000u << std::min(refusals - 1, 6), 120000);
+            l.readyAt = now + wait;
+            if (ha.left > 0.0f)
+            {
+                g_refusedAt = now;
+            }
+            if (refusals <= 3)
+            {
+                LOG("Tactics: art {:x} refused by the game ({}), next try in {} s", g_art,
+                    ha.left > 0.0f ? "recharging" : "not for its recharge", wait / 1000);
+            }
+            finishArt(now);
+            return;
+        }
         const DWORD since = l.lastEnd ? now - l.lastEnd : 0;
         l.refused(now);
-        g_refusedAt = now;
+        if (refusals <= 2)
+        {
+            g_refusedAt = now;
+        }
         DWORD ready = l.lastEnd ? l.lastEnd + l.recharge() : now + 3000;
         if (static_cast<int>(ready - (now + 1500)) < 0)
         {
             ready = now + 1500;
         }
+        if (refusals > 2)
+        {
+            // Refused again and again: something else than its recharge; seldom tried.
+            const DWORD later = now + std::min<DWORD>(3000u << std::min(refusals - 1, 6), 120000);
+            if (static_cast<int>(later - ready) > 0)
+            {
+                ready = later;
+            }
+        }
         l.readyAt = ready;
-        LOG("Tactics: art {:x} refused by the game ({} ms after its last cast ended; recharge now taken as {} ms)",
-            g_art, since, l.recharge());
+        if (refusals <= 3)
+        {
+            LOG("Tactics: art {:x} refused by the game ({} ms after its last cast ended; recharge now taken as {} ms)",
+                g_art, since, l.recharge());
+        }
         finishArt(now);
         return;
     }
@@ -1170,6 +1294,14 @@ void Tactics::reset()
 {
     if (g_phase != Phase::Idle)
     {
-        finishArt(GetTickCount());
+        const DWORD now = GetTickCount();
+        if (g_phase == Phase::Casting)
+        {
+            // Cut short while it went out: it recharges all the same.
+            Learned& l = learned(g_art);
+            l.lastEnd = now;
+            l.readyAt = now + l.recharge();
+        }
+        finishArt(now);
     }
 }

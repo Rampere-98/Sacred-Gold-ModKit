@@ -36,6 +36,7 @@ namespace
     int g_bestAfter = 0;            // the highest health since
     int g_worstAfter = 0;           // the lowest health since (blows taken while it took effect)
     int g_maxBefore = 0;            // the maximum health when it was drunk
+    uint32_t g_heroId = 0;          // the hero g_heal was learned for
     bool g_measuring = false;
     DWORD g_noneLeftUntil = 0;
     DWORD g_lastTry = 0;            // the last drink tried
@@ -147,6 +148,13 @@ void AutoPotion::onFrame()
     const DWORD now = GetTickCount();
     const int health = hero->health;
     const int maximum = hero->maxHealth;
+    if (hero->id != g_heroId)
+    {
+        // Another hero (a game loaded): what a potion heals is learned again.
+        g_heroId = hero->id;
+        g_heal = 0;
+        g_measuring = false;
+    }
     if (health <= 0)
     {
         g_measuring = false;
@@ -193,6 +201,7 @@ void AutoPotion::onFrame()
         else
         {
             g_noneLeftUntil = now + kNoneLeftMs;
+            CombatState::noPotionsAt = now;     // the auto attack's retreat needs to know
             LOG("AutoPotion: the potion healed nothing ({} is regeneration; none left?), next try in {} s", gained,
                 kNoneLeftMs / 1000);
         }
@@ -204,14 +213,16 @@ void AutoPotion::onFrame()
     }
     const int missing = maximum - health;
     const bool emergency = health * 100 <= maximum * Config::autoPotion.emergencyPercent;
-    const bool due = g_heal > 0 ? missing >= g_heal : missing * 100 >= maximum * Config::autoPotion.firstPercent;
+    // Never waiting for more than most of the maximum missing (a heal learned on a stronger hero, or larger than now).
+    const bool due = g_heal > 0 ? missing >= std::min(g_heal, maximum * 60 / 100)
+                                : missing * 100 >= maximum * Config::autoPotion.firstPercent;
     if (!emergency && !due)
     {
         return;
     }
     // None left lately: no new try for a while, but in an emergency a look every few seconds (the game's usePotion
     // tells at once whether one was drunk, and a potion picked up meanwhile counts).
-    if (static_cast<int>(now - g_noneLeftUntil) < 0 &&
+    if (g_noneLeftUntil && static_cast<int>(now - g_noneLeftUntil) < 0 &&
         (!emergency || !g_usePotion || static_cast<int>(now - g_lastTry) < static_cast<int>(kEmergencyRetryMs)))
     {
         return;

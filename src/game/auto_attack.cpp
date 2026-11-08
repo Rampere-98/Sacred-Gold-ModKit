@@ -267,6 +267,14 @@ namespace
         return AimAssist::heroHealth(health, maximum) && health > 0;
     }
 
+    // The hero casts a combat art or a spell (the player's own, when Tactics is not busy): any order now, an attack,
+    // a walk or a pick up, cuts it short.
+    bool heroCasting()
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        return objects && CombatState::casting(objects->hero());
+    }
+
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_lootDone.count(lootKey(id)))
@@ -414,8 +422,15 @@ namespace
         {
             return false;
         }
-        LOG("AutoAttack: loot at {},{} is far ({:.0f},{:.0f} tiles), walking there first", x, y,
-            (x - self->x) / kTileSize, (y - self->y) / kTileSize);
+        // Once per destination: the walk order goes out again at each nudge (about every 1.2 s) of a long walk.
+        static int32_t loggedX = 0, loggedY = 0;
+        if (x != loggedX || y != loggedY)
+        {
+            loggedX = x;
+            loggedY = y;
+            LOG("AutoAttack: loot at {},{} is far ({:.0f},{:.0f} tiles), walking there first", x, y,
+                (x - self->x) / kTileSize, (y - self->y) / kTileSize);
+        }
         g_walkX = x;
         g_walkY = y;
         Inject::call(&walkThere, nullptr);
@@ -482,6 +497,7 @@ namespace
     // Natural pace: a look at the situation every so often, a moment before acting on a new aim, orders repeated at
     // slightly uneven intervals.
     constexpr DWORD kThinkMinMs = 180, kThinkMaxMs = 340;
+    constexpr DWORD kIdleThinkMinMs = 100, kIdleThinkMaxMs = 180;   // no enemy aimed at: a new one is seen sooner
     constexpr DWORD kReactMinMs = 220, kReactMaxMs = 480;
     constexpr DWORD kReactUrgentMinMs = 90, kReactUrgentMaxMs = 220;
     // Hurt this recently: the hero is under attack.
@@ -1001,8 +1017,10 @@ namespace
     {
         if (!Controller::worldRunning() || !heroAlive())
         {
-            // A window the loot opened (the storage chest in town, a trader): never gone for again.
-            if (g_target && heroAlive())
+            // A window the loot opened (the storage chest in town, a trader): never gone for again. Only with the hero
+            // at it: on the way there the window is the player's own (the inventory, Esc, a loading), and the loot is
+            // merely left for now.
+            if (g_target && g_lootAtSince && heroAlive())
             {
                 LOG("AutoAttack: loot {:x} opened a window, left for good", g_target);
                 g_lootDone.insert(lootKey(g_target));
@@ -1168,13 +1186,13 @@ namespace
             g_autoMovedAt = now;
         }
         if ((g_autoCollectLookAt && static_cast<int>(now - g_autoCollectLookAt) < 0) ||
-            static_cast<int>(now - g_quietUntil) < static_cast<int>(kAutoCollectIdleMs) ||
+            (g_quietUntil && static_cast<int>(now - g_quietUntil) < static_cast<int>(kAutoCollectIdleMs)) ||
             static_cast<int>(now - g_autoMovedAt) < static_cast<int>(kAutoCollectStillMs))
         {
             return;
         }
         g_autoCollectLookAt = now + kAutoCollectLookMs;
-        if (g_target || g_pending || Tactics::busy(now) ||
+        if (g_target || g_pending || Tactics::busy(now) || heroCasting() ||
             (g_collectEndedAt && static_cast<int>(now - g_collectEndedAt) < static_cast<int>(kAutoCollectRestMs)) ||
             (g_autoHurtAt && static_cast<int>(now - g_autoHurtAt) < static_cast<int>(kAutoCollectHurtMs)))
         {
@@ -1189,6 +1207,56 @@ namespace
         Inject::key(kCollectKey, true);
         Inject::key(kCollectKey, false);
         startCollect(now);
+    }
+
+    // A game loaded or another hero: ids and tiles are the old game's, and what they say (loot done or failed,
+    // enemies the player attacked, hirelings, enemies out of reach) would hold for whatever now has them.
+    uint32_t g_gameHero = 0;
+    bool g_wasLoading = false;
+
+    void resetGame(const char* why)
+    {
+        LOG("AutoAttack: {}, per-game state cleared", why);
+        endCollect(why);
+        g_lootDone.clear();
+        g_lootFailures.clear();
+        g_playerTargets.clear();
+        g_followers.clear();
+        g_hirelings.clear();
+        g_unreachable.clear();
+        g_farAimLooks.clear();
+        g_lastWorld.clear();
+        g_lastDistance.clear();
+        g_lastHealth = 0;
+        g_hurtAt = 0;
+        g_autoLastHealth = 0;
+        g_autoHurtAt = 0;
+        g_retreatUntil = 0;
+        g_noRetreatUntil = 0;
+        g_pickupUntil = 0;
+        g_gameHero = 0;     // the hero after the load is adopted without a second clear
+        Tactics::reset();
+    }
+
+    void checkNewGame()
+    {
+        cEngine* engine = FrameHooks::engine();
+        const bool loading = engine && (engine->flags & cEngine::loading);
+        if (loading && !g_wasLoading)
+        {
+            resetGame("game loading");
+        }
+        g_wasLoading = loading;
+        cObjectManager* objects = loading ? nullptr : cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (hero && hero->id != g_gameHero)
+        {
+            if (g_gameHero)
+            {
+                resetGame("another hero");
+            }
+            g_gameHero = hero->id;
+        }
     }
 
     // The ModKit menu's section: what changes applies at once.
@@ -1262,6 +1330,7 @@ void AutoAttack::onFrame()
     }
     const DWORD now = GetTickCount();
     const bool foreground = Focus::foreground();
+    checkNewGame();
 
     // The toggle key, on its press and only while the game has the focus.
     const bool keyDown = foreground && physicallyDown(Config::autoAttack.key);
@@ -1296,7 +1365,7 @@ void AutoAttack::onFrame()
     }
     g_collectKeyWasDown = collectDown;
     // The player's own attacks, while their click holds the auto attack back and a moment after.
-    if (static_cast<int>(now - g_quietUntil) < 1500)
+    if (g_quietUntil && static_cast<int>(now - g_quietUntil) < 1500)
     {
         notePlayerTarget();
     }
@@ -1354,11 +1423,20 @@ void AutoAttack::onFrame()
     {
         return;
     }
-
-    // A look at the situation now and then, as a player glances around, not every frame.
-    if (static_cast<int>(now - g_thinkAt) >= 0 || (!g_target && !g_pending))
+    // An art the player cast himself (a right click): it outlasts the pause after his click, and an order now would
+    // cut it short. Nothing goes out, and Tactics casts nothing over it, until it is done.
+    if (heroCasting())
     {
-        g_thinkAt = now + jitter(kThinkMinMs, kThinkMaxMs);
+        return;
+    }
+
+    // A look at the situation now and then, as a player glances around, not every frame. With nothing aimed at the
+    // looks come sooner, so a new attacker is answered quickly, yet at a steady pace: Tactics measures health and
+    // damage between looks.
+    if (!g_thinkAt || static_cast<int>(now - g_thinkAt) >= 0)
+    {
+        const bool idle = !g_target && !g_pending;
+        g_thinkAt = now + (idle ? jitter(kIdleThinkMinMs, kIdleThinkMaxMs) : jitter(kThinkMinMs, kThinkMaxMs));
         Choice choice;
         if (!decide(now, choice))
         {
