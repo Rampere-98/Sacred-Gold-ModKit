@@ -29,7 +29,9 @@ namespace MapMemory
     void setHero(int layer, int32_t x, int32_t y);
 
     // The radar: what the agent sees now (world positions), and where it is heading (none: `route` false).
-    enum class Blip : uint8_t { Enemy, Target, Hireling };
+    // Enemies, the one aimed at, hirelings; loot on the ground, chests and the like, the map's usable fixed things
+    // (magic hiding places, wells, gold).
+    enum class Blip : uint8_t { Enemy, Target, Hireling, Item, Chest, Hiding };
     void beginRadar();
     void addBlip(Blip kind, int32_t x, int32_t y);
     void endRadar();

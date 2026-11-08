@@ -336,6 +336,48 @@ namespace
         return best < 1e30;
     }
 
+    // The loot on the agent's radar (what the collect goes for, done ones left out): items and containers in the
+    // world pick (the screen and a margin around), the usable fixed things (hiding places, wells, gold) within 60
+    // tiles. Between beginRadar and endRadar.
+    bool radarPick(uint32_t id, void*)
+    {
+        if (g_lootDone.count(lootKey(id)) || isFixed(id))
+        {
+            return false;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* object = objects ? objects->object(id) : nullptr;
+        const Loot loot = object ? lootOf(object) : Loot::None;
+        if (loot == Loot::Item || loot == Loot::Container)
+        {
+            MapMemory::addBlip(loot == Loot::Item ? MapMemory::Blip::Item : MapMemory::Blip::Chest, object->x, object->y);
+        }
+        return false;   // never chosen: only seen
+    }
+
+    void radarLoot()
+    {
+        AimAssist::Target unused;
+        AimAssist::findObject(4000.0f, &radarPick, nullptr, unused);
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        const size_t count = fixedCount();
+        const double reach = 60 * kFixedTile;
+        for (size_t i = 0; hero && i < count; ++i)
+        {
+            const uint32_t id = kFixedId | static_cast<uint32_t>(i);
+            const uint8_t* record = fixedRecord(id);
+            int32_t x = 0, y = 0;
+            if (!record || *reinterpret_cast<const uint32_t*>(record + kFixedKind) != kFixedUsable ||
+                !fixedPosition(id, x, y) || std::abs(x - hero->x) > reach || std::abs(y - hero->y) > reach ||
+                g_lootDone.count(lootKey(id)))
+            {
+                continue;
+            }
+            MapMemory::addBlip(MapMemory::Blip::Hiding, x, y);
+        }
+    }
+
     // The nearest loot: on the screen (items, containers, wells) or a hiding place.
     bool findLoot(uint32_t& out)
     {
@@ -1002,6 +1044,7 @@ namespace
                 MapMemory::addBlip(MapMemory::Blip::Hireling, h->x, h->y);
             }
         }
+        radarLoot();
         MapMemory::endRadar();
         {
             const auto it = chosen ? g_lastWorld.find(enemy) : g_lastWorld.end();

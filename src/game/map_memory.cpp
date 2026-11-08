@@ -589,6 +589,35 @@ namespace
                 break;
             }
         }
+        // Loot under the creatures: an item a small light blue square, a chest a brown box with a gold rim, a hiding
+        // place (or well, gold) a pink plus.
+        for (const BlipAt& b : g_blips)
+        {
+            const ImVec2 p = at(b.x, b.y);
+            const float r = dot * 0.9f;
+            if (!inside(p, dot * 1.5f))
+            {
+                continue;
+            }
+            switch (b.kind)
+            {
+            case MapMemory::Blip::Item:
+                dl->AddRectFilled(ImVec2(p.x - r * 0.7f, p.y - r * 0.7f), ImVec2(p.x + r * 0.7f, p.y + r * 0.7f),
+                                  IM_COL32(140, 220, 255, 255));
+                break;
+            case MapMemory::Blip::Chest:
+                dl->AddRectFilled(ImVec2(p.x - r * 1.3f, p.y - r), ImVec2(p.x + r * 1.3f, p.y + r), IM_COL32(150, 90, 30, 255));
+                dl->AddRect(ImVec2(p.x - r * 1.3f, p.y - r), ImVec2(p.x + r * 1.3f, p.y + r), IM_COL32(255, 210, 60, 255), 0.0f,
+                            0, 1.5f);
+                break;
+            case MapMemory::Blip::Hiding:
+                dl->AddLine(ImVec2(p.x - r * 1.5f, p.y), ImVec2(p.x + r * 1.5f, p.y), IM_COL32(255, 90, 200, 255), 3.0f);
+                dl->AddLine(ImVec2(p.x, p.y - r * 1.5f), ImVec2(p.x, p.y + r * 1.5f), IM_COL32(255, 90, 200, 255), 3.0f);
+                break;
+            default:
+                break;
+            }
+        }
         for (const BlipAt& b : g_blips)
         {
             const ImVec2 p = at(b.x, b.y);
@@ -607,6 +636,8 @@ namespace
                 break;
             case MapMemory::Blip::Hireling:
                 dl->AddCircleFilled(p, dot, IM_COL32(60, 150, 255, 255));
+                break;
+            default:
                 break;
             }
         }
@@ -656,7 +687,8 @@ namespace
                     seenOnLayer(), g_known, static_cast<unsigned>(g_chunks.size() * sizeof(Chunk) / 1024), g_heroTx,
                     g_heroTy);
         ImGui::TextDisabled("Hallazgos: %d. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
-                            "portal.", static_cast<int>(g_landmarks.size()));
+                            "portal. Radar: cuadradito azul, objeto en el suelo; caja marrón, cofre; cruz rosa, escondite "
+                            "mágico, pozo u oro.", static_cast<int>(g_landmarks.size()));
         if (!g_landmarks.empty() && ImGui::SmallButton("Olvidar hallazgos"))
         {
             g_landmarks.clear();
