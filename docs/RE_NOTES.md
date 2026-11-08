@@ -866,3 +866,10 @@ second; SacredBild makes that `[Net] JoinTimeout`, 30 s by default); loading may
   written by `0x4671E0`: 0xF00DBABE, key 0xEFEFEFEF, exp^key, field^key, level^key, 0x200 padding dwords, 0xD00FD00F.
   A test hero can be edited offline if the hero chunk and that block are changed together (and the later directory
   offsets moved): then the game loads it alive.
+- How an art is aimed: a spell's byte +0x3C, a weapon art's +0x4C (`0x548D56`: 2 = cast at the caster's own position;
+  1 = at a target; 3/5 at a place). Lookups `moveInfo 0x4D1AF0` / `spellInfo 0x4D2310` (cdecl id -> entry).
+- Combos: slot kind 4, ids 0x200-0x203 (`0x4D2B30`, static icons table `0x955348`). The hero keeps four 38-byte records
+  at the pointer at stats +0x10E: u16 id, four u32 arts (+2), four u16 levels (+0x12), float recharge total (+0x1A, the
+  sum of the arts', at least 1.0), float +0x1E, float recharged so far (+0x22); ready once +0x22 reaches +0x1A
+  (`0x581A60`; built by `0x5813D0`). In the save they follow the learned arts after a u16 count (4). The order is the
+  same 0x105 art order with the combo id; the hero shows action 9 for the whole sequence (about 8 s for four arts).
