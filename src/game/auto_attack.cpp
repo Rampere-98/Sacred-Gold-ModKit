@@ -3,6 +3,7 @@
 #include "config/controller.h"
 #include "config/tactics.h"
 #include "game/aim_assist.h"
+#include "game/combat_state.h"
 #include "game/controller.h"
 #include "game/focus.h"
 #include "game/frame_hooks.h"
@@ -16,6 +17,7 @@
 
 #include <imgui.h>
 #include <windows.h>
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <cmath>
@@ -26,6 +28,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 using namespace Sacred;
 
@@ -527,19 +530,6 @@ namespace
     // Enemies the player attacked themself (the hero's aim after a click of theirs): fought to the end.
     std::unordered_set<uint32_t> g_playerTargets;
 
-    // Who the auto attack fights: only the enemies attacking the hero (or what it rides) and those the player
-    // attacked; the rest are left alone, however close.
-    bool engaged(cObjectManager* objects, uint32_t id, uint32_t self, uint32_t hero)
-    {
-        if (g_playerTargets.count(id))
-        {
-            return true;
-        }
-        cObject* foe = objects->object(id);
-        const uint32_t aim = foe ? aimOf(objects, foe) : 0;
-        return aim && (aim == hero || aim == self);
-    }
-
     // After a click of the player's: the enemy they set the hero on is theirs to the end. Dead or gone ones are
     // dropped.
     void notePlayerTarget()
@@ -571,10 +561,160 @@ namespace
         bool urgent = false;    // under threat: acted on sooner
     };
 
-    // Which enemy to fight. Those attacking the hero and those the player attacked (engaged), and with Seek any other
-    // within Range; of them, weighing
-    // the situation: those close, closing in or hurting the hero first, the badly wounded finished off, the current
-    // one kept unless another is clearly better. Loot is not the auto attack's: the player collects with A.
+    // --- Who follows the hero: hirelings ---------------------------------------------------------------------------
+
+    // A creature that is no enemy, stays about the hero for a while and kept up while the hero went some way: a
+    // hireling (people in town and animals stay where they are; the horse waits where the hero got off).
+    struct Follower
+    {
+        DWORD since = 0, seenAt = 0;
+        int32_t heroX = 0, heroY = 0;   // where the hero stood when it was first seen
+        bool follows = false;
+    };
+    std::unordered_map<uint32_t, Follower> g_followers;
+    std::vector<uint32_t> g_hirelings;
+    constexpr DWORD kFollowMs = 15000;
+    constexpr int32_t kFollowWay = static_cast<int32_t>(6 * kTileSize);
+
+    void noteHirelings(DWORD now, const cCreature* hero, float range)
+    {
+        AimAssist::Foe friends[32];
+        const int n = AimAssist::friends(range, friends, 32);
+        for (int i = 0; i < n; ++i)
+        {
+            Follower& f = g_followers[friends[i].id];
+            if (!f.since || now - f.seenAt > 10000)
+            {
+                const bool follows = f.follows;
+                f = Follower{now, now, hero->x, hero->y, follows};
+            }
+            f.seenAt = now;
+            if (!f.follows && now - f.since > kFollowMs &&
+                (std::abs(hero->x - f.heroX) > kFollowWay || std::abs(hero->y - f.heroY) > kFollowWay))
+            {
+                f.follows = true;
+                LOG("AutoAttack: {:x} follows the hero: a hireling", friends[i].id);
+            }
+        }
+        g_hirelings.clear();
+        for (auto it = g_followers.begin(); it != g_followers.end();)
+        {
+            if (now - it->second.seenAt > 30000)
+            {
+                it = g_followers.erase(it);
+                continue;
+            }
+            if (it->second.follows)
+            {
+                g_hirelings.push_back(it->first);
+            }
+            ++it;
+        }
+    }
+
+    bool isHireling(uint32_t id)
+    {
+        return std::find(g_hirelings.begin(), g_hirelings.end(), id) != g_hirelings.end();
+    }
+
+    // --- The target: kept, given up when out of reach ---------------------------------------------------------------
+
+    DWORD g_targetSince = 0;        // when the current target was taken
+    float g_targetBest = 0.0f;      // its nearest distance since, pixels (0: none yet)
+    DWORD g_targetBestAt = 0;       // ... reached then
+    std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
+    std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
+    std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
+    constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
+    constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
+    constexpr DWORD kUnreachableMs = 20000;
+
+    void targetTaken(DWORD now)
+    {
+        g_targetSince = now;
+        g_targetBest = 0.0f;
+        g_targetBestAt = now;
+    }
+
+    // --- Stepping back -------------------------------------------------------------------------------------------
+
+    DWORD g_retreatUntil = 0;       // stepping back until then
+    DWORD g_retreatStarted = 0;
+    DWORD g_retreatWalkAt = 0;      // the last walk order away
+    DWORD g_noRetreatUntil = 0;     // after a long retreat, fight again for a while first
+    constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
+    constexpr double kRetreatWay = 8 * kTileSize;
+
+    // Low on health, no healing potion left, enemies close: walk away from them (the order a click on the ground
+    // gives, to a point 8 tiles off on the far side of the hero), again every second while it lasts. Ends once health
+    // is back up, a potion turns up, no enemy is close any more, or after 12 s (then the hero fights again for 8 s).
+    bool retreat(DWORD now, const cCreature* self, int health, int maximum, const AimAssist::Foe* foes, int count,
+                 float hx, float hy, float range, cObjectManager* objects)
+    {
+        const Config::Tactics& c = Config::tactics;
+        double cx = 0.0, cy = 0.0;
+        int close = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            const float dx = foes[i].x - hx, dy = foes[i].y - hy;
+            cObject* o = objects->object(foes[i].id);
+            if (o && dx * dx + dy * dy < (range * 0.45f) * (range * 0.45f))
+            {
+                cx += o->x;
+                cy += o->y;
+                ++close;
+            }
+        }
+        const bool low = health * 100 <= maximum * c.retreatPercent;
+        const bool noPotions = CombatState::noPotionsAt.load() != 0;
+        if (static_cast<int>(now - g_retreatUntil) < 0)
+        {
+            const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
+            const bool tooLong = now - g_retreatStarted > kRetreatMaxMs;
+            if (recovered || !noPotions || !close || tooLong)
+            {
+                LOG("AutoAttack: stepping back over ({})", recovered    ? "health back up"
+                                                           : !noPotions ? "a potion turned up"
+                                                           : !close     ? "no enemy close"
+                                                                        : "too long, fighting again");
+                g_retreatUntil = now;
+                if (tooLong)
+                {
+                    g_noRetreatUntil = now + kRetreatPauseMs;
+                }
+                return false;
+            }
+        }
+        else if (!c.retreat || !low || !noPotions || !close || static_cast<int>(now - g_noRetreatUntil) < 0)
+        {
+            return false;
+        }
+        else
+        {
+            g_retreatStarted = now;
+            g_retreatUntil = now + kRetreatMaxMs;
+            g_retreatWalkAt = 0;
+            LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
+                close);
+        }
+        if (close && (!g_retreatWalkAt || now - g_retreatWalkAt >= 1000))
+        {
+            const double ax = self->x - cx / close, ay = self->y - cy / close;
+            const double len = std::sqrt(ax * ax + ay * ay);
+            const double ux = len > 1.0 ? ax / len : 1.0, uy = len > 1.0 ? ay / len : 0.0;
+            g_walkX = static_cast<int32_t>(self->x + ux * kRetreatWay);
+            g_walkY = static_cast<int32_t>(self->y + uy * kRetreatWay);
+            Inject::call(&walkThere, nullptr);
+            g_retreatWalkAt = now;
+        }
+        return true;
+    }
+
+    // Which enemy to fight. Those attacking the hero, what it rides or a hireling, and those the player attacked
+    // (engaged), and with Seek any other within Range; of them, weighing the situation: those close, coming at the
+    // hero (by their own steps, in the world) or shooting at it from afar first, the badly wounded finished off, the
+    // current one kept for a moment at least and then unless another is clearly better; one the hero gets no nearer
+    // to is given up for a while. Loot is not the auto attack's: the player collects with A.
     bool decide(DWORD now, Choice& out)
     {
         float hx, hy;
@@ -596,38 +736,112 @@ namespace
         cObjectManager* objects = cObjectManager::instance();
         cEngine* engine = FrameHooks::engine();
         cCreature* heroObject = objects ? objects->hero() : nullptr;
-        if (!objects || !engine || !heroObject)
+        cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr;
+        if (!objects || !engine || !heroObject || !self)
         {
             return false;
         }
         const uint32_t heroId = heroObject->id;
-        const uint32_t self = engine->controlled;
+        const uint32_t selfId = engine->controlled;
 
         const float range = static_cast<float>(Config::autoAttack.range);
+        const float melee = range * 0.45f;
+        noteHirelings(now, heroObject, range * 2.0f);
         AimAssist::Foe foes[kMaxFoes];
         const int count = AimAssist::enemies(range * kEngagedReach, foes, kMaxFoes);
+        for (auto it = g_unreachable.begin(); it != g_unreachable.end();)
+        {
+            it = static_cast<int>(now - it->second) >= 0 ? g_unreachable.erase(it) : std::next(it);
+        }
+
+        // The current target: no nearer in a while without a blow, it is out of reach (across water, up a wall).
+        float currentDistance = -1.0f;
+        bool inMelee = false;
+        for (int i = 0; i < count; ++i)
+        {
+            const float dx = foes[i].x - hx, dy = foes[i].y - hy;
+            const float d = std::sqrt(dx * dx + dy * dy);
+            if (foes[i].id == g_target)
+            {
+                currentDistance = d;
+            }
+            if (d < melee)
+            {
+                inMelee = true;
+            }
+        }
+        if (g_target && !g_looting && currentDistance >= 0.0f)
+        {
+            if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
+                CombatState::action(self) == CombatState::Fighting)
+            {
+                g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
+                g_targetBestAt = now;
+            }
+            else if (now - g_targetBestAt > kStuckMs)
+            {
+                LOG("AutoAttack: no nearer to {:x} in {} s ({:.0f} px away): out of reach, left for {} s", g_target,
+                    kStuckMs / 1000, currentDistance, kUnreachableMs / 1000);
+                g_unreachable[g_target] = now + kUnreachableMs;
+                g_playerTargets.erase(g_target);
+                g_target = 0;
+            }
+        }
+
         std::unordered_map<uint32_t, float> distances;
+        std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> world;
+        std::unordered_map<uint32_t, int> farAim;
         bool threat = hurt;
-        float enemyCost = 0.0f, enemyDistance = 0.0f;
+        float enemyCost = 0.0f;
         uint32_t enemy = 0;
+        bool keepCurrent = false;
         for (int i = 0; i < count; ++i)
         {
             const AimAssist::Foe& f = foes[i];
             const float dx = f.x - hx, dy = f.y - hy;
             const float d = std::sqrt(dx * dx + dy * dy);
             distances[f.id] = d;
+            cObject* foeObject = objects->object(f.id);
+            if (foeObject)
+            {
+                world[f.id] = {foeObject->x, foeObject->y};
+            }
+            const uint32_t aim = foeObject ? aimOf(objects, foeObject) : 0;
+            const bool atHero = aim && (aim == heroId || aim == selfId);
+            const bool atHireling = aim && !atHero && isHireling(aim);
+            const bool engagedFoe = g_playerTargets.count(f.id) || atHero || atHireling;
             const bool current = f.id == g_target;
-            // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
-            // too. Seeking fights, any other enemy within Range as well.
-            if (!current && !engaged(objects, f.id, self, heroId) && (!Config::autoAttack.seek || d > range))
+            // Given up on: only if it comes close again.
+            if (g_unreachable.count(f.id) && d > melee)
             {
                 continue;
             }
-            const auto last = g_lastDistance.find(f.id);
-            // Closing in from afar; in the melee everyone shuffles about, which says nothing.
-            const bool close = d < range * 0.45f;
-            const bool closing = !close && last != g_lastDistance.end() && last->second - d > 12.0f;
-            if (close || closing)
+            // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
+            // too. Seeking fights, any other enemy within Range as well. The current one while it is engaged or
+            // within 1.5 Range.
+            if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!Config::autoAttack.seek || d > range))
+            {
+                continue;
+            }
+            // Aiming at the hero from beyond the melee look after look: it shoots (archer, caster).
+            int farLooks = 0;
+            if (atHero && d > melee)
+            {
+                const auto it = g_farAimLooks.find(f.id);
+                farLooks = (it != g_farAimLooks.end() ? it->second : 0) + 1;
+                farAim[f.id] = farLooks;
+            }
+            // Coming at the hero by its own steps (in the world: the hero's own walk says nothing about it).
+            bool closing = false;
+            const auto last = g_lastWorld.find(f.id);
+            if (foeObject && last != g_lastWorld.end() && d >= melee)
+            {
+                const double mx = foeObject->x - last->second.first, my = foeObject->y - last->second.second;
+                const double tx = self->x - foeObject->x, ty = self->y - foeObject->y;
+                const double tl = std::sqrt(tx * tx + ty * ty);
+                closing = tl > 1.0 && (mx * tx + my * ty) / tl > 0.5 * kTileSize;
+            }
+            if (d < melee || closing)
             {
                 threat = true;
             }
@@ -636,23 +850,38 @@ namespace
             {
                 cost *= 0.7f;       // the one coming at the hero first
             }
+            if (farLooks >= 3 && !inMelee)
+            {
+                cost *= 0.6f;       // shooting at the hero from afar, nobody in the melee: go for it
+            }
+            if (atHireling)
+            {
+                cost *= 0.9f;       // at a hireling: help it
+            }
             if (f.maxHealth > 0 && f.health * 10 < f.maxHealth * 3)
             {
                 cost *= 0.8f;       // finish off the badly wounded
             }
             if (current)
             {
-                // Stay on it: a player finishes the enemy they fight, unless another is far nearer.
+                // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least
+                // a moment (no back and forth).
                 cost *= 0.4f;
+                keepCurrent = now - g_targetSince < kKeepTargetMs;
             }
             if (!enemy || cost < enemyCost)
             {
                 enemy = f.id;
                 enemyCost = cost;
-                enemyDistance = d;
             }
         }
+        if (keepCurrent)
+        {
+            enemy = g_target;
+        }
         g_lastDistance = std::move(distances);
+        g_lastWorld = std::move(world);
+        g_farAimLooks = std::move(farAim);
 
         bool chosen = false;
         if (enemy)
@@ -661,20 +890,28 @@ namespace
             chosen = true;
         }
 
-        // Combat arts and consumables, on the same look.
+        // Combat arts and consumables, on the same look: at the enemy the hero fights now.
         Tactics::Situation situation;
         situation.now = now;
         situation.health = health;
         situation.maxHealth = maximum;
         situation.hurt = hurt;
         situation.threat = threat;
-        situation.target = chosen ? out.id : g_target;
+        situation.target = g_target && !g_looting && g_lastDistance.count(g_target) ? g_target : (chosen ? out.id : 0);
         situation.foes = foes;
         situation.count = count;
         situation.hx = hx;
         situation.hy = hy;
         situation.range = range;
+        situation.hirelings = g_hirelings.data();
+        situation.hirelingCount = static_cast<int>(g_hirelings.size());
         Tactics::think(situation);
+
+        // Low on health with no potion: step back instead (unless an art just went out).
+        if (!Tactics::busy(now) && retreat(now, self, health, maximum, foes, count, hx, hy, range, objects))
+        {
+            return false;
+        }
         return chosen;
     }
 
@@ -1135,6 +1372,7 @@ void AutoAttack::onFrame()
         if (id != g_target)
         {
             LOG("AutoAttack: target {:x}", id);
+            targetTaken(now);
         }
         g_target = id;
         g_sentAt = now;
