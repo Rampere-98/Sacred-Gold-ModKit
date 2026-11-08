@@ -1431,7 +1431,9 @@ void AutoAttack::onFrame()
             endCollect("the game's collect is done");
         }
     }
-    if (Config::autoAttack.autoCollect && !g_collecting && foreground && !Controller::drives() &&
+    // Collect always (AutoCollect), and also whenever the auto attack fights for the player: the loot of each fight
+    // taken once it is over, before the next (the player's own play keeps to A unless AutoCollect is on).
+    if ((Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground && !Controller::drives() &&
         Controller::worldRunning() && heroAlive())
     {
         autoCollect(now);
