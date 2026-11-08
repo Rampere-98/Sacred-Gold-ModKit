@@ -13,7 +13,9 @@
 #include <cstdio>
 #include <mutex>
 #include <string>
+#include <deque>
 #include <unordered_map>
+#include <vector>
 
 namespace
 {
@@ -41,6 +43,16 @@ namespace
     constexpr DWORD kSampleEveryMs = 700;   // a back buffer read stalls the GPU a little: not more often
 
     int g_heroLayer = 0, g_heroTx = 0, g_heroTy = 0;
+    int32_t g_heroX = 0, g_heroY = 0;
+    struct BlipAt
+    {
+        MapMemory::Blip kind;
+        int32_t x, y;
+    };
+    std::vector<BlipAt> g_blips, g_blipsBuilding;
+    bool g_route = false;
+    int32_t g_routeX = 0, g_routeY = 0;
+    std::deque<std::pair<int32_t, int32_t>> g_trail;    // where the hero walked lately
     bool g_heroKnown = false;
 
     int tileOf(int32_t v)
@@ -221,8 +233,48 @@ namespace
                 dl->AddRectFilled(a, b, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
             }
         }
+        // World positions to the map: squares from the hero's, clipped to the map.
         const ImVec2 mid(origin.x + half * g_zoom + g_zoom * 0.5f, origin.y + half * g_zoom + g_zoom * 0.5f);
-        dl->AddCircleFilled(mid, std::max(2.0f, g_zoom * 0.8f), IM_COL32(255, 40, 40, 255));
+        const auto at = [&](int32_t x, int32_t y) {
+            return ImVec2(mid.x + static_cast<float>((x - g_heroX) / kTileSize) * g_zoom,
+                          mid.y + static_cast<float>((y - g_heroY) / kTileSize) * g_zoom);
+        };
+        dl->PushClipRect(origin, ImVec2(origin.x + size, origin.y + size), true);
+        // The trail: where it walked lately.
+        for (size_t i = 1; i < g_trail.size(); ++i)
+        {
+            dl->AddLine(at(g_trail[i - 1].first, g_trail[i - 1].second), at(g_trail[i].first, g_trail[i].second),
+                        IM_COL32(255, 255, 255, 110), 1.0f);
+        }
+        // The route: where it is heading now.
+        if (g_route)
+        {
+            const ImVec2 to = at(g_routeX, g_routeY);
+            dl->AddLine(mid, to, IM_COL32(255, 220, 40, 230), 2.0f);
+            dl->AddCircle(to, std::max(3.0f, g_zoom * 0.9f), IM_COL32(255, 220, 40, 230), 0, 1.5f);
+        }
+        const float dot = std::max(2.5f, g_zoom * 0.75f);
+        for (const BlipAt& b : g_blips)
+        {
+            const ImVec2 p = at(b.x, b.y);
+            switch (b.kind)
+            {
+            case MapMemory::Blip::Enemy:
+                dl->AddCircleFilled(p, dot, IM_COL32(255, 140, 20, 255));
+                break;
+            case MapMemory::Blip::Target:
+                dl->AddCircleFilled(p, dot * 1.2f, IM_COL32(255, 30, 30, 255));
+                dl->AddCircle(p, dot * 2.2f, IM_COL32(255, 30, 30, 255), 0, 1.5f);
+                break;
+            case MapMemory::Blip::Hireling:
+                dl->AddCircleFilled(p, dot, IM_COL32(60, 150, 255, 255));
+                break;
+            }
+        }
+        // The hero: white with a dark rim, to stand out from the route and the enemies.
+        dl->AddCircleFilled(mid, dot * 1.2f, IM_COL32(255, 255, 255, 255));
+        dl->AddCircle(mid, dot * 1.2f, IM_COL32(0, 0, 0, 255), 0, 1.5f);
+        dl->PopClipRect();
         ImGui::Dummy(ImVec2(size, size));
     }
 
@@ -310,7 +362,27 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
     g_heroLayer = layer;
     g_heroTx = tileOf(x);
     g_heroTy = tileOf(y);
+    g_heroX = x;
+    g_heroY = y;
     g_heroKnown = true;
+    // The trail, a point every half tile or so; a jump (teleport, another layer) starts it anew.
+    if (!g_trail.empty())
+    {
+        const double dx = x - g_trail.back().first, dy = y - g_trail.back().second;
+        if (dx * dx + dy * dy > (30 * kTileSize) * (30 * kTileSize))
+        {
+            g_trail.clear();
+        }
+        else if (dx * dx + dy * dy < 0.25 * kTileSize * kTileSize)
+        {
+            return;
+        }
+    }
+    g_trail.emplace_back(x, y);
+    if (g_trail.size() > 120)
+    {
+        g_trail.pop_front();
+    }
 }
 
 void MapMemory::visit(int layer, int32_t x, int32_t y)
@@ -449,4 +521,28 @@ void MapMemory::save(uint32_t now, uint32_t minMs)
     MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);
     g_dirty = false;
     g_savedAt = now;
+}
+
+void MapMemory::beginRadar()
+{
+    g_blipsBuilding.clear();
+}
+
+void MapMemory::addBlip(Blip kind, int32_t x, int32_t y)
+{
+    g_blipsBuilding.push_back({kind, x, y});
+}
+
+void MapMemory::setRoute(bool route, int32_t x, int32_t y)
+{
+    const std::lock_guard lock(g_lock);
+    g_route = route;
+    g_routeX = x;
+    g_routeY = y;
+}
+
+void MapMemory::endRadar()
+{
+    const std::lock_guard lock(g_lock);
+    g_blips.swap(g_blipsBuilding);
 }

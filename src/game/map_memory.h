@@ -27,6 +27,13 @@ namespace MapMemory
     void install();
     void setHero(int layer, int32_t x, int32_t y);
 
+    // The radar: what the agent sees now (world positions), and where it is heading (none: `route` false).
+    enum class Blip : uint8_t { Enemy, Target, Hireling };
+    void beginRadar();
+    void addBlip(Blip kind, int32_t x, int32_t y);
+    void endRadar();
+    void setRoute(bool route, int32_t x = 0, int32_t y = 0);
+
     // Writes the file if something changed (at most every `minMs`).
     void save(uint32_t now, uint32_t minMs);
 }

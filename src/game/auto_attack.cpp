@@ -398,6 +398,7 @@ namespace
     constexpr int32_t kUseReach = static_cast<int32_t>(24 * kTileSize);
 
     int32_t g_walkX = 0, g_walkY = 0;
+    DWORD g_roamAt = 0;     // the last roaming step (0: not roaming)
 
     // On the window's thread, as the player's clicks (HeroMove).
     void walkThere(void*)
@@ -984,6 +985,31 @@ namespace
             out = {enemy, threat};
             chosen = true;
         }
+        // The radar on the agent's map: the enemies seen, the one fought, the hirelings, and where it heads.
+        MapMemory::beginRadar();
+        for (const auto& [id, at] : g_lastWorld)
+        {
+            MapMemory::addBlip(id == enemy ? MapMemory::Blip::Target : MapMemory::Blip::Enemy, at.first, at.second);
+        }
+        for (uint32_t id : g_hirelings)
+        {
+            if (cObject* h = objects->object(id))
+            {
+                MapMemory::addBlip(MapMemory::Blip::Hireling, h->x, h->y);
+            }
+        }
+        MapMemory::endRadar();
+        {
+            const auto it = chosen ? g_lastWorld.find(enemy) : g_lastWorld.end();
+            if (it != g_lastWorld.end())
+            {
+                MapMemory::setRoute(true, it->second.first, it->second.second);
+            }
+            else
+            {
+                MapMemory::setRoute(g_roamAt != 0, g_walkX, g_walkY);
+            }
+        }
 
         // Combat arts and consumables, on the same look: at the enemy the hero fights now.
         Tactics::Situation situation;
@@ -1018,7 +1044,6 @@ namespace
     constexpr double kRoamWay = 2 * kTileSize;      // a step at a time, a look around between
     constexpr double kRoamLeash = 60 * kTileSize;
     DWORD g_quietSince = 0;
-    DWORD g_roamAt = 0;
     double g_roamAngle = 0.0;
     int32_t g_roamFromX = 0, g_roamFromY = 0;   // the hero at the last walk order
     int32_t g_homeX = 0, g_homeY = 0;
@@ -1149,6 +1174,7 @@ namespace
         g_walkX = static_cast<int32_t>(self->x + std::cos(g_roamAngle) * kRoamWay);
         g_walkY = static_cast<int32_t>(self->y + std::sin(g_roamAngle) * kRoamWay);
         Inject::call(&walkThere, nullptr);
+        MapMemory::setRoute(true, g_walkX, g_walkY);
         if (!g_roamAt || now - g_roamAt > 10000)
         {
             LOG("AutoAttack: nothing around, going to look ({:.0f} tiles from where it began, {} cells of this layer "
