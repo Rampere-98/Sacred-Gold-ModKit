@@ -657,6 +657,11 @@ namespace
                     g_heroTy);
         ImGui::TextDisabled("Hallazgos: %d. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
                             "portal.", static_cast<int>(g_landmarks.size()));
+        if (!g_landmarks.empty() && ImGui::SmallButton("Olvidar hallazgos"))
+        {
+            g_landmarks.clear();
+            g_dirty = true;
+        }
         drawMap(300.0f);
         drawFoeFilters();
     }
@@ -800,11 +805,16 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
 {
     const std::lock_guard lock(g_lock);
     // A way into another layer (a door, stairs, a cave) or a jump on the same one (a portal): both ends marked.
+    // A jump is one no walk or ride covers in the time since the last update (over 30 tiles and over 8 tiles a
+    // second): updates pause meanwhile at times (a collect, a loading screen), and a walk then looks like a jump.
+    static DWORD heroAt = 0;
+    const DWORD now = GetTickCount();
     if (g_heroKnown)
     {
         const double jx = static_cast<double>(x) - g_heroX, jy = static_cast<double>(y) - g_heroY;
+        const double tiles = std::sqrt(jx * jx + jy * jy) / kTileSize;
         const bool otherLayer = layer != g_heroLayer;
-        if (otherLayer || jx * jx + jy * jy > (30 * kTileSize) * (30 * kTileSize))
+        if (otherLayer || (tiles > 30.0 && tiles > 8.0 * (now - heroAt) / 1000.0))
         {
             const MapMemory::Mark kind = otherLayer ? MapMemory::Mark::Entrance : MapMemory::Mark::Portal;
             addLandmark(kind, g_heroLayer, g_heroTx, g_heroTy);
@@ -817,6 +827,7 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
     g_heroX = x;
     g_heroY = y;
     g_heroKnown = true;
+    heroAt = now;
     // The trail, a point every half tile or so; a jump (teleport, another layer) starts it anew.
     if (!g_trail.empty())
     {
