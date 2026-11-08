@@ -1653,7 +1653,12 @@ void AutoAttack::onFrame()
         cEngine* engine = FrameHooks::engine();
         if (cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr)
         {
-            MapMemory::visit(*(reinterpret_cast<const uint8_t*>(self) + 0x24), self->x, self->y);
+            const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            MapMemory::visit(layer, self->x, self->y);
+            if (float sx, sy; AimAssist::hero(sx, sy))
+            {
+                MapMemory::wantGround(layer, self->x, self->y, sx, sy);
+            }
             if (!g_on)
             {
                 MapMemory::beginRadar();
