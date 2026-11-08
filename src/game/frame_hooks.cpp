@@ -1,4 +1,5 @@
 #include "game/frame_hooks.h"
+#include "game/map_memory.h"
 #include "game/auto_attack.h"
 #include "game/click_walk.h"
 #include "game/auto_potion.h"
@@ -285,6 +286,8 @@ namespace
         {
             proxy->endBatch();
         }
+        // The ground under the hero, while only the world is drawn (no UI over it yet): the explored map's colors.
+        MapMemory::afterWorld();
         D3DStats::addTime(D3DStats::TWorldProxy, D3DStats::total(D3DStats::TProxy) - proxyTime);
         D3DStats::mark(D3DStats::TGameAfterWorld);
     }

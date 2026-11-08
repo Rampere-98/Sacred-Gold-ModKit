@@ -778,7 +778,12 @@ namespace
         const uint32_t heroId = heroObject->id;
         const uint32_t selfId = engine->controlled;
         // The map memory: fights count as ground seen too (layer at the creature's +0x24).
-        MapMemory::visit(*(reinterpret_cast<const uint8_t*>(self) + 0x24), self->x, self->y);
+        {
+            const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            MapMemory::visit(layer, self->x, self->y);
+            MapMemory::wantGround(layer, self->x, self->y, hx, hy);
+            MapMemory::save(now, 60000);
+        }
 
         const float range = static_cast<float>(Config::autoAttack.range);
         const float melee = range * 0.45f;
@@ -1019,6 +1024,7 @@ namespace
     bool g_homeSet = false;
     int g_roamStuck = 0;    // walk orders in a row that got the hero no further
     int g_roamLayer = -1;
+    int g_roamSteps = 0;    // steps since the way was chosen
     constexpr size_t kLayer = 0x24;     // a creature's layer: the surface, a dungeon, an interior
 
     void roam(DWORD now)
@@ -1059,11 +1065,16 @@ namespace
         // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
         if (g_roamAt)
         {
+            // Progress along the way it was sent: under half the step is blocked (a pathfinder stopping at the water
+            // after a tile, as much as no step at all).
             const double mx = self->x - g_roamFromX, my = self->y - g_roamFromY;
-            if (mx * mx + my * my < 0.25 * kTileSize * kTileSize)
+            const double along = mx * std::cos(g_roamAngle) + my * std::sin(g_roamAngle);
+            if (along < 0.5 * kRoamWay)
             {
                 ++g_roamStuck;
-                MapMemory::blocked(layer, g_walkX, g_walkY);
+                // The square just ahead of where it stopped is what it could not step on.
+                MapMemory::blocked(layer, static_cast<int32_t>(self->x + std::cos(g_roamAngle) * kTileSize),
+                                   static_cast<int32_t>(self->y + std::sin(g_roamAngle) * kTileSize));
             }
             else
             {
@@ -1084,7 +1095,14 @@ namespace
         const double homeDistance = std::sqrt(hx * hx + hy * hy);
         double bestAngle = g_roamAngle;
         float bestCost = 1e9f;
-        for (int k = 0; k < 16; ++k)
+        // The way is kept for some steps unless blocked or past the leash: steps that wander back and forth see nothing.
+        ++g_roamSteps;
+        const bool rethink = g_roamStuck > 0 || g_roamSteps >= 6 || homeDistance > kRoamLeash || !g_roamAt;
+        if (rethink)
+        {
+            g_roamSteps = 0;
+        }
+        for (int k = 0; k < 16 && rethink; ++k)
         {
             const double a = k * 3.14159265 / 8.0;
             const double ux = std::cos(a), uy = std::sin(a);
