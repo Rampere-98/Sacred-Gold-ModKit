@@ -650,8 +650,7 @@ namespace
 
     // --- Stepping back -------------------------------------------------------------------------------------------
 
-    DWORD g_retreatUntil = 0;       // stepping back until then
-    DWORD g_retreatStarted = 0;
+    DWORD g_retreatUntil = 0;       // stepping back until then at the latest (0: not stepping back)
     DWORD g_retreatWalkAt = 0;      // the last walk order away
     DWORD g_noRetreatUntil = 0;     // after a long retreat, fight again for a while first
     constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
@@ -681,10 +680,10 @@ namespace
         }
         const bool low = health * 100 <= maximum * c.retreatPercent;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
-        if (g_retreatUntil && static_cast<int>(now - g_retreatUntil) < 0)
+        if (g_retreatUntil)
         {
             const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
-            const bool tooLong = now - g_retreatStarted > kRetreatMaxMs;
+            const bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
             if (recovered || !noPotions || !anyNear || tooLong)
             {
                 LOG("AutoAttack: stepping back over ({})", recovered    ? "health back up"
@@ -706,7 +705,6 @@ namespace
         }
         else
         {
-            g_retreatStarted = now;
             g_retreatUntil = now + kRetreatMaxMs;
             g_retreatWalkAt = 0;
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
