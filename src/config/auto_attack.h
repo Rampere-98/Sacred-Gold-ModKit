@@ -12,8 +12,8 @@ namespace Config
         int roamStep = 6;       // tiles a roaming step goes (shorter where that tile cannot be stood on)
         bool roam = false;      // nothing around: walk off a step at a time toward ground not seen yet (the agent map)
         int pauseMs = 700;      // no auto attack for this long after the player's own mouse click
-        bool pickup = true;     // after the game's collect (A): take what it left, open chests and containers, use the hand-cursor fixed things (hiding places, wells)
-        bool autoCollect = false;   // collect (A) by itself whenever loot lies about and no fight is on
+        bool pickup = true;     // the agent's own collect (never the game's A): items, chests and containers, the hand-cursor fixed things (hiding places, wells)
+        bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on
         int lootRange = 800;    // ... within this many screen pixels of the hero
         int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
     };

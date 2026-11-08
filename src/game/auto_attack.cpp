@@ -1272,20 +1272,13 @@ namespace
         g_roamAt = now;
     }
 
-    // A: the game's own collect (the taskbar's collect button, order 0x113: the hero gathers the items around it).
-    // Improved: when the game's collect is done, what is left within LootRange (items it did not reach, chests and
-    // other containers, which it never opens) is taken one by one, each with the order a click on it gives. The auto
-    // attack waits meanwhile; a click of the player's, a hit taken or the A key again ends it.
-    constexpr int kCollectKey = 'A';
-    constexpr DWORD kCollectGameMinMs = 700;    // the game's collect gets this long to start moving the hero
-    constexpr DWORD kCollectStillMs = 900;      // ... and is done once the hero stands still this long
+    // The agent's own collect: the loot within LootRange (items, chests and other containers, hiding places and
+    // wells) taken one by one, each with the order a click on it gives. Never the game's collect (the A key and the
+    // taskbar button stay the player's, as in the plain game). The auto attack waits meanwhile; a click of the
+    // player's or a hit taken ends it.
     constexpr DWORD kCollectMaxMs = 30000;
-    bool g_collectKeyWasDown = false;
     bool g_collecting = false;
-    bool g_collectRest = false;     // the game's collect is done: taking the rest
     DWORD g_collectStart = 0;
-    DWORD g_heroMovedAt = 0;
-    int32_t g_heroX = 0, g_heroY = 0;
     int g_collectHealth = 0;
 
     DWORD g_collectEndedAt = 0;    // see autoCollect
@@ -1298,7 +1291,6 @@ namespace
             g_collectEndedAt = GetTickCount();
         }
         g_collecting = false;
-        g_collectRest = false;
         g_target = 0;
         g_looting = false;
         g_pending = 0;
@@ -1307,9 +1299,7 @@ namespace
     void startCollect(DWORD now)
     {
         g_collecting = true;
-        g_collectRest = false;
         g_collectStart = now;
-        g_heroMovedAt = now;
         g_target = 0;
         g_looting = false;
         g_pending = 0;
@@ -1317,22 +1307,7 @@ namespace
         g_collectHealth = 0;
         AimAssist::heroHealth(g_collectHealth, maximum);
         Tactics::reset();
-        LOG("AutoAttack: collect (A)");
-    }
-
-    // Whether the hero stopped moving lately (the game's collect done), keeping track of its position.
-    bool heroStill(DWORD now)
-    {
-        cObjectManager* objects = cObjectManager::instance();
-        cCreature* hero = objects ? objects->hero() : nullptr;
-        if (hero && (hero->x != g_heroX || hero->y != g_heroY))
-        {
-            g_heroX = hero->x;
-            g_heroY = hero->y;
-            g_heroMovedAt = now;
-        }
-        return static_cast<int>(now - g_collectStart) >= static_cast<int>(kCollectGameMinMs) &&
-               static_cast<int>(now - g_heroMovedAt) >= static_cast<int>(kCollectStillMs);
+        LOG("AutoAttack: collect (the agent's own)");
     }
 
     void collectFrame(DWORD now)
@@ -1358,7 +1333,7 @@ namespace
         int health = 0, maximum = 0;
         if (AimAssist::heroHealth(health, maximum))
         {
-            if (g_collectRest && g_collectHealth && health < g_collectHealth)
+            if (g_collectHealth && health < g_collectHealth)
             {
                 endCollect("hit");
                 return;
@@ -1366,18 +1341,7 @@ namespace
             g_collectHealth = health;
         }
 
-        // First the game's own collect, until the hero stands still.
-        if (!g_collectRest)
-        {
-            if (!heroStill(now))
-            {
-                return;
-            }
-            g_collectRest = true;
-            LOG("AutoAttack: the game's collect is done, taking the rest");
-        }
-
-        // Then the rest, one at a time: no new order while the hero stoops for one.
+        // One at a time: no new order while the hero stoops for one.
         if ((g_pickupUntil && static_cast<int>(now - g_pickupUntil) < 0))
         {
             return;
@@ -1439,8 +1403,8 @@ namespace
         }
     }
 
-    // Collect always ([AutoAttack] AutoCollect): with loot within LootRange and no fight on, A is pressed for the
-    // player, the same collect as theirs. Not while enemies attack the hero, it was hurt lately or the auto attack
+    // Collect always ([AutoAttack] AutoCollect): with loot within LootRange and no fight on, the agent's own collect
+    // runs. Not while enemies attack the hero, it was hurt lately or the auto attack
     // has an enemy; a while after each collect, so loot it could not take is not gone for again and again.
     constexpr DWORD kAutoCollectLookMs = 500;
     constexpr DWORD kAutoCollectRestMs = 3000;
@@ -1526,8 +1490,6 @@ namespace
             return;
         }
         LOG("AutoAttack: loot about ({:x}), collecting", loot);
-        Inject::key(kCollectKey, true);
-        Inject::key(kCollectKey, false);
         startCollect(now);
     }
 
@@ -1604,21 +1566,20 @@ namespace
         ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido;
-"
+            ImGui::SetTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido; "
                               "el buscador de caminos rodea lo que no se puede pisar.");
         }
         ImGui::SetItemTooltip("Paso a paso hacia lo que aún no ha visto (el mapa del agente), con la vida por encima del 60 %%.");
         // The same switches as in the tactics section, here with the fight.
         ImGui::Checkbox("Usar habilidades (artes de combate)##fight", &Config::tactics.arts);
         ImGui::Checkbox("Usar consumibles##fight", &Config::tactics.consumables);
-        int collect = c.autoCollect ? 1 : 0;
-        ImGui::TextUnformatted("Recogida:");
-        ImGui::RadioButton("Solo al pulsar A", &collect, 0);
-        ImGui::RadioButton("Recoger siempre (sin combate cerca)", &collect, 1);
-        c.autoCollect = collect == 1;
-        ImGui::Checkbox("Mejorar la recogida con A", &c.pickup);
-        ImGui::SetItemTooltip("Tras la recogida del juego (tecla A), toma lo que quede en el radio y abre los cofres.");
+        ImGui::Checkbox("El agente recoge el botín", &c.pickup);
+        ImGui::SetItemTooltip("Con su propia recogida (no usa la tecla A, que queda como en el juego): objetos del "
+                              "suelo, cofres, escondites y pozos del radio, uno a uno, sin combate cerca.");
+        ImGui::BeginDisabled(!c.pickup);
+        ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
+        ImGui::SetItemTooltip("Apagado: solo recoge tras los combates que hace por ti.");
+        ImGui::EndDisabled();
         ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
         ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 2000);
         ImGui::SliderInt("Pausa tras tu clic (ms)", &c.pauseMs, 0, 3000);
@@ -1687,21 +1648,6 @@ void AutoAttack::onFrame()
         Tactics::reset();
     }
 
-    // A: the game collects; we follow it up, and the auto attack waits. A again while taking the rest ends it.
-    const bool collectDown = foreground && physicallyDown(kCollectKey) && !physicallyDown(VK_CONTROL) &&
-                             !physicallyDown(VK_MENU);
-    if (collectDown && !g_collectKeyWasDown && Controller::worldRunning())
-    {
-        if (g_collecting && g_collectRest)
-        {
-            endCollect("A again");
-        }
-        else if (!g_collecting)
-        {
-            startCollect(now);
-        }
-    }
-    g_collectKeyWasDown = collectDown;
     // The player's own attacks, while their click holds the auto attack back and a moment after.
     if (g_quietUntil && static_cast<int>(now - g_quietUntil) < 1500)
     {
@@ -1709,7 +1655,7 @@ void AutoAttack::onFrame()
     }
     // A dialog opened while collecting: an NPC who spoke up as the hero passed, more often than the loot's own text
     // (fixtures with text are left out by their flags and kind already). The collect stops and leaves the dialog to
-    // the player; nothing is marked, so the loot is tried again on the next A.
+    // the player; nothing is marked, so the loot is tried again on the next collect.
     if (g_collecting && foreground && UiNav::npcDialogOpen())
     {
         LOG("AutoAttack: a dialog opened while going for {:x}, left to the player", g_target);
@@ -1722,23 +1668,15 @@ void AutoAttack::onFrame()
         {
             endCollect("focus lost");
         }
-        else if (Config::autoAttack.pickup)
+        else
         {
             collectFrame(now);
             return;
         }
-        else if (!heroStill(now))
-        {
-            return;     // only the game's collect, which the auto attack must not cut short
-        }
-        else
-        {
-            endCollect("the game's collect is done");
-        }
     }
     // Collect always (AutoCollect), and also whenever the auto attack fights for the player: the loot of each fight
     // taken once it is over, before the next (the player's own play keeps to A unless AutoCollect is on).
-    if ((Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground && !Controller::drives() &&
+    if (Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground && !Controller::drives() &&
         Controller::worldRunning() && heroAlive())
     {
         autoCollect(now);
