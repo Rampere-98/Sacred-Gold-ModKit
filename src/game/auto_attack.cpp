@@ -1088,7 +1088,6 @@ namespace
     constexpr DWORD kRoamQuietMs = 4000;
     constexpr DWORD kRoamStepMs = 500;       // at least this between steps
     constexpr DWORD kRoamStepMaxMs = 4000;   // at most this on one step
-    constexpr double kRoamWay = 2 * kTileSize;      // a step at a time, a look around between
     constexpr double kRoamLeash = 60 * kTileSize;
     DWORD g_quietSince = 0;
     double g_roamAngle = 0.0;
@@ -1156,7 +1155,7 @@ namespace
             const double wx = g_walkX - g_roamFromX, wy = g_walkY - g_roamFromY;
             const double way = std::max(std::sqrt(wx * wx + wy * wy), 0.5 * kTileSize);
             const double along = (mx * wx + my * wy) / way;     // toward the step's end
-            if (along < 0.5 * std::min(way, kRoamWay))
+            if (along < 0.5 * std::min(way, Config::autoAttack.roamStep * kTileSize))
             {
                 ++g_roamStuck;
                 // The square just ahead of where it stopped is what it could not step on.
@@ -1185,10 +1184,12 @@ namespace
         // The way is kept for some steps unless blocked or past the leash: steps that wander back and forth see nothing.
         // A step's end the hero can stand on, by the game's own tile test: the path finder drops a walk to a tree, a
         // rock or water at once (seen live in a forest: walking, then standing, not a pixel moved, step after step).
-        // Two tiles out, else three, four or one; none: that way is closed (marked so on the map). The tile's middle.
+        // The step's length out (menu), else shorter down to one tile; none: that way is closed (marked so on the
+        // map). The tile's middle.
         const auto stepEnd = [&](double a, int32_t& x, int32_t& y) {
-            for (const double tiles : {2.0, 3.0, 4.0, 1.0})
+            for (int step = std::clamp(Config::autoAttack.roamStep, 1, 20); step >= 1; --step)
             {
+                const double tiles = step;
                 const int tx = static_cast<int>(std::floor((self->x + std::cos(a) * tiles * kTileSize) / kTileSize));
                 const int ty = static_cast<int>(std::floor((self->y + std::sin(a) * tiles * kTileSize) / kTileSize));
                 const int ok = ClickWalk::walkable(layer, tx, ty);
@@ -1600,6 +1601,13 @@ namespace
         ImGui::RadioButton("Buscar combate (cualquier enemigo en el radio)", &mode, 1);
         c.seek = mode == 1;
         ImGui::Checkbox("Explorar cuando no hay nadie", &c.roam);
+        ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido;
+"
+                              "el buscador de caminos rodea lo que no se puede pisar.");
+        }
         ImGui::SetItemTooltip("Paso a paso hacia lo que aún no ha visto (el mapa del agente), con la vida por encima del 60 %%.");
         // The same switches as in the tactics section, here with the fight.
         ImGui::Checkbox("Usar habilidades (artes de combate)##fight", &Config::tactics.arts);
@@ -1624,6 +1632,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Enabled", c.enabled);
         ModkitMenu::write(ini, L"AutoAttack", L"Seek", c.seek);
         ModkitMenu::write(ini, L"AutoAttack", L"Roam", c.roam);
+        ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);

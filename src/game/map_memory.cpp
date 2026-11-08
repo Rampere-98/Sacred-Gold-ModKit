@@ -1,5 +1,6 @@
 #include "game/map_memory.h"
 #include "game/combat_learn.h"
+#include "game/click_walk.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
 #include "overlay/overlay.h"
@@ -11,6 +12,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <cstdio>
 #include <mutex>
 #include <string>
@@ -25,14 +27,15 @@ namespace
     // One cell per tile (a map coordinate).
     constexpr double kTileSize = 53.66563;
 
-    // 6 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
+    // 7 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
     struct Cell
     {
         uint8_t visits = 0;     // saturating
         uint8_t blocked = 0;    // saturating
         uint8_t r = 0, g = 0, b = 0;
         uint8_t samples = 0;    // ground color samples averaged (0: none yet)
-        bool known() const { return visits || blocked || samples; }
+        uint8_t scan = 0;       // the game's tile test, run over the loaded sectors: 0 not yet, 1 walkable, 2 not
+        bool known() const { return visits || blocked || samples || scan; }
     };
     // Squares in chunks of 32x32 (6 KB), only where something is known: a lookup is one hash and an index, and the
     // memory is what was explored, not a node per square.
@@ -223,8 +226,9 @@ namespace
                 }
                 continue;
             }
-            unsigned color = 0, samples = 0;
-            const int n = std::sscanf(line, "%d %d %d %d %d %x %u", &layer, &tx, &ty, &visits, &blocked, &color, &samples);
+            unsigned color = 0, samples = 0, scan = 0;
+            const int n = std::sscanf(line, "%d %d %d %d %d %x %u %u", &layer, &tx, &ty, &visits, &blocked, &color,
+                                      &samples, &scan);
             if (n < 5)
             {
                 continue;
@@ -232,7 +236,11 @@ namespace
             change(key(layer, tx, ty), [&](Cell& c) {
                 c.visits = static_cast<uint8_t>(std::clamp(visits, 0, 255));
                 c.blocked = static_cast<uint8_t>(std::clamp(blocked, 0, 255));
-                if (n == 7)
+                if (n == 8)
+                {
+                    c.scan = static_cast<uint8_t>(std::min(scan, 2u));
+                }
+                if (n >= 7)
                 {
                     c.r = static_cast<uint8_t>(color >> 16);
                     c.g = static_cast<uint8_t>(color >> 8);
@@ -488,8 +496,22 @@ namespace
                              w = project(tx, ty + 1);
                 if (!c.visits)
                 {
-                    // Never reached (blocked): clear, a hollow diamond.
-                    dl->AddQuad(n, e, so, w, IM_COL32(120, 120, 140, 160));
+                    if (c.blocked)
+                    {
+                        // Tried and never reached: a hollow diamond.
+                        dl->AddQuad(n, e, so, w, IM_COL32(120, 120, 140, 160));
+                    }
+                    else if (c.scan == 1)
+                    {
+                        // Walkable by the game's tile test, not walked yet: dim, ground colour if sampled.
+                        dl->AddQuadFilled(n, e, so, w, c.samples ? (shown(c) & 0x00FFFFFF) | 0x80000000
+                                                                 : IM_COL32(52, 58, 66, 255));
+                    }
+                    else if (c.scan == 2)
+                    {
+                        // Not walkable (tree, rock, water, wall).
+                        dl->AddQuadFilled(n, e, so, w, IM_COL32(28, 16, 16, 255));
+                    }
                     continue;
                 }
                 dl->AddQuadFilled(n, e, so, w, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
@@ -880,12 +902,59 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
     }
 }
 
+namespace
+{
+    // The terrain scan: the game's tile test over the square around the hero, a slice a frame, so the map shows
+    // what can be walked (and what not) without walking it. Restarts when the hero moves on.
+    constexpr int kScanReach = 96;              // tiles each way (the loaded sectors reach ~160)
+    constexpr int kScanPerFrame = 2500;
+    constexpr int kScanRestart = 24;            // tiles the hero moves before the square is scanned again
+    int g_scanLayer = -1, g_scanCx = 0, g_scanCy = 0, g_scanAt = 0;
+    bool g_scanDone = false;
+
+    // Under g_lock, on the game thread.
+    void scanStep(int layer, int tx, int ty)
+    {
+        if (layer != g_scanLayer || std::abs(tx - g_scanCx) > kScanRestart || std::abs(ty - g_scanCy) > kScanRestart)
+        {
+            g_scanLayer = layer;
+            g_scanCx = tx;
+            g_scanCy = ty;
+            g_scanAt = 0;
+            g_scanDone = false;
+        }
+        if (g_scanDone)
+        {
+            return;
+        }
+        constexpr int side = 2 * kScanReach + 1;
+        for (int budget = kScanPerFrame; budget > 0 && g_scanAt < side * side; ++g_scanAt)
+        {
+            const int sx = g_scanCx - kScanReach + g_scanAt % side, sy = g_scanCy - kScanReach + g_scanAt / side;
+            const uint64_t k = key(layer, sx, sy);
+            const Cell* c = find(k);
+            if (c && c->scan)
+            {
+                continue;   // a square's ground does not change
+            }
+            --budget;
+            const int w = ClickWalk::walkable(layer, sx, sy);
+            if (w >= 0)
+            {
+                change(k, [w](Cell& cell) { cell.scan = w ? 1 : 2; });
+            }
+        }
+        g_scanDone = g_scanAt >= side * side;
+    }
+}
+
 void MapMemory::visit(int layer, int32_t x, int32_t y)
 {
     install();
     setHero(layer, x, y);
     const std::lock_guard lock(g_lock);
     ensureLoaded();
+    scanStep(layer, tileOf(x), tileOf(y));
     const uint64_t k = keyAt(layer, x, y);
     if (k == g_lastKey)
     {
@@ -920,7 +989,7 @@ float MapMemory::cost(int layer, int32_t x, int32_t y)
             if (const Cell* c = find(layer, tx + dx, ty + dy))
             {
                 visits += c->visits;
-                blocked += c->blocked;
+                blocked += c->blocked + (c->scan == 2 ? 2 : 0);
             }
         }
     }
@@ -1001,8 +1070,8 @@ void MapMemory::save(uint32_t now, uint32_t minMs)
         return;
     }
     forEach([f](uint64_t k, const Cell& c) {
-        std::fprintf(f, "%d %d %d %u %u %06x %u\n", layerOfKey(k), txOfKey(k), tyOfKey(k), c.visits, c.blocked,
-                     (c.r << 16) | (c.g << 8) | c.b, c.samples);
+        std::fprintf(f, "%d %d %d %u %u %06x %u %u\n", layerOfKey(k), txOfKey(k), tyOfKey(k), c.visits, c.blocked,
+                     (c.r << 16) | (c.g << 8) | c.b, c.samples, c.scan);
     });
     for (const Landmark& l : g_landmarks)
     {

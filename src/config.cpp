@@ -158,6 +158,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.range = std::clamp(readInt(ini, L"AutoAttack", L"Range", Config::autoAttack.range), 50, 3000);
     Config::autoAttack.seek = readBool(ini, L"AutoAttack", L"Seek", Config::autoAttack.seek);
     Config::autoAttack.roam = readBool(ini, L"AutoAttack", L"Roam", Config::autoAttack.roam);
+    Config::autoAttack.roamStep = readInt(ini, L"AutoAttack", L"RoamStep", Config::autoAttack.roamStep);
     Config::autoAttack.pauseMs = std::clamp(readInt(ini, L"AutoAttack", L"Pause", Config::autoAttack.pauseMs), 0, 10000);
     Config::autoAttack.pickup = readBool(ini, L"AutoAttack", L"Pickup", Config::autoAttack.pickup);
     Config::autoAttack.autoCollect = readBool(ini, L"AutoAttack", L"AutoCollect", Config::autoAttack.autoCollect);
