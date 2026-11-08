@@ -1646,6 +1646,23 @@ void AutoAttack::onFrame()
             return;
         }
     }
+    // The agent's map follows the hero always, the auto attack on or off (the radar only while it looks around).
+    if (Controller::worldRunning())
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cEngine* engine = FrameHooks::engine();
+        if (cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr)
+        {
+            MapMemory::visit(*(reinterpret_cast<const uint8_t*>(self) + 0x24), self->x, self->y);
+            if (!g_on)
+            {
+                MapMemory::beginRadar();
+                MapMemory::endRadar();
+                MapMemory::setRoute(false);
+            }
+            MapMemory::save(now, 60000);
+        }
+    }
     // Gear: put on what is better when calm, sell and buy at a merchant (its own settings, the auto attack on or off).
     if (foreground && !Controller::drives() && heroAlive())
     {
