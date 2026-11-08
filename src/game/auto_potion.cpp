@@ -210,7 +210,8 @@ void AutoPotion::onFrame()
         return;
     }
     // A combat art's effect is being measured: a potion now would pass for its healing. Not when it is urgent.
-    if (!emergency && static_cast<int>(now - CombatState::measuringUntil.load()) < 0)
+    const DWORD measuring = CombatState::measuringUntil.load();
+    if (!emergency && measuring && static_cast<int>(now - measuring) < 0)
     {
         return;
     }
