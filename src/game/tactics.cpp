@@ -423,12 +423,12 @@ namespace
         int hurtOthers = 0;
         bool hurtTarget = false;
         cObjectManager* objects = cObjectManager::instance();
-        for (const auto& [id, before] : g_foesAtCast)
+        for (const auto& [id, healthBefore] : g_foesAtCast)
         {
             // Read now: the looks at the situation pause while the art goes on. Gone or dead counts as hurt for the
             // target (the art finished it), not for the others (they may only have left the screen).
             const cCreature* foe = objects ? objects->creature(id) : nullptr;
-            const bool dropped = !foe || foe->health <= 0 ? id == g_castTarget : foe->health < before;
+            const bool dropped = !foe || foe->health <= 0 ? id == g_castTarget : foe->health < healthBefore;
             if (!dropped)
             {
                 continue;
@@ -816,23 +816,19 @@ namespace
         {
             forgetLearned();
         }
-        ImGui::SetItemTooltip("Borra lo que se aprendió de cada arte (curación, área, un objetivo, mejora) y su recarga;
-"
+        ImGui::SetItemTooltip("Borra lo que se aprendió de cada arte (curación, área, un objetivo, mejora) y su recarga;\n"
                               "se vuelve a aprender de los próximos lanzamientos.");
         ImGui::Checkbox("Artes de un objetivo como ataque principal", &c.singleAlways);
-        ImGui::SetItemTooltip("Contra cualquier enemigo que aguante más de unos golpes, no solo contra los fuertes.
-"
+        ImGui::SetItemTooltip("Contra cualquier enemigo que aguante más de unos golpes, no solo contra los fuertes.\n"
                               "Para personajes que pelean sobre todo con sus artes.");
         ImGui::SetNextItemWidth(200.0f * ImGui::GetFontSize() / 16.0f);
         ImGui::SliderInt("Alcance de las artes (px)", &c.artRange, 0, 1500);
-        ImGui::SetItemTooltip("Artes contra el objetivo solo si está a esta distancia o menos (0 = a cualquiera);
-"
+        ImGui::SetItemTooltip("Artes contra el objetivo solo si está a esta distancia o menos (0 = a cualquiera);\n"
                               "más lejos, el ataque normal acerca al héroe primero.");
         ImGui::SetNextItemWidth(200.0f * ImGui::GetFontSize() / 16.0f);
         ImGui::SliderInt("Mejoras: repetir cada (s)", &c.buffEverySeconds, 5, 600);
         ImGui::Checkbox("Retirarse sin pociones", &c.retreat);
-        ImGui::SetItemTooltip("Con poca vida, sin pociones de curación y enemigos cerca: el héroe se aparta de ellos
-"
+        ImGui::SetItemTooltip("Con poca vida, sin pociones de curación y enemigos cerca: el héroe se aparta de ellos\n"
                               "en vez de seguir peleando, hasta recuperarse o perderlos de vista.");
         ImGui::SameLine();
         ImGui::SetNextItemWidth(140.0f * ImGui::GetFontSize() / 16.0f);

@@ -1095,6 +1095,18 @@ namespace
     DWORD g_autoMovedAt = 0;
     int32_t g_autoHeroX = 0, g_autoHeroY = 0;
 
+    // An enemy fighting the hero (or what it rides), one of its hirelings, or one the player attacked.
+    bool engaged(cObjectManager* objects, uint32_t id, uint32_t self, uint32_t hero)
+    {
+        if (g_playerTargets.count(id))
+        {
+            return true;
+        }
+        cObject* foe = objects->object(id);
+        const uint32_t aim = foe ? aimOf(objects, foe) : 0;
+        return aim && (aim == hero || aim == self || isHireling(aim));
+    }
+
     bool underAttack()
     {
         cObjectManager* objects = cObjectManager::instance();
