@@ -312,6 +312,7 @@ namespace
     constexpr DWORD kSelectMs = 120;
     constexpr DWORD kSelectMaxMs = 600;     // the engine has not taken the art by then: given up
     constexpr DWORD kConfirmMs = 1000;      // the hero has not started the art by then: the game refused it
+    constexpr DWORD kConfirmWalkMs = 3000;  // ... unless it is walking up to the target first, at most this long
     constexpr DWORD kCastMaxMs = 7000;      // an art lasting longer is not waited for
     constexpr DWORD kSettleMs = 200;        // after the art is done, its last blow's damage shows
 
@@ -381,7 +382,7 @@ namespace
         g_foesAtCast.clear();
         g_retapped = false;
         // AutoPotion waits with drinks that are not urgent until the art is measured (a bound, moved up as it ends).
-        CombatState::measuringUntil = s.now + kSelectMaxMs + kConfirmMs + kCastMaxMs;
+        CombatState::measuringUntil = s.now + kSelectMaxMs + kConfirmWalkMs + kCastMaxMs;
         g_castClose = !target;
         for (int i = 0; i < s.count; ++i)
         {
@@ -998,7 +999,9 @@ void Tactics::onFrame(DWORD now)
             g_phaseAt = now;
             return;
         }
-        if (elapsed < static_cast<int>(kConfirmMs))
+        if (elapsed < static_cast<int>(kConfirmMs) ||
+            (elapsed < static_cast<int>(kConfirmWalkMs) &&
+             CombatState::action(heroCreature()) == CombatState::Walking))
         {
             return;
         }

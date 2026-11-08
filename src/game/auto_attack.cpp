@@ -596,9 +596,12 @@ namespace
                 f = Follower{now, now, hero->x, hero->y, o->x, o->y, follows};
             }
             f.seenAt = now;
-            const bool heroWent = std::abs(hero->x - f.heroX) > kFollowWay || std::abs(hero->y - f.heroY) > kFollowWay;
-            const bool itWent = std::abs(o->x - f.ownX) > kFollowWay || std::abs(o->y - f.ownY) > kFollowWay;
-            if (!f.follows && now - f.since > kFollowMs && heroWent && itWent)
+            // The hero went a way, and it went the same way along (townsfolk and guards walk their own ways).
+            const int64_t hdx = static_cast<int64_t>(hero->x) - f.heroX, hdy = static_cast<int64_t>(hero->y) - f.heroY;
+            const int64_t odx = static_cast<int64_t>(o->x) - f.ownX, ody = static_cast<int64_t>(o->y) - f.ownY;
+            const bool heroWent = std::abs(hdx) > kFollowWay || std::abs(hdy) > kFollowWay;
+            const bool alongWith = std::abs(odx - hdx) < kFollowWay * 2 / 3 && std::abs(ody - hdy) < kFollowWay * 2 / 3;
+            if (!f.follows && now - f.since > kFollowMs && heroWent && alongWith)
             {
                 f.follows = true;
                 LOG("AutoAttack: {:x} follows the hero: a hireling", friends[i].id);
