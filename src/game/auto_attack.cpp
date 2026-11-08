@@ -1000,6 +1000,75 @@ namespace
         return chosen;
     }
 
+    // Seeking fights with none around: the hero goes looking, as a player farming would. After a few quiet seconds (and
+    // with most of its health back) it walks some tiles on in one direction, turning when it gets no further, and
+    // back toward where it began once it strays too far from there. Any enemy or loot seen ends it.
+    constexpr DWORD kRoamQuietMs = 4000;
+    constexpr DWORD kRoamStepMs = 1500;
+    constexpr double kRoamWay = 10 * kTileSize;
+    constexpr double kRoamLeash = 60 * kTileSize;
+    DWORD g_quietSince = 0;
+    DWORD g_roamAt = 0;
+    double g_roamAngle = 0.0;
+    int32_t g_roamFromX = 0, g_roamFromY = 0;   // the hero at the last walk order
+    int32_t g_homeX = 0, g_homeY = 0;
+    bool g_homeSet = false;
+
+    void roam(DWORD now)
+    {
+        if (!Config::autoAttack.seek || g_retreatUntil)
+        {
+            g_quietSince = 0;
+            return;
+        }
+        if (!g_quietSince)
+        {
+            g_quietSince = now;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        cEngine* engine = FrameHooks::engine();
+        cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr;
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!self || !hero || now - g_quietSince < kRoamQuietMs || (g_roamAt && now - g_roamAt < kRoamStepMs) ||
+            hero->health * 100 < hero->maxHealth * 60)
+        {
+            return;
+        }
+        if (!g_homeSet)
+        {
+            g_homeX = self->x;
+            g_homeY = self->y;
+            g_homeSet = true;
+            g_roamAngle = jitter(0, 628) / 100.0;
+        }
+        // No further since the last order: something in the way, another direction.
+        if (g_roamAt)
+        {
+            const double mx = self->x - g_roamFromX, my = self->y - g_roamFromY;
+            if (mx * mx + my * my < kTileSize * kTileSize)
+            {
+                g_roamAngle += 1.57 + jitter(0, 157) / 100.0;
+            }
+        }
+        // Too far from home: head back that way (with some spread).
+        const double hx = g_homeX - self->x, hy = g_homeY - self->y;
+        if (hx * hx + hy * hy > kRoamLeash * kRoamLeash)
+        {
+            g_roamAngle = std::atan2(hy, hx) + (jitter(0, 100) - 50) / 100.0;
+        }
+        g_roamFromX = self->x;
+        g_roamFromY = self->y;
+        g_walkX = static_cast<int32_t>(self->x + std::cos(g_roamAngle) * kRoamWay);
+        g_walkY = static_cast<int32_t>(self->y + std::sin(g_roamAngle) * kRoamWay);
+        Inject::call(&walkThere, nullptr);
+        if (!g_roamAt || now - g_roamAt > 10000)
+        {
+            LOG("AutoAttack: nothing around, going to look ({:.0f} tiles from where it began)",
+                std::sqrt(hx * hx + hy * hy) / kTileSize);
+        }
+        g_roamAt = now;
+    }
+
     // A: the game's own collect (the taskbar's collect button, order 0x113: the hero gathers the items around it).
     // Improved: when the game's collect is done, what is left within LootRange (items it did not reach, chests and
     // other containers, which it never opens) is taken one by one, each with the order a click on it gives. The auto
@@ -1282,6 +1351,9 @@ namespace
         g_autoLastHealth = 0;
         g_autoHurtAt = 0;
         g_retreatUntil = 0;
+        g_homeSet = false;
+        g_quietSince = 0;
+        g_roamAt = 0;
         g_noRetreatUntil = 0;
         g_pickupUntil = 0;
         g_gameHero = 0;     // the hero after the load is adopted without a second clear
@@ -1388,6 +1460,7 @@ void AutoAttack::onFrame()
     {
         g_on = !g_on;
         LOG("AutoAttack: {}", g_on ? "on" : "off");
+        g_homeSet = false;     // roaming starts from here
         MessageBeep(g_on ? MB_ICONASTERISK : MB_ICONEXCLAMATION);
     }
     g_keyWasDown = keyDown;
@@ -1494,8 +1567,11 @@ void AutoAttack::onFrame()
         {
             g_target = 0;
             g_pending = 0;
+            roam(now);
             return;
         }
+        g_quietSince = 0;
+        g_roamAt = 0;
         if (choice.id == g_target)
         {
             g_pending = 0;

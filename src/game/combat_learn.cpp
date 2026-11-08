@@ -302,7 +302,14 @@ namespace
     void gone(uint32_t id, Seen& s, int heroMax, int heroLevel)
     {
         learn(s, heroMax, heroLevel);
-        const bool killed = s.health <= 0 || s.health * 5 < s.maxHealth;
+        // Down: the creature dead or gone (a blow that kills is seldom seen in the looks); out of sight: still alive.
+        bool killed = s.health <= 0;
+        if (!killed && s.firstHurtAt)
+        {
+            cObjectManager* objects = cObjectManager::instance();
+            cCreature* c = objects ? objects->creature(id) : nullptr;
+            killed = !c || c->health <= 0 || CombatState::action(c) == CombatState::Dead;
+        }
         if (killed && s.firstHurtAt)
         {
             ++g_fight.kills;
