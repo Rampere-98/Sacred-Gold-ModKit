@@ -705,7 +705,11 @@ namespace
                 if (aimable && !easy && (strong || danger || around >= 3 || c.singleAlways))
                 {
                     const Learned& l = learned(sa.art);
-                    rank = l.tries == 0 && !danger ? 7 : 2;
+                    // Hurt enough for a heal to show: an art that showed nothing yet is worth a few tries now, else a
+                    // heal never cast while hurt is never learned.
+                    const bool showsHeal = missing >= std::max(8, s.maxHealth * 6 / 100);
+                    const bool unknown = l.heal + l.area + l.single + l.none == 0 && l.tries < 4;
+                    rank = (l.tries == 0 && !danger) || (showsHeal && unknown) ? 7 : 2;
                     at_ = target->id;
                     reason = "trying it out";
                 }
