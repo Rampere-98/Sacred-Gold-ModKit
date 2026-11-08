@@ -1058,7 +1058,7 @@ namespace
 
     void roam(DWORD now)
     {
-        if (!Config::autoAttack.seek || g_retreatUntil)
+        if (!Config::autoAttack.roam || g_retreatUntil)
         {
             g_quietSince = 0;
             return;
@@ -1514,6 +1514,8 @@ namespace
         ImGui::RadioButton("Solo quien me ataca (y a quien ataco yo)", &mode, 0);
         ImGui::RadioButton("Buscar combate (cualquier enemigo en el radio)", &mode, 1);
         c.seek = mode == 1;
+        ImGui::Checkbox("Explorar cuando no hay nadie", &c.roam);
+        ImGui::SetItemTooltip("Paso a paso hacia lo que aún no ha visto (el mapa del agente), con la vida por encima del 60 %%.");
         // The same switches as in the tactics section, here with the fight.
         ImGui::Checkbox("Usar habilidades (artes de combate)##fight", &Config::tactics.arts);
         ImGui::Checkbox("Usar consumibles##fight", &Config::tactics.consumables);
@@ -1536,6 +1538,7 @@ namespace
         const Config::AutoAttack& c = Config::autoAttack;
         ModkitMenu::write(ini, L"AutoAttack", L"Enabled", c.enabled);
         ModkitMenu::write(ini, L"AutoAttack", L"Seek", c.seek);
+        ModkitMenu::write(ini, L"AutoAttack", L"Roam", c.roam);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);

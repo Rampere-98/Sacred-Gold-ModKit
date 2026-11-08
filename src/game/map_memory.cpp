@@ -1,4 +1,5 @@
 #include "game/map_memory.h"
+#include "game/combat_learn.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
 #include "overlay/overlay.h"
@@ -16,6 +17,7 @@
 #include <deque>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace
@@ -55,6 +57,23 @@ namespace
         int16_t tx, ty;
     };
     std::vector<Landmark> g_landmarks;
+
+    // The encyclopedia on the map: where each enemy kind was met (12 bytes a place; at most kSightingsPerKind places
+    // a kind, kSightings in all, the oldest dropped).
+    struct Sighting
+    {
+        uint32_t type;
+        uint8_t layer;
+        int16_t tx, ty;
+    };
+    constexpr size_t kSightingsPerKind = 48, kSightings = 6000;
+    std::deque<Sighting> g_sightings;
+    std::unordered_map<uint32_t, std::string> g_kindNames;
+    // Its filters (ModKit menu, [Map] in SacredBild.ini).
+    bool g_showFoes = true;
+    float g_minDanger = 0.0f;           // % of the hero's health per second; above 0 the kinds not yet learned hide
+    bool g_onlyKilled = false;
+    std::unordered_set<uint32_t> g_hiddenKinds;
 
     // The ground sample asked for.
     bool g_want = false;
@@ -183,6 +202,18 @@ namespace
         while (std::fgets(line, sizeof(line), f))
         {
             int layer, tx, ty, visits, blocked, kind;
+            unsigned type = 0;
+            if (std::sscanf(line, "E %u %d %d %d", &type, &layer, &tx, &ty) == 4)
+            {
+                g_sightings.push_back({type, static_cast<uint8_t>(layer), static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
+                continue;
+            }
+            char name[96];
+            if (std::sscanf(line, "N %u %95s", &type, name) == 2)
+            {
+                g_kindNames[type] = name;
+                continue;
+            }
             if (std::sscanf(line, "L %d %d %d %d", &kind, &layer, &tx, &ty) == 4)
             {
                 if (kind >= 0 && kind < static_cast<int>(MapMemory::Mark::Count))
@@ -303,6 +334,96 @@ namespace
         return IM_COL32(r, g, b, 255);
     }
 
+    // An enemy kind's color on the map by how hard it hits (green 0.25 % of the hero's health a second or less, red
+    // 4 % or more), grey if not learned yet; 0 if the filters hide it.
+    ImU32 foeColor(uint32_t type)
+    {
+        if (g_hiddenKinds.count(type))
+        {
+            return 0;
+        }
+        float rate = -1.0f;
+        int killed = 0;
+        CombatLearn::kind(type, rate, killed);
+        const float percent = rate * 100.0f;
+        if ((g_onlyKilled && !killed) || (g_minDanger > 0.0f && (rate < 0.0f || percent < g_minDanger)))
+        {
+            return 0;
+        }
+        if (rate < 0.0f)
+        {
+            return IM_COL32(170, 170, 170, 255);
+        }
+        const float t = std::clamp(std::log2(std::max(percent, 0.01f) / 0.25f) / 4.0f, 0.0f, 1.0f);
+        return t < 0.5f ? IM_COL32(static_cast<int>(510 * t), 220, 40, 255)
+                        : IM_COL32(255, static_cast<int>(220 * (1.0f - t) * 2.0f), 40, 255);
+    }
+
+    // The encyclopedia's filters on the map. Under g_lock.
+    void drawFoeFilters()
+    {
+        ImGui::SeparatorText("Enciclopedia en el mapa");
+        ImGui::Checkbox("Mostrar dónde se encontró a cada enemigo", &g_showFoes);
+        ImGui::SetItemTooltip("Una cruz por tipo y lugar: de verde (pega poco) a rojo (pega fuerte); gris si aún no se sabe.");
+        ImGui::SliderFloat("Peligro mínimo (% de vida/s)", &g_minDanger, 0.0f, 5.0f, "%.1f");
+        ImGui::SetItemTooltip("Por encima de 0 se ocultan los tipos que aún no ha aprendido.");
+        ImGui::Checkbox("Solo tipos que ya ha vencido", &g_onlyKilled);
+        std::unordered_map<uint32_t, int> places;
+        for (const Sighting& s : g_sightings)
+        {
+            ++places[s.type];
+        }
+        if (places.empty())
+        {
+            ImGui::TextDisabled("Aún no ha visto enemigos.");
+            return;
+        }
+        if (ImGui::SmallButton("Todos"))
+        {
+            g_hiddenKinds.clear();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Ninguno"))
+        {
+            for (const auto& [type, n] : places)
+            {
+                g_hiddenKinds.insert(type);
+            }
+        }
+        ImGui::BeginChild("##foekinds", ImVec2(0, 160));
+        for (const auto& [type, n] : places)
+        {
+            float rate = -1.0f;
+            int killed = 0;
+            CombatLearn::kind(type, rate, killed);
+            const auto name = g_kindNames.find(type);
+            bool shown = !g_hiddenKinds.count(type);
+            char label[160];
+            if (rate >= 0.0f)
+            {
+                std::snprintf(label, sizeof(label), "%s  (%d lugares, %.2f %%/s, %d vencidos)##%u",
+                              name != g_kindNames.end() ? name->second.c_str() : "?", n, rate * 100.0f, killed, type);
+            }
+            else
+            {
+                std::snprintf(label, sizeof(label), "%s  (%d lugares, sin aprender)##%u",
+                              name != g_kindNames.end() ? name->second.c_str() : "?", n, type);
+            }
+            if (ImGui::Checkbox(label, &shown))
+            {
+                if (shown)
+                {
+                    g_hiddenKinds.erase(type);
+                }
+                else
+                {
+                    g_hiddenKinds.insert(type);
+                }
+            }
+        }
+        ImGui::EndChild();
+    }
+
     int g_zoom = 4;     // pixels per square
     bool g_hud = true;  // the map on the screen's side, the menu closed too
 
@@ -329,6 +450,9 @@ namespace
             return ex * ex + ey * ey <= (radius - margin) * (radius - margin);
         };
         dl->AddCircleFilled(mid, radius, IM_COL32(0, 0, 0, 255), 64);
+        // Squares of a few pixels: without the anti-aliased fringe (it is all that shows of them, and seams between).
+        const ImDrawListFlags flags = dl->Flags;
+        dl->Flags &= ~ImDrawListFlags_AntiAliasedFill;
         // The tiles whose diamond lies inside the circle: |dx|, |dy| up to 1.5 radius / s.
         const int reach = static_cast<int>(1.5f * radius / s) + 1;
         uint64_t lastChunk = ~0ull;
@@ -371,6 +495,7 @@ namespace
                 dl->AddQuadFilled(n, e, so, w, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
             }
         }
+        dl->Flags = flags;
         dl->AddCircle(mid, radius, IM_COL32(200, 200, 200, 200), 64, 2.0f);
         const int half = reach;
         dl->PushClipRect(origin, ImVec2(origin.x + size, origin.y + size), true);
@@ -399,6 +524,38 @@ namespace
         const float dot = std::max(2.5f, g_zoom * 0.75f);
         // What it found: merchant a gold diamond, way in or out a cyan triangle, portal a violet ring.
         const float mark = std::max(4.0f, g_zoom * 1.4f);
+        // The encyclopedia: a cross where each kind was met, green to red by how hard it hits, grey not yet learned.
+        if (g_showFoes)
+        {
+            std::unordered_map<uint32_t, ImU32> colors;     // per kind this frame; 0: filtered out
+            const float arm = mark * 0.6f;
+            for (const Sighting& e : g_sightings)
+            {
+                if (e.layer != (g_heroLayer & 0xFF) || std::abs(e.tx - g_heroTx) > half + 2 ||
+                    std::abs(e.ty - g_heroTy) > half + 2)
+                {
+                    continue;
+                }
+                auto it = colors.find(e.type);
+                if (it == colors.end())
+                {
+                    it = colors.emplace(e.type, foeColor(e.type)).first;
+                }
+                if (!it->second)
+                {
+                    continue;
+                }
+                const ImVec2 p = project(e.tx + 0.5, e.ty + 0.5);
+                if (!inside(p, arm))
+                {
+                    continue;
+                }
+                dl->AddLine(ImVec2(p.x - arm, p.y - arm), ImVec2(p.x + arm, p.y + arm), IM_COL32(0, 0, 0, 255), 3.5f);
+                dl->AddLine(ImVec2(p.x - arm, p.y + arm), ImVec2(p.x + arm, p.y - arm), IM_COL32(0, 0, 0, 255), 3.5f);
+                dl->AddLine(ImVec2(p.x - arm, p.y - arm), ImVec2(p.x + arm, p.y + arm), it->second, 2.0f);
+                dl->AddLine(ImVec2(p.x - arm, p.y + arm), ImVec2(p.x + arm, p.y - arm), it->second, 2.0f);
+            }
+        }
         for (const Landmark& l : g_landmarks)
         {
             if (l.layer != (g_heroLayer & 0xFF) || std::abs(l.tx - g_heroTx) > half + 2 || std::abs(l.ty - g_heroTy) > half + 2)
@@ -501,6 +658,7 @@ namespace
         ImGui::TextDisabled("Hallazgos: %d. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
                             "portal.", static_cast<int>(g_landmarks.size()));
         drawMap(300.0f);
+        drawFoeFilters();
     }
 
     // The agent's view in the screen's bottom right corner, clear of the game's windows.
@@ -535,6 +693,18 @@ namespace
     {
         ModkitMenu::write(ini, L"Map", L"Hud", g_hud);
         ModkitMenu::write(ini, L"Map", L"Zoom", g_zoom);
+        ModkitMenu::write(ini, L"Map", L"Foes", g_showFoes);
+        ModkitMenu::write(ini, L"Map", L"FoeMinDanger", static_cast<int>(std::lround(g_minDanger * 10.0f)));
+        ModkitMenu::write(ini, L"Map", L"FoeOnlyKilled", g_onlyKilled);
+        std::wstring hidden;
+        {
+            const std::lock_guard lock(g_lock);
+            for (uint32_t type : g_hiddenKinds)
+            {
+                hidden += (hidden.empty() ? L"" : L",") + std::to_wstring(type);
+            }
+        }
+        WritePrivateProfileStringW(L"Map", L"FoeHidden", hidden.c_str(), ini.c_str());
     }
 }
 
@@ -548,6 +718,22 @@ void MapMemory::install()
         ini = ini.substr(0, ini.find_last_of(L"\\/") + 1) + L"SacredBild.ini";
         g_hud = GetPrivateProfileIntW(L"Map", L"Hud", 1, ini.c_str()) != 0;
         g_zoom = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"Zoom", 4, ini.c_str())), 2, 10);
+        g_showFoes = GetPrivateProfileIntW(L"Map", L"Foes", 1, ini.c_str()) != 0;
+        g_minDanger = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"FoeMinDanger", 0, ini.c_str())), 0, 50) / 10.0f;
+        g_onlyKilled = GetPrivateProfileIntW(L"Map", L"FoeOnlyKilled", 0, ini.c_str()) != 0;
+        wchar_t hidden[2048] = {};
+        GetPrivateProfileStringW(L"Map", L"FoeHidden", L"", hidden, 2048, ini.c_str());
+        for (wchar_t* p = hidden; *p;)
+        {
+            wchar_t* end = nullptr;
+            const unsigned long type = std::wcstoul(p, &end, 10);
+            if (end == p)
+            {
+                break;
+            }
+            g_hiddenKinds.insert(static_cast<uint32_t>(type));
+            p = *end == L',' ? end + 1 : end;
+        }
         ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu});
         Overlay::setHud(&drawHud);
         // The whole map in memory from the start: the agent always has it at hand.
@@ -562,6 +748,45 @@ void MapMemory::forgetHero()
     g_heroKnown = false;
     g_trail.clear();
     g_lastKey = ~0ull;
+}
+
+void MapMemory::sighting(uint32_t type, const std::string& name, int layer, int32_t x, int32_t y)
+{
+    install();
+    const std::lock_guard lock(g_lock);
+    const int tx = tileOf(x), ty = tileOf(y);
+    size_t ofKind = 0;
+    auto oldest = g_sightings.end();
+    for (auto it = g_sightings.begin(); it != g_sightings.end(); ++it)
+    {
+        if (it->type != type)
+        {
+            continue;
+        }
+        if (it->layer == (layer & 0xFF) && std::abs(it->tx - tx) <= 6 && std::abs(it->ty - ty) <= 6)
+        {
+            return;     // this kind is already marked here
+        }
+        if (oldest == g_sightings.end())
+        {
+            oldest = it;
+        }
+        ++ofKind;
+    }
+    if (ofKind >= kSightingsPerKind)
+    {
+        g_sightings.erase(oldest);
+    }
+    else if (g_sightings.size() >= kSightings)
+    {
+        g_sightings.pop_front();
+    }
+    g_sightings.push_back({type, static_cast<uint8_t>(layer), static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
+    if (!name.empty() && name.find(' ') == std::string::npos)
+    {
+        g_kindNames.emplace(type, name);
+    }
+    g_dirty = true;
 }
 
 void MapMemory::mark(Mark kind, int layer, int32_t x, int32_t y)
@@ -739,6 +964,14 @@ void MapMemory::save(uint32_t now, uint32_t minMs)
     for (const Landmark& l : g_landmarks)
     {
         std::fprintf(f, "L %d %d %d %d\n", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
+    }
+    for (const auto& [type, name] : g_kindNames)
+    {
+        std::fprintf(f, "N %u %s\n", type, name.c_str());
+    }
+    for (const Sighting& s : g_sightings)
+    {
+        std::fprintf(f, "E %u %d %d %d\n", s.type, s.layer, s.tx, s.ty);
     }
     std::fclose(f);
     MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);

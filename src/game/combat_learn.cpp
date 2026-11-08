@@ -1,5 +1,6 @@
 #include "game/combat_learn.h"
 #include "game/combat_state.h"
+#include "game/map_memory.h"
 #include "game/modkit_menu.h"
 #include "log.h"
 #include "sacred/object.h"
@@ -415,6 +416,12 @@ void CombatLearn::observe(const Look& look)
     const float lost = dt > 0.0f && !potion ? static_cast<float>(std::max(0, g_lastHealth - heroHealth)) : 0.0f;
     float weights = 0.0f;
     bool engaged = false;
+    struct Sighting
+    {
+        uint32_t type;
+        int32_t x, y;
+    };
+    std::vector<Sighting> sightings;    // enemies met for the first time: on the agent's map (outside g_lock)
     {
         const std::lock_guard lock(g_lock);
         for (int i = 0; i < look.count; ++i)
@@ -427,6 +434,7 @@ void CombatLearn::observe(const Look& look)
                 {
                     s.type = field<uint32_t>(o, kTypeId);
                     s.level = field<uint16_t>(o, kLevel);
+                    sightings.push_back({s.type, o->x, o->y});
                 }
             }
             if (f.health < s.health && !s.firstHurtAt)
@@ -443,6 +451,14 @@ void CombatLearn::observe(const Look& look)
                 weights += std::max(s.predicted, kFloor);
             }
             engaged = engaged || f.atHero || f.atHireling || s.firstHurtAt;
+        }
+    }
+    if (!sightings.empty() && look.hero)
+    {
+        const int layer = *(reinterpret_cast<const uint8_t*>(look.hero) + 0x24);
+        for (const Sighting& s : sightings)
+        {
+            MapMemory::sighting(s.type, typeName(s.type), layer, s.x, s.y);
         }
     }
     g_incoming = 0.0f;
@@ -595,6 +611,21 @@ float CombatLearn::danger(uint32_t id)
 {
     const auto it = g_seen.find(id);
     return it != g_seen.end() ? it->second.predicted : 0.0f;
+}
+
+bool CombatLearn::kind(uint32_t type, float& rate, int& killed)
+{
+    const std::lock_guard lock(g_lock);
+    const auto it = g_kinds.find(type);
+    if (it == g_kinds.end())
+    {
+        rate = -1.0f;
+        killed = 0;
+        return false;
+    }
+    rate = it->second.samples ? std::max(0.0f, std::exp(it->second.logRate) - kFloor) : -1.0f;
+    killed = it->second.killed;
+    return true;
 }
 
 float CombatLearn::relativeDanger(uint32_t id)

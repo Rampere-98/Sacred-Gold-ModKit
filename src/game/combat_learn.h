@@ -43,6 +43,9 @@ namespace CombatLearn
     // How hard enemy `id` (seen at the last look) hits: the share of the hero's maximum health per second it takes,
     // as learned; 0 if it is unknown.
     float danger(uint32_t id);
+    // An enemy kind (type id) in the encyclopedia: its learned rate (share of the hero's maximum health per second, -1
+    // not yet learned) and how many were killed. False if it is not in it.
+    bool kind(uint32_t type, float& rate, int& killed);
     // The same against the middle of the enemies around (1: an ordinary one, 2: twice as hard); 1 if unknown.
     float relativeDanger(uint32_t id);
     // At the rate those striking the hero now hit, seconds until its health is gone (a large number for none).

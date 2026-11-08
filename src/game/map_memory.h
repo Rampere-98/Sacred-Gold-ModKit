@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 // What the hero has seen of the world, for the auto attack's roaming: the map in cells of a few tiles, per layer (the
 // surface, each dungeon and interior has its own), each with how often the hero was there and how often a walk into it
@@ -38,6 +39,10 @@ namespace MapMemory
     // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends).
     enum class Mark : uint8_t { Merchant, Entrance, Portal, Count };
     void mark(Mark kind, int layer, int32_t x, int32_t y);
+    // An enemy of kind `type` (its name) met at world (x, y) on `layer`: the encyclopedia drawn on the map, a symbol per
+    // kind and place (places of a kind a few squares apart count once), colored by how hard the kind hits, with
+    // filters in the menu.
+    void sighting(uint32_t type, const std::string& name, int layer, int32_t x, int32_t y);
     // A game loaded: the hero's next position is no jump.
     void forgetHero();
 
