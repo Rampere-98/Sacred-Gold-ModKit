@@ -158,20 +158,18 @@ namespace
         int heal = 0, area = 0, single = 0, none = 0;   // what each cast seemed to do
         DWORD readyAt = 0;                              // not cast again before (recharging)
         DWORD lastCast = 0;
-        // The recharge, from the casts the game took and refused, timed from the end of the last cast taken: a cast
-        // taken that long after says the recharge is no longer (okGap: the shortest such), a refused one that it is
-        // longer (refusedGap: the longest). 0: not seen yet.
+        // The recharge, timed from the end of the last cast taken (0: not seen yet). A cast taken after a gap says the
+        // recharge is no longer than that; one refused, that it is longer. Gaps over kMaxRechargeMs say nothing (a
+        // cast that failed for another reason: the target died, the hero was hit). Each cast taken brings the estimate
+        // down a little, so that one too long comes down again until the game refuses a cast.
         DWORD lastEnd = 0;
-        DWORD okGap = 0, refusedGap = 0;
+        DWORD rechargeMs = 0;
+        static constexpr DWORD kMaxRechargeMs = 30000;
 
-        // How long after its last cast ended the art is ready again, as far as known.
+        // How long after its last cast ended the art is tried again.
         DWORD recharge() const
         {
-            if (okGap && okGap > refusedGap)
-            {
-                return okGap;
-            }
-            return refusedGap ? refusedGap + 1500 : 3000;
+            return rechargeMs ? rechargeMs : 3000;
         }
 
         void taken(DWORD now)
@@ -179,13 +177,10 @@ namespace
             if (lastEnd)
             {
                 const DWORD gap = now - lastEnd;
-                if (gap <= refusedGap)
+                if (gap <= kMaxRechargeMs)
                 {
-                    refusedGap = gap > 500 ? gap - 500 : 0;  // taken sooner than refused before: the recharge changed
-                }
-                if (!okGap || gap < okGap)
-                {
-                    okGap = gap;
+                    rechargeMs = rechargeMs ? std::min(rechargeMs, gap) : gap;
+                    rechargeMs -= rechargeMs / 20;
                 }
             }
         }
@@ -195,13 +190,9 @@ namespace
             if (lastEnd)
             {
                 const DWORD gap = now - lastEnd;
-                if (gap > refusedGap)
+                if (gap <= kMaxRechargeMs)
                 {
-                    refusedGap = gap;
-                }
-                if (okGap && gap >= okGap)
-                {
-                    okGap = 0;      // refused later than taken before: the recharge grew (another art, items)
+                    rechargeMs = std::max(rechargeMs, std::min<DWORD>(kMaxRechargeMs, gap + 1000));
                 }
             }
         }
@@ -1010,7 +1001,17 @@ void Tactics::onFrame(DWORD now)
         {
             return;
         }
-        // The hero never started it: the game refused the art, which still recharges.
+        // The hero never started it. With the target dead or gone it may have been only that: no lesson.
+        cObjectManager* objects = cObjectManager::instance();
+        const cCreature* target = objects && g_castTarget ? objects->creature(g_castTarget) : nullptr;
+        if (g_castTarget && (!target || target->health <= 0))
+        {
+            l.readyAt = now + 500;
+            LOG("Tactics: art {:x} not cast, its target is gone", g_art);
+            finishArt(now);
+            return;
+        }
+        // Otherwise the game refused the art, which still recharges.
         const DWORD since = l.lastEnd ? now - l.lastEnd : 0;
         l.refused(now);
         g_refusedAt = now;

@@ -569,6 +569,7 @@ namespace
     {
         DWORD since = 0, seenAt = 0;
         int32_t heroX = 0, heroY = 0;   // where the hero stood when it was first seen
+        int32_t ownX = 0, ownY = 0;     // ... and where it stood itself (townsfolk stay, hirelings go along)
         bool follows = false;
     };
     std::unordered_map<uint32_t, Follower> g_followers;
@@ -580,17 +581,24 @@ namespace
     {
         AimAssist::Foe friends[32];
         const int n = AimAssist::friends(range, friends, 32);
+        cObjectManager* objects = cObjectManager::instance();
         for (int i = 0; i < n; ++i)
         {
+            const cObject* o = objects ? objects->object(friends[i].id) : nullptr;
+            if (!o)
+            {
+                continue;
+            }
             Follower& f = g_followers[friends[i].id];
             if (!f.since || now - f.seenAt > 10000)
             {
                 const bool follows = f.follows;
-                f = Follower{now, now, hero->x, hero->y, follows};
+                f = Follower{now, now, hero->x, hero->y, o->x, o->y, follows};
             }
             f.seenAt = now;
-            if (!f.follows && now - f.since > kFollowMs &&
-                (std::abs(hero->x - f.heroX) > kFollowWay || std::abs(hero->y - f.heroY) > kFollowWay))
+            const bool heroWent = std::abs(hero->x - f.heroX) > kFollowWay || std::abs(hero->y - f.heroY) > kFollowWay;
+            const bool itWent = std::abs(o->x - f.ownX) > kFollowWay || std::abs(o->y - f.ownY) > kFollowWay;
+            if (!f.follows && now - f.since > kFollowMs && heroWent && itWent)
             {
                 f.follows = true;
                 LOG("AutoAttack: {:x} follows the hero: a hireling", friends[i].id);
@@ -622,6 +630,7 @@ namespace
     DWORD g_targetSince = 0;        // when the current target was taken
     float g_targetBest = 0.0f;      // its nearest distance since, pixels (0: none yet)
     DWORD g_targetBestAt = 0;       // ... reached then
+    DWORD g_lastLookAt = 0;         // the last look at the situation
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
@@ -654,9 +663,11 @@ namespace
         const Config::Tactics& c = Config::tactics;
         double cx = 0.0, cy = 0.0;
         int close = 0;
+        bool anyNear = false;   // within Range: a retreat ends only once all are further (no back and forth)
         for (int i = 0; i < count; ++i)
         {
             const float dx = foes[i].x - hx, dy = foes[i].y - hy;
+            anyNear = anyNear || dx * dx + dy * dy < range * range;
             cObject* o = objects->object(foes[i].id);
             if (o && dx * dx + dy * dy < (range * 0.45f) * (range * 0.45f))
             {
@@ -667,17 +678,17 @@ namespace
         }
         const bool low = health * 100 <= maximum * c.retreatPercent;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
-        if (static_cast<int>(now - g_retreatUntil) < 0)
+        if (g_retreatUntil && static_cast<int>(now - g_retreatUntil) < 0)
         {
             const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
             const bool tooLong = now - g_retreatStarted > kRetreatMaxMs;
-            if (recovered || !noPotions || !close || tooLong)
+            if (recovered || !noPotions || !anyNear || tooLong)
             {
                 LOG("AutoAttack: stepping back over ({})", recovered    ? "health back up"
                                                            : !noPotions ? "a potion turned up"
-                                                           : !close     ? "no enemy close"
+                                                           : !anyNear   ? "no enemy near"
                                                                         : "too long, fighting again");
-                g_retreatUntil = now;
+                g_retreatUntil = 0;
                 if (tooLong)
                 {
                     g_noRetreatUntil = now + kRetreatPauseMs;
@@ -685,7 +696,8 @@ namespace
                 return false;
             }
         }
-        else if (!c.retreat || !low || !noPotions || !close || static_cast<int>(now - g_noRetreatUntil) < 0)
+        else if (!c.retreat || !low || !noPotions || !close ||
+                 (g_noRetreatUntil && static_cast<int>(now - g_noRetreatUntil) < 0))
         {
             return false;
         }
@@ -770,10 +782,17 @@ namespace
                 inMelee = true;
             }
         }
+        // No looks for a while (an art went on, the game paused): the time without getting nearer starts again.
+        if (now - g_lastLookAt > 1500)
+        {
+            g_targetBestAt = now;
+        }
+        g_lastLookAt = now;
         if (g_target && !g_looting && currentDistance >= 0.0f)
         {
             if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
-                CombatState::action(self) == CombatState::Fighting)
+                CombatState::action(self) == CombatState::Fighting ||
+                CombatState::action(self) == CombatState::CastingArt)
             {
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;
@@ -902,16 +921,15 @@ namespace
         situation.count = count;
         situation.hx = hx;
         situation.hy = hy;
-        situation.range = range;
-        situation.hirelings = g_hirelings.data();
-        situation.hirelingCount = static_cast<int>(g_hirelings.size());
-        Tactics::think(situation);
-
-        // Low on health with no potion: step back instead (unless an art just went out).
+        // Low on health with no potion: step back instead (unless an art is under way); no arts meanwhile.
         if (!Tactics::busy(now) && retreat(now, self, health, maximum, foes, count, hx, hy, range, objects))
         {
             return false;
         }
+        situation.range = range;
+        situation.hirelings = g_hirelings.data();
+        situation.hirelingCount = static_cast<int>(g_hirelings.size());
+        Tactics::think(situation);
         return chosen;
     }
 
