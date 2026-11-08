@@ -306,7 +306,7 @@ namespace
         drawMap(300.0f);
     }
 
-    // The agent's view on the screen's right side, under the minimap.
+    // The agent's view in the screen's bottom right corner, clear of the game's windows.
     void drawHud()
     {
         if (!g_hud)
@@ -319,9 +319,9 @@ namespace
             return;
         }
         const ImGuiIO& io = ImGui::GetIO();
-        const float size = std::round(io.DisplaySize.y * 0.26f);
-        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y * 0.22f), ImGuiCond_Always,
-                                ImVec2(1.0f, 0.0f));
+        const float size = std::round(io.DisplaySize.y * 0.22f);
+        ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y - 8.0f), ImGuiCond_Always,
+                                ImVec2(1.0f, 1.0f));
         ImGui::SetNextWindowBgAlpha(0.55f);
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |

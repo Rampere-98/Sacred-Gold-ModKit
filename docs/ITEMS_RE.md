@@ -40,7 +40,7 @@ Calling conventions below: `thiscall(this; args)` = MSVC thiscall (ecx = this), 
 |---|---|---|---|
 | `+0x18` | cell[0x100], 12 bytes each | backpack grid, cell `i = y*width + x` at `entry + 0x18 + 12*i` | OBSERVED `0x5D7AA9` (init), `0x5D7DD3` (walk) |
 | cell `+0` | u32 | item id of the item whose top-left cell this is (0 elsewhere) | OBSERVED `0x5D9F5F`, `0x5DA2E9` |
-| cell `+4` | u8 | flags: bit 0 = covered by an item anchored elsewhere | OBSERVED `0x5DA2F4` |
+| cell `+4` | u8 | flags: bit 0 = occupied (set on the anchor cell too, seen live 2026-11-08; covered cells have id 0) | OBSERVED `0x5DA2F4` |
 | cell `+5`, `+6` | u8, u8 | anchor cell: item width, height (cells); covered cell: anchor x, anchor y | OBSERVED `0x5DA02D`, `0x5DA301`, `0x5DAE39` |
 | cell `+8` | u16 | anchor: the item's type id | OBSERVED `0x5DA03C` |
 | `+0xC18` | 10 x 12 bytes | taskbar weapon sets: 5 slots x 2 hands, u32 item id at `+0` (weapon, shield/second hand) - items held here are not in the grid | INFERRED from fixInventory `"taskbarslot[%d][%d] ref[%d]"` `0x5DE95A`..`0x5DE999` |

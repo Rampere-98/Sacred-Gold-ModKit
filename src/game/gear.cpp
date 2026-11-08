@@ -106,7 +106,8 @@ namespace
         {
             const uint8_t* cell = entry + 0x18 + 12 * i;
             const uint32_t id = *reinterpret_cast<const uint32_t*>(cell);
-            if (id && !(cell[4] & 1))
+            // Only the item's top-left cell holds its id (+4 bit 0 marks every occupied cell, that one too: seen live).
+            if (id)
             {
                 f(id, i, static_cast<int>(cell[5]), static_cast<int>(cell[6]));
             }
