@@ -1013,7 +1013,8 @@ namespace
     // with most of its health back) it walks on in one direction a step (2 tiles) at a time, turning when it gets no further, and
     // back toward where it began once it strays too far from there. Any enemy or loot seen ends it.
     constexpr DWORD kRoamQuietMs = 4000;
-    constexpr DWORD kRoamStepMs = 800;
+    constexpr DWORD kRoamStepMs = 500;       // at least this between steps
+    constexpr DWORD kRoamStepMaxMs = 4000;   // at most this on one step
     constexpr double kRoamWay = 2 * kTileSize;      // a step at a time, a look around between
     constexpr double kRoamLeash = 60 * kTileSize;
     DWORD g_quietSince = 0;
@@ -1046,6 +1047,18 @@ namespace
             hero->health * 100 < hero->maxHealth * 60)
         {
             return;
+        }
+        // The step under way: the next one once it is there, or has stopped walking (the hero is slow: a tile a
+        // second or so), or after a while at most.
+        if (g_roamAt)
+        {
+            const double tx = g_walkX - self->x, ty = g_walkY - self->y;
+            const bool there = tx * tx + ty * ty < 0.36 * kTileSize * kTileSize;
+            const bool walking = CombatState::action(self) == CombatState::Walking;
+            if (!there && walking && now - g_roamAt < kRoamStepMaxMs)
+            {
+                return;
+            }
         }
         const int layer = *(reinterpret_cast<const uint8_t*>(self) + kLayer);
         // A new home: the first roam, or the hero far from where the last step left it (a teleport, a portal, stairs
