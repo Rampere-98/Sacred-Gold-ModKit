@@ -206,6 +206,11 @@ namespace
                 *fits = true;
             }
             const uint32_t current = fn<GetEquipped>(g_getEquipped)(hero, nullptr, slot);
+            // The weapon hands (12, 13) go with the taskbar's weapon sets: an empty one is the player's choice.
+            if (!current && (slot == 12 || slot == 13))
+            {
+                continue;
+            }
             if (!better(w, current, margin))
             {
                 continue;
