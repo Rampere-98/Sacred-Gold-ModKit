@@ -7,8 +7,11 @@
 #   learned arts: u16 count at ARTS, then 22-byte entries: u32 kind (1 spell, 2 move), u16 id, u16 level, floats.
 #   chunk 0xA1 holds the anti-cheat copies (writer 0x4671e0): 0xF00DBABE, key, exp^key, field^key, level^key.
 #   On load a hero that does not match them is set to 1 and killed (checker 0x4656a0).
+#   Combos (the combo master's, ids 0x200-0x203): four 38-byte records after the learned arts: u16 id, four u32 arts
+#   (+2), four u16 levels (+0x12), float recharge total (+0x1A, the sum of the arts'), float 1.0, float recharged
+#   so far (+0x22; ready once it reaches the total). Built by the game at 0x5813d0.
 # For test copies only (never the save you play): write to a new file and keep a backup.
-# Usage: saveedit.py in.PAK out.PAK [exp N] [level N] [art IDX KIND IDHEX LEVEL]... [addart KIND IDHEX LEVEL]...
+# Usage: saveedit.py in.PAK out.PAK [exp N] [level N] [art IDX KIND IDHEX LEVEL]... [addart KIND IDHEX LEVEL]... [combo IDX A1 A2 A3 A4]... (arts in hex, all learned)
 import struct, sys, zlib
 
 MARK = b'\xde\xc0\xad\xba'
@@ -37,6 +40,7 @@ def main():
     exp, field, level = (x ^ key for x in struct.unpack_from('<3I', guard, g + 4))
     assert exp == struct.unpack_from('<I', hero, STATS + 0x0C)[0], 'guard does not match the hero'
     count = struct.unpack_from('<H', hero, ARTS)[0]
+    combos = []
     i = 0
     while i < len(args):
         a = args[i]
@@ -47,6 +51,8 @@ def main():
         elif a == 'art':
             e = ARTS + 2 + 22 * int(args[i + 1])
             struct.pack_into('<IHH', hero, e, int(args[i + 2]), int(args[i + 3], 16), int(args[i + 4])); i += 5
+        elif a == 'combo':
+            combos.append((int(args[i + 1]), [int(x, 16) for x in args[i + 2:i + 6]])); i += 6
         elif a == 'addart':
             e = bytearray(22)
             struct.pack_into('<IHH', e, 0, int(args[i + 1]), int(args[i + 2], 16), int(args[i + 3]))
@@ -57,6 +63,30 @@ def main():
         else:
             raise SystemExit('unknown ' + a)
     struct.pack_into('<H', hero, ARTS, count)
+    if combos:
+        learned = {}
+        for j in range(count):
+            e = ARTS + 2 + 22 * j
+            kind, art, lv = struct.unpack_from('<IHH', hero, e)
+            learned[art] = (lv, struct.unpack_from('<f', hero, e + 0x0A)[0])
+        # Right after the arts list (seen 2 bytes before its end as counted here): looked for nearby by their ids.
+        ids = lambda b: [struct.unpack_from('<H', hero, b + 38 * k)[0] for k in range(4)]
+        near = [b for b in range(ARTS + 22 * count - 16, ARTS + 22 * count + 16) if ids(b) == [0x200, 0x201, 0x202, 0x203]]
+        assert len(near) == 1, 'combo records not found'
+        base = near[0]
+        for idx, arts in combos:
+            rec = bytearray(38)
+            struct.pack_into('<H', rec, 0, 0x200 + idx)
+            total = 0.0
+            for j, art in enumerate(arts):
+                lv, recharge = learned[art]
+                struct.pack_into('<I', rec, 2 + 4 * j, art)
+                struct.pack_into('<H', rec, 0x12 + 2 * j, lv)
+                total += recharge
+            total = max(total, 1.0)
+            struct.pack_into('<fff', rec, 0x1A, total, 1.0, total)   # ready at once
+            hero[base + 38 * idx:base + 38 * (idx + 1)] = rec
+            print('combo', idx, ' '.join('%x' % a for a in arts), 'recharge', total)
     struct.pack_into('<I', hero, STATS + 0x0C, exp)
     struct.pack_into('<H', hero, STATS + 0x56, level)
     struct.pack_into('<3I', guard, g + 4, exp ^ key, field ^ key, level ^ key)

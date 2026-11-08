@@ -343,7 +343,7 @@ namespace
     constexpr DWORD kSelectMaxMs = 600;     // the engine has not taken the art by then: given up
     constexpr DWORD kConfirmMs = 1000;      // the hero has not started the art by then: the game refused it
     constexpr DWORD kConfirmWalkMs = 3000;  // ... unless it is walking up to the target first, at most this long
-    constexpr DWORD kCastMaxMs = 7000;      // an art lasting longer is not waited for
+    constexpr DWORD kCastMaxMs = 15000;     // an art lasting longer is not waited for (a combo of four: ~8 s)
     constexpr DWORD kSettleMs = 200;        // after the art is done, its last blow's damage shows
 
     // The hero, also when mounted (the rider casts).
@@ -368,6 +368,7 @@ namespace
         bool found = false;     // the hero has learned it
         uint16_t level = 0;
         float left = 0.0f;      // seconds of recharge still to go
+        float total = 0.0f;     // its whole recharge: the longer, the stronger the art (kept for the hard enemies)
     };
 
     // Combos (slot kind 4, ids 0x200-0x204, the combo master's five; ENG 004D2B30): their recharge is kept in 38-byte
@@ -400,6 +401,7 @@ namespace
                 {
                     r.found = true;
                     r.left = done < total ? total - done : 0.0f;
+                    r.total = total;
                 }
             }
             return r;
@@ -422,6 +424,7 @@ namespace
                 r.found = true;
                 r.level = at<uint16_t>(p, 6);
                 r.left = at<float>(p, kLearnedLeft);
+                r.total = at<float>(p, 0x0A);
                 return r;
             }
         }
@@ -717,6 +720,7 @@ namespace
         // Each slot by its use; the best one that is ready.
         int pick = -1, pickRank = 0;
         uint32_t pickArt = 0, pickTarget = 0;
+        float pickTotal = 0.0f;
         const char* why = "";
         bool wantedButRecharging = false, gameRecharging = false;
         const bool readable = heroArtsReadable();
@@ -786,7 +790,7 @@ namespace
                     // Hurt enough for a heal to show: an art that showed nothing yet is worth a few tries now, else a
                     // heal never cast while hurt is never learned.
                     const bool showsHeal = missing >= std::max(8, s.maxHealth * 6 / 100);
-                    const bool unknown = l.heal + l.area + l.single + l.none == 0 && l.tries < 4;
+                    const bool unknown = l.heal + l.area + l.single == 0 && l.tries < 4;
                     rank = (l.tries == 0 && !danger) || (showsHeal && unknown) ? 7 : 2;
                     at_ = target->id;
                     reason = "trying it out";
@@ -811,12 +815,17 @@ namespace
                 wantedButRecharging = true;
                 continue;
             }
-            if (rank > pickRank)
+            // Two of the same use: against a strong enemy the stronger one (the longer recharge: a combo, a high
+            // art), else the quick one, keeping the strong ones ready for when they count.
+            const bool better = rank == pickRank && ha.found && (strong || danger ? ha.total > pickTotal
+                                                                                  : ha.total < pickTotal);
+            if (rank > pickRank || better)
             {
                 pick = slot;
                 pickRank = rank;
                 pickArt = sa.art;
                 pickTarget = at_;
+                pickTotal = ha.total;
                 why = reason;
             }
         }
