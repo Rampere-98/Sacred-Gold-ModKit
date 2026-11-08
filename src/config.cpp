@@ -174,6 +174,11 @@ void ConfigFile::load(const std::wstring& gameDir)
         t.antidote = readBool(ini, L"Tactics", L"Antidote", t.antidote);
         t.concentration = readBool(ini, L"Tactics", L"Concentration", t.concentration);
         t.healHirelings = readBool(ini, L"Tactics", L"HealHirelings", t.healHirelings);
+        t.singleAlways = readBool(ini, L"Tactics", L"SingleAlways", t.singleAlways);
+        t.artRange = std::clamp(readInt(ini, L"Tactics", L"ArtRange", t.artRange), 0, 3000);
+        t.buffEverySeconds = std::clamp(readInt(ini, L"Tactics", L"BuffEvery", t.buffEverySeconds), 5, 600);
+        t.retreat = readBool(ini, L"Tactics", L"Retreat", t.retreat);
+        t.retreatPercent = std::clamp(readInt(ini, L"Tactics", L"RetreatPercent", t.retreatPercent), 5, 60);
     }
     Config::debug.d3dStats = readInt(ini, L"Debug", L"D3DStats", Config::debug.d3dStats) != 0;
     Config::debug.profiler = readInt(ini, L"Debug", L"Profiler", Config::debug.profiler) != 0;
@@ -203,11 +208,14 @@ void ConfigFile::load(const std::wstring& gameDir)
         Config::autoAttack.pauseMs, Config::autoAttack.repeatMs, Config::autoAttack.pickup,
         Config::autoAttack.autoCollect, Config::autoAttack.lootRange);
     LOG("Config: Tactics Arts={} Slots={},{},{},{},{} Consumables={} UndeadDeath={} Mentor={} Antidote={} "
-        "Concentration={} HealHirelings={}", Config::tactics.arts, static_cast<int>(Config::tactics.slots[0]),
+        "Concentration={} HealHirelings={} SingleAlways={} ArtRange={} BuffEvery={} Retreat={} RetreatPercent={}",
+        Config::tactics.arts, static_cast<int>(Config::tactics.slots[0]),
         static_cast<int>(Config::tactics.slots[1]), static_cast<int>(Config::tactics.slots[2]),
         static_cast<int>(Config::tactics.slots[3]), static_cast<int>(Config::tactics.slots[4]),
         Config::tactics.consumables, Config::tactics.undeadDeath, Config::tactics.mentor, Config::tactics.antidote,
-        Config::tactics.concentration, Config::tactics.healHirelings);
+        Config::tactics.concentration, Config::tactics.healHirelings, Config::tactics.singleAlways,
+        Config::tactics.artRange, Config::tactics.buffEverySeconds, Config::tactics.retreat,
+        Config::tactics.retreatPercent);
     const auto pos = [](const Config::Ui::Position& p) { return Fmt::format("{},{}", p.x, p.y); };
     LOG("Config: UI.Layout Taskbar={} Chat={} Inventory={} Equipment={} Stats={} Minimap={} Portraits={} Shops={}",
         pos(Config::ui.taskbar), pos(Config::ui.chat), pos(Config::ui.inventory), pos(Config::ui.equipment),

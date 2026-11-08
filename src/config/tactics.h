@@ -26,6 +26,14 @@ namespace Config
         bool antidote = true;           // E
         bool concentration = true;      // R
         bool healHirelings = true;      // B: a healing potion to the hirelings
+        // Single-target arts at any enemy worth more than a few blows, not only at strong ones (a caster's main
+        // attack); off: only at strong enemies or when hard pressed.
+        bool singleAlways = true;
+        int artRange = 260;             // single and area arts only at targets within this many screen pixels (0: any)
+        int buffEverySeconds = 45;      // a buff again after this long at the earliest
+        // Low on health with no healing potion left and enemies close: step back from them instead of fighting on.
+        bool retreat = true;
+        int retreatPercent = 25;        // ... at or below this percent of health
     };
     inline Tactics tactics;
 

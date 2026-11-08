@@ -6,12 +6,16 @@
 
 // Combat arts and consumables for the auto attack ([Tactics]). Each art slot (keys 6-0) is used by what it does,
 // learned from its effect (health regained, enemies hurt) or set in [Tactics] / the ModKit menu: heals only when
-// the hero misses health, area arts only with several enemies around the target, single blows only at enemies
-// worth it (not those the plain attack kills in a moment), buffs at the start of a hard fight. An art is cast as
-// its right click does: the slot key selects it, then the game's own order 0x105 on the target; the mouse stays
-// free. Consumables are drunk through the game's usePotion: Mentor in big fights, Undead Death when hard pressed,
-// Antidote when health drains with no enemy at hand (poison), Concentration when the arts wanted are recharging,
-// a healing potion to the hirelings when one is badly hurt. Healing potions for the hero stay [AutoPotion]'s.
+// the hero misses health, area arts only with several enemies around the target, single blows at enemies worth
+// more than a few blows (with SingleAlways; else only strong ones), buffs at the start of a hard fight. An art is
+// cast as its right click does: the slot key selects it (checked in the engine before the cast), then the game's own
+// order 0x105 on the target; the mouse stays free. Whether the game took the cast is seen in the hero's action (9
+// while an art is under way); a refused cast means the art still recharges, which teaches each art's recharge time.
+// No other order goes out while the art lasts, and its effect is measured over exactly that time, without the
+// healing of a potion drunk meanwhile. Consumables are drunk through the game's usePotion: Mentor in big fights,
+// Undead Death when hard pressed, Antidote when health drains with no enemy at hand (poison), Concentration when the
+// arts wanted were refused as recharging, a healing potion to the hirelings when one is badly hurt; one found
+// missing is looked for again ever later. Healing potions for the hero stay [AutoPotion]'s.
 namespace Tactics
 {
     // What the auto attack sees, at each look at the situation.
@@ -26,6 +30,8 @@ namespace Tactics
         int count = 0;
         float hx = 0.0f, hy = 0.0f; // the hero on the screen
         float range = 0.0f;         // [AutoAttack] Range
+        const uint32_t* hirelings = nullptr;    // ids of the creatures that follow the hero (AutoAttack tells)
+        int hirelingCount = 0;
     };
 
     // Resolves the game functions it needs (if they don't match it never acts) and adds its ModKit menu section.
