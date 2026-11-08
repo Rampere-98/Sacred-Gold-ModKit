@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 
 using namespace Sacred;
 
@@ -118,9 +119,42 @@ namespace
     struct Worth
     {
         float primary = 0.0f;   // weapon damage (mean of min and max, all kinds) or armor (all kinds)
-        float value = 0.0f;     // the game's value: mods and the rest
+        float mods = 0.0f;      // its bonus modifiers' strengths, summed
+        float score = 0.0f;     // primary + mods: what pieces are compared by
+        float value = 0.0f;     // the game's value: the tie-breaker
+        int set = -1;           // the set it belongs to (index in the game's set table), -1 none
         bool weapon = false;
     };
+
+    // The game's sets (bin\sets.bin, loaded to typeMgr +0x563244 .. +0x563248): records of 0x70 bytes, the pieces'
+    // info ids (the item's info +0x00) at +0x00..+0x24, 0 ending. Seen live: 0x54E in set 6, Lilith's wings in set 7.
+    // (The weapon-info record's +0x23 is 0 on set pieces too: not the set id.) Read once.
+    int setOf(uint32_t infoId)
+    {
+        static std::unordered_map<uint32_t, int> sets;
+        static bool read = false;
+        if (!read)
+        {
+            const uint8_t* types = static_cast<const uint8_t*>(typeMgr());
+            const uint8_t* begin = types ? *reinterpret_cast<const uint8_t* const*>(types + 0x563244) : nullptr;
+            const uint8_t* end = types ? *reinterpret_cast<const uint8_t* const*>(types + 0x563248) : nullptr;
+            if (begin && end > begin && (end - begin) % 0x70 == 0 && (end - begin) / 0x70 < 1000)
+            {
+                for (int s = 0; s < (end - begin) / 0x70; ++s)
+                {
+                    const uint32_t* ids = reinterpret_cast<const uint32_t*>(begin + s * 0x70);
+                    for (int i = 0; i < 10 && ids[i] && ids[i] != 0xCCCCCCCC; ++i)
+                    {
+                        sets.emplace(ids[i], s);
+                    }
+                }
+                read = true;
+                LOG("Gear: {} sets, {} set pieces", (end - begin) / 0x70, sets.size());
+            }
+        }
+        const auto it = sets.find(infoId);
+        return it == sets.end() ? -1 : it->second;
+    }
 
     Worth worth(uint32_t id)
     {
@@ -133,6 +167,18 @@ namespace
         }
         if (const uint8_t* info = fn<GetInfo>(g_getInfo)(item, nullptr, -1))
         {
+            // The bonus modifiers (seen live): 5 x (u16 id, u16 param) at +0x4A, their strengths u16[5] at +0x6A. What
+            // each id does is not known yet: every point counts alike.
+            const auto* mods = reinterpret_cast<const uint16_t*>(info + 0x4A);
+            const auto* strength = reinterpret_cast<const uint16_t*>(info + 0x6A);
+            for (int m = 0; m < 5; ++m)
+            {
+                if (mods[2 * m])
+                {
+                    w.mods += strength[m];
+                }
+            }
+            w.set = setOf(*reinterpret_cast<const uint32_t*>(info));
             const auto* lo = reinterpret_cast<const uint16_t*>(info + 0x1C);
             const auto* hi = reinterpret_cast<const uint16_t*>(info + 0x24);
             const auto* armor = reinterpret_cast<const int16_t*>(info + 0x32);
@@ -144,13 +190,47 @@ namespace
             }
             w.weapon = damage > 0.0f;
             w.primary = w.weapon ? damage : defense;
+            w.score = w.primary + w.mods;
         }
         w.value = static_cast<float>(fn<GetValue>(g_getValue)(item, nullptr));
         return w;
     }
 
-    // `candidate` clearly better than `current` (0: an empty slot).
-    bool better(const Worth& candidate, uint32_t current, float margin)
+    // Pieces of each set the hero wears (by set index).
+    std::unordered_map<int, int> setsWorn(cCreature* hero)
+    {
+        std::unordered_map<int, int> worn;
+        for (int slot = 0; slot < kSlots; ++slot)
+        {
+            if (const uint32_t id = fn<GetEquipped>(g_getEquipped)(hero, nullptr, slot))
+            {
+                if (const int set = worth(id).set; set >= 0)
+                {
+                    ++worn[set];
+                }
+            }
+        }
+        return worn;
+    }
+
+    // A set piece's score with what wearing it adds to its set: the set's bonuses come at piece counts, so a piece
+    // joining pieces worn counts a tenth more for each of them (up to half again).
+    float scoreWith(const Worth& w, const std::unordered_map<int, int>& worn, bool wornNow)
+    {
+        if (w.set < 0)
+        {
+            return w.score;
+        }
+        const auto it = worn.find(w.set);
+        const int others = (it == worn.end() ? 0 : it->second) - (wornNow ? 1 : 0);
+        return w.score * (1.0f + std::min(0.5f, 0.1f * std::max(others, 0)));
+    }
+
+    // `candidate` clearly better than `current` (0: an empty slot): by score (damage or armor plus its bonuses, set
+    // pieces counting more with others of their set worn), over `margin` (a change for less only makes the gear
+    // swing back and forth), the game's value breaking ties. A piece of a set the hero wears two or more of is kept
+    // unless the candidate is of the same set.
+    bool better(const Worth& candidate, uint32_t current, float margin, const std::unordered_map<int, int>& worn)
     {
         if (!current)
         {
@@ -161,11 +241,20 @@ namespace
         {
             return false;       // a shield for a weapon or the other way round: the player's choice
         }
-        if (candidate.primary > now.primary * (1.0f + margin) + 0.5f)
+        if (now.set >= 0 && candidate.set != now.set)
+        {
+            const auto it = worn.find(now.set);
+            if (it != worn.end() && it->second >= 2)
+            {
+                return false;
+            }
+        }
+        const float mine = scoreWith(candidate, worn, false), theirs = scoreWith(now, worn, true);
+        if (mine > theirs * (1.0f + margin) + 0.5f)
         {
             return true;
         }
-        const bool same = candidate.primary >= now.primary * (1.0f - margin * 0.5f);
+        const bool same = mine >= theirs * (1.0f - margin * 0.5f);
         return same && candidate.value > now.value * (1.0f + 2.0f * margin) + 1.0f;
     }
 
@@ -194,6 +283,7 @@ namespace
             return -1;
         }
         const Worth w = worth(id);
+        const std::unordered_map<int, int> worn = setsWorn(hero);
         int best = -1;
         float bestGain = 0.0f;
         for (int slot = 0; slot < kSlots; ++slot)
@@ -212,12 +302,14 @@ namespace
             {
                 continue;
             }
-            if (!better(w, current, margin))
+            if (!better(w, current, margin, worn))
             {
                 continue;
             }
             const Worth now = current ? worth(current) : Worth{};
-            const float gain = current ? (w.primary - now.primary) + (w.value - now.value) * 0.01f : 1e9f;
+            const float gain = current ? (scoreWith(w, worn, false) - scoreWith(now, worn, true)) +
+                                             (w.value - now.value) * 0.01f
+                                       : 1e9f;
             if (best < 0 || gain > bestGain)
             {
                 best = slot;
@@ -298,6 +390,10 @@ namespace
             if (classOk && (!fits || slot >= 0))
             {
                 return;     // potions, runes, gems...; or an upgrade (perhaps once the hero is stronger)
+            }
+            if (const int set = worth(id).set; set >= 0 && setsWorn(hero).count(set))
+            {
+                return;     // a piece of a set the hero wears: kept for the set
             }
             for (int page = 0; page < kStockPages; ++page)
             {
