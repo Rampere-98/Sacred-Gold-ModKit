@@ -843,3 +843,26 @@ second; SacredBild makes that `[Net] JoinTimeout`, 30 s by default); loading may
   (lists of text ids, different localization staff) and some data without text (`PAK\motions.pak` 85 bytes and 396
   longer in ENG, `bin\sets.bin` 259 bytes, 4 header bytes of each `startcode.bin`); movies, music, fonts and loading
   screens are the same.
+
+## Combat arts, the hero's learned arts and the anti-cheat (seen live and in the exe, 2026-11-08)
+
+- Weapon arts ("moves"): table at `0x94FDB0`, 0x78-byte entries, id at +0, class mask dword at +0x70 (Seraphim = 1:
+  `0x42D`-`0x430`, `0x41E`, `0x3F9`-`0x3FC`); lookup `0x4D1AF0`. Spells: table at `0x952A38`, 0x94-byte entries,
+  lookup `0x4D2310` (Seraphim `0xD`, `0xF`-`0x16`; `0x7` is another class's heal).
+- Taskbar slots: player data + 0xC90, five 40-byte entries (two 20-byte halves): u16 kind (3 weapon art, 2 spell), art
+  id at +4. More slots unlock with the hero's level; a slot key on a locked slot does nothing.
+- A creature's action (+0x150): 4 while casting a spell (about 1.5 s), 9 while casting a weapon art.
+- The hero's learned arts: hero stats (hero +0x3A8) +0x102 begin / +0x106 end / +0x10A capacity of a vector of 22-byte
+  entries: u32 kind (1 spell, 2 weapon art), u16 id +4, u16 level +6, float recharge total +0xA, float +0xE (1.0),
+  float seconds left +0x12 (`0x580DF0` checks it). Recharges are shared: the spells one timer, the weapon arts another,
+  and their length depends on the build (levels, items), so Tactics reads it here instead of guessing.
+- Stats: +0xC experience, +0x46 a field the anti-cheat keeps, +0x56 level (u16; the hero object's +0x3FE).
+- Anti-cheat: `0x4656A0` compares experience (hero +0x3B4), hero +0x3EE, the level (+0x3FE) and the attributes with
+  XOR copies (key: hero byte +0x38 repeated) in the page at `[0x182EE5C]`; on a mismatch it sets the field to 1 and kills
+  the hero (health 0 at `0x465BA1`, action 6 at `0x465BB7`). Memory edits of those values therefore kill the hero.
+- Saves (`GAMExx.PAK`): "AMS\x1b"; directory from 0x100 of 12-byte records (type, file offset, decompressed size);
+  each chunk "DE C0 AD BA" + u32 compressed size + 24 zero bytes + zlib. Chunk 0xA0 = the hero (stats at 0x3D9: exp
+  0x3E5, level 0x42F; learned arts: u16 count at 0x4CF, entries from 0x4D1). Chunk 0xA1 holds the anti-cheat block
+  written by `0x4671E0`: 0xF00DBABE, key 0xEFEFEFEF, exp^key, field^key, level^key, 0x200 padding dwords, 0xD00FD00F.
+  A test hero can be edited offline if the hero chunk and that block are changed together (and the later directory
+  offsets moved): then the game loads it alive.
