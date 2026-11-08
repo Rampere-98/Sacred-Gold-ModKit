@@ -1,6 +1,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
+#include "game/map_memory.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
 #include "config/tactics.h"
@@ -776,6 +777,8 @@ namespace
         }
         const uint32_t heroId = heroObject->id;
         const uint32_t selfId = engine->controlled;
+        // The map memory: fights count as ground seen too (layer at the creature's +0x24).
+        MapMemory::visit(*(reinterpret_cast<const uint8_t*>(self) + 0x24), self->x, self->y);
 
         const float range = static_cast<float>(Config::autoAttack.range);
         const float melee = range * 0.45f;
@@ -1015,6 +1018,8 @@ namespace
     int32_t g_homeX = 0, g_homeY = 0;
     bool g_homeSet = false;
     int g_roamStuck = 0;    // walk orders in a row that got the hero no further
+    int g_roamLayer = -1;
+    constexpr size_t kLayer = 0x24;     // a creature's layer: the surface, a dungeon, an interior
 
     void roam(DWORD now)
     {
@@ -1036,38 +1041,36 @@ namespace
         {
             return;
         }
-        if (!g_homeSet)
+        const int layer = *(reinterpret_cast<const uint8_t*>(self) + kLayer);
+        // A new home: the first roam, or the hero far from where the last step left it (a teleport, a portal, stairs
+        // to another layer).
+        const double jx = self->x - g_roamFromX, jy = self->y - g_roamFromY;
+        if (!g_homeSet || layer != g_roamLayer || ((g_roamFromX || g_roamFromY) && jx * jx + jy * jy > (40 * kTileSize) * (40 * kTileSize)))
         {
             g_homeX = self->x;
             g_homeY = self->y;
             g_homeSet = true;
+            g_roamLayer = layer;
+            g_roamAt = 0;
+            g_roamStuck = 0;
             g_roamAngle = jitter(0, 628) / 100.0;
         }
-        // No further since the last order: something in the way, another direction.
+        MapMemory::visit(layer, self->x, self->y);
+        // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
         if (g_roamAt)
         {
             const double mx = self->x - g_roamFromX, my = self->y - g_roamFromY;
             if (mx * mx + my * my < 0.25 * kTileSize * kTileSize)
             {
                 ++g_roamStuck;
-                g_roamAngle += 1.57 + jitter(0, 157) / 100.0;
+                MapMemory::blocked(layer, g_walkX, g_walkY);
             }
             else
             {
                 g_roamStuck = 0;
             }
         }
-        // Too far from home: head back that way (with some spread); blocked that way (water, a wall), ever wider to
-        // either side until the hero gets round it.
-        const double hx = g_homeX - self->x, hy = g_homeY - self->y;
-        if (hx * hx + hy * hy > kRoamLeash * kRoamLeash)
-        {
-            const double side = (g_roamStuck & 1) ? 1.0 : -1.0;
-            const double spread = g_roamStuck ? side * std::min(g_roamStuck, 5) * 0.55
-                                              : (jitter(0, 100) - 50) / 100.0;
-            g_roamAngle = std::atan2(hy, hx) + spread;
-        }
-        if (g_roamStuck == 8)
+        if (g_roamStuck >= 8)
         {
             // Hemmed in: a new home here, so the hero roams from where it is.
             LOG("AutoAttack: no way on from here, roaming from this spot on");
@@ -1075,6 +1078,41 @@ namespace
             g_homeY = self->y;
             g_roamStuck = 0;
         }
+        // Of 16 directions, the one toward the ground least seen (a few cells ahead, nearer ones counting more), not
+        // known blocked, keeping roughly the way it goes (no back and forth), and back toward home beyond the leash.
+        const double hx = g_homeX - self->x, hy = g_homeY - self->y;
+        const double homeDistance = std::sqrt(hx * hx + hy * hy);
+        double bestAngle = g_roamAngle;
+        float bestCost = 1e9f;
+        for (int k = 0; k < 16; ++k)
+        {
+            const double a = k * 3.14159265 / 8.0;
+            const double ux = std::cos(a), uy = std::sin(a);
+            float cost = 0.0f;
+            for (int d = 1; d <= 4; ++d)
+            {
+                const double reach = d * 3.0 * kTileSize;
+                cost += MapMemory::cost(layer, static_cast<int32_t>(self->x + ux * reach),
+                                        static_cast<int32_t>(self->y + uy * reach)) / d;
+            }
+            // Turning away from the way it goes costs a little; turning back, more.
+            const double turn = std::fabs(std::remainder(a - g_roamAngle, 2.0 * 3.14159265));
+            cost += static_cast<float>(turn) * 0.35f;
+            // Beyond the leash, away from home costs; toward it is free.
+            if (homeDistance > kRoamLeash)
+            {
+                const double toward = (ux * hx + uy * hy) / homeDistance;   // 1 straight home, -1 straight away
+                cost += static_cast<float>((1.0 - toward) * (homeDistance / kRoamLeash) * 2.0);
+            }
+            cost += jitter(0, 30) / 100.0f;
+            if (cost < bestCost)
+            {
+                bestCost = cost;
+                bestAngle = a;
+            }
+        }
+        g_roamAngle = bestAngle;
+        MapMemory::save(now, 60000);
         g_roamFromX = self->x;
         g_roamFromY = self->y;
         g_walkX = static_cast<int32_t>(self->x + std::cos(g_roamAngle) * kRoamWay);
@@ -1082,8 +1120,8 @@ namespace
         Inject::call(&walkThere, nullptr);
         if (!g_roamAt || now - g_roamAt > 10000)
         {
-            LOG("AutoAttack: nothing around, going to look ({:.0f} tiles from where it began)",
-                std::sqrt(hx * hx + hy * hy) / kTileSize);
+            LOG("AutoAttack: nothing around, going to look ({:.0f} tiles from where it began, {} cells of this layer "
+                "seen)", homeDistance / kTileSize, MapMemory::cellsOn(layer));
         }
         g_roamAt = now;
     }
