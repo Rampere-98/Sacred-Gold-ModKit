@@ -1,5 +1,6 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
+#include "game/gear.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
 #include "config/tactics.h"
@@ -1001,11 +1002,11 @@ namespace
     }
 
     // Seeking fights with none around: the hero goes looking, as a player farming would. After a few quiet seconds (and
-    // with most of its health back) it walks some tiles on in one direction, turning when it gets no further, and
+    // with most of its health back) it walks on in one direction a step (2 tiles) at a time, turning when it gets no further, and
     // back toward where it began once it strays too far from there. Any enemy or loot seen ends it.
     constexpr DWORD kRoamQuietMs = 4000;
-    constexpr DWORD kRoamStepMs = 1500;
-    constexpr double kRoamWay = 10 * kTileSize;
+    constexpr DWORD kRoamStepMs = 800;
+    constexpr double kRoamWay = 2 * kTileSize;      // a step at a time, a look around between
     constexpr double kRoamLeash = 60 * kTileSize;
     DWORD g_quietSince = 0;
     DWORD g_roamAt = 0;
@@ -1013,6 +1014,7 @@ namespace
     int32_t g_roamFromX = 0, g_roamFromY = 0;   // the hero at the last walk order
     int32_t g_homeX = 0, g_homeY = 0;
     bool g_homeSet = false;
+    int g_roamStuck = 0;    // walk orders in a row that got the hero no further
 
     void roam(DWORD now)
     {
@@ -1045,16 +1047,33 @@ namespace
         if (g_roamAt)
         {
             const double mx = self->x - g_roamFromX, my = self->y - g_roamFromY;
-            if (mx * mx + my * my < kTileSize * kTileSize)
+            if (mx * mx + my * my < 0.25 * kTileSize * kTileSize)
             {
+                ++g_roamStuck;
                 g_roamAngle += 1.57 + jitter(0, 157) / 100.0;
             }
+            else
+            {
+                g_roamStuck = 0;
+            }
         }
-        // Too far from home: head back that way (with some spread).
+        // Too far from home: head back that way (with some spread); blocked that way (water, a wall), ever wider to
+        // either side until the hero gets round it.
         const double hx = g_homeX - self->x, hy = g_homeY - self->y;
         if (hx * hx + hy * hy > kRoamLeash * kRoamLeash)
         {
-            g_roamAngle = std::atan2(hy, hx) + (jitter(0, 100) - 50) / 100.0;
+            const double side = (g_roamStuck & 1) ? 1.0 : -1.0;
+            const double spread = g_roamStuck ? side * std::min(g_roamStuck, 5) * 0.55
+                                              : (jitter(0, 100) - 50) / 100.0;
+            g_roamAngle = std::atan2(hy, hx) + spread;
+        }
+        if (g_roamStuck == 8)
+        {
+            // Hemmed in: a new home here, so the hero roams from where it is.
+            LOG("AutoAttack: no way on from here, roaming from this spot on");
+            g_homeX = self->x;
+            g_homeY = self->y;
+            g_roamStuck = 0;
         }
         g_roamFromX = self->x;
         g_roamFromY = self->y;
@@ -1531,6 +1550,11 @@ void AutoAttack::onFrame()
         {
             return;
         }
+    }
+    // Gear: put on what is better when calm, sell and buy at a merchant (its own settings, the auto attack on or off).
+    if (foreground && !Controller::drives() && heroAlive())
+    {
+        Gear::onFrame(now, !g_collecting && !g_target && !g_pending && !g_retreatUntil && !Tactics::busy(now));
     }
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
         (g_quietUntil && static_cast<int>(now - g_quietUntil) < 0))
