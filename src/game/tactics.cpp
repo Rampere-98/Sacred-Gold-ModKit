@@ -1,6 +1,7 @@
 #include "game/tactics.h"
 #include "config.h"
 #include "config/tactics.h"
+#include "game/combat_learn.h"
 #include "game/combat_state.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
@@ -686,7 +687,9 @@ namespace
             }
         }
         const int missing = s.maxHealth - s.health;
-        const bool danger = s.health * 100 <= s.maxHealth * 45 || (s.hurt && close >= 3);
+        // Hard pressed: low on health, many at the hero, or those striking it would take its health in a few seconds.
+        const bool danger = s.health * 100 <= s.maxHealth * 45 || (s.hurt && close >= 3) ||
+                            (s.hurt && CombatLearn::secondsToDie() < 4.0f);
         // Around the target: how many enemies an area art would catch.
         int around = 0;
         bool strong = false, easy = false;
@@ -703,7 +706,8 @@ namespace
             }
             const int typical = g_seenMaxima.size() >= 5 ? median(g_seenMaxima) : 0;
             const float seconds = g_dps > 0.0f && g_dpsSeconds >= 3.0f ? target->health / g_dps : 0.0f;
-            strong = (typical > 0 && target->maxHealth * 10 >= typical * 18) || seconds > 8.0f;
+            strong = (typical > 0 && target->maxHealth * 10 >= typical * 18) || seconds > 8.0f ||
+                     CombatLearn::relativeDanger(target->id) >= 1.8f;
             easy = (seconds > 0.0f && seconds < 3.0f) || target->health * 10 < target->maxHealth * 2;
         }
         // The densest group within the art range: an area art goes at its middle enemy, wherever the target is (the
@@ -921,12 +925,15 @@ namespace
             {
                 ++close;
             }
-            if (s.foes[i].id == s.target && typical > 0 && s.foes[i].maxHealth * 10 >= typical * 18)
+            if (s.foes[i].id == s.target && ((typical > 0 && s.foes[i].maxHealth * 10 >= typical * 18) ||
+                                             CombatLearn::relativeDanger(s.target) >= 1.8f))
             {
                 strong = true;
             }
         }
-        const bool danger = s.health * 100 <= s.maxHealth * 45 || (s.hurt && close >= 3);
+        // Hard pressed: low on health, many at the hero, or those striking it would take its health in a few seconds.
+        const bool danger = s.health * 100 <= s.maxHealth * 45 || (s.hurt && close >= 3) ||
+                            (s.hurt && CombatLearn::secondsToDie() < 4.0f);
         const bool bigFight = s.count >= 4 || strong;
 
         // Poison: health draining with no enemy about, sampled once a second (the looks come at any rate).

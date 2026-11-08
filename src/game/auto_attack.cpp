@@ -1,4 +1,5 @@
 #include "game/auto_attack.h"
+#include "game/combat_learn.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
 #include "config/tactics.h"
@@ -694,7 +695,9 @@ namespace
                 ++close;
             }
         }
-        const bool low = health * 100 <= maximum * c.retreatPercent;
+        // Low on health, or below 40 % with those striking about to take the rest in moments.
+        const bool low = health * 100 <= maximum * c.retreatPercent ||
+                         (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f);
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
         if (g_retreatUntil)
         {
@@ -825,6 +828,7 @@ namespace
         }
 
         std::unordered_map<uint32_t, float> distances;
+        std::vector<CombatLearn::Foe> learnFoes;
         std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> world;
         std::unordered_map<uint32_t, int> farAim;
         bool threat = hurt;
@@ -865,6 +869,11 @@ namespace
             const bool atHireling = aim && !atHero && isHireling(aim);
             const bool engagedFoe = g_playerTargets.count(f.id) || atHero || atHireling;
             const bool current = f.id == g_target;
+            {
+                const auto looks = g_farAimLooks.find(f.id);
+                learnFoes.push_back({f.id, f.health, f.maxHealth, atHero, atHireling,
+                                     looks != g_farAimLooks.end() && looks->second >= 3});
+            }
             // Given up on: only if it comes close again.
             if (g_unreachable.count(f.id) && d > melee)
             {
@@ -910,7 +919,9 @@ namespace
             }
             // The threat first: who strikes the hero (the strong ones before the weak), then who strikes the
             // hireling (it dies fast alone); a weak one standing by waits.
-            const bool strongFoe = typical > 0 && f.maxHealth * 2 >= typical * 3;
+            // Strong: well above the ordinary health here, or learned to hit far harder than those around.
+            const float hardness = CombatLearn::relativeDanger(f.id);
+            const bool strongFoe = (typical > 0 && f.maxHealth * 2 >= typical * 3) || hardness >= 1.6f;
             if (atHero && d < melee)
             {
                 cost *= strongFoe ? 0.45f : 0.6f;
@@ -927,6 +938,10 @@ namespace
                 cost *= 0.7f + 0.3f * left;
             }
             const bool striking = atHero || atHireling;
+            if (striking)
+            {
+                cost /= std::clamp(std::sqrt(hardness), 0.7f, 1.6f);   // the harder it hits, the sooner it goes down
+            }
             if (current)
             {
                 // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least
@@ -948,6 +963,8 @@ namespace
         {
             enemy = g_target;
         }
+        CombatLearn::observe({now, heroObject, self, learnFoes.data(), static_cast<int>(learnFoes.size()),
+                              g_hirelings.data(), static_cast<int>(g_hirelings.size())});
         g_lastDistance = std::move(distances);
         g_lastWorld = std::move(world);
         g_farAimLooks = std::move(farAim);
