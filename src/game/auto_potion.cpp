@@ -1,5 +1,6 @@
 #include "game/auto_potion.h"
 #include "config/auto_potion.h"
+#include "game/combat_state.h"
 #include "game/focus.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
@@ -9,6 +10,7 @@
 #include "sacred/engine.h"
 #include "sacred/object.h"
 #include "sacred/ui.h"
+#include "sig.h"
 
 #include <imgui.h>
 #include <windows.h>
@@ -32,8 +34,13 @@ namespace
     DWORD g_drankAt = 0;            // when the last potion was drunk, 0 for none
     int g_healthBefore = 0;         // the health just before it
     int g_bestAfter = 0;            // the highest health since
+    int g_worstAfter = 0;           // the lowest health since (blows taken while it took effect)
     bool g_measuring = false;
     DWORD g_noneLeftUntil = 0;
+    DWORD g_lastTry = 0;            // the last drink tried
+    // With none left, an emergency looks again this often.
+    constexpr DWORD kEmergencyRetryMs = 3000;
+    uintptr_t g_usePotion = 0;
 
     // In the game world with nothing in front of it that Space would go to.
     bool worldRunning()
@@ -60,10 +67,25 @@ namespace
         return !UiNav::modal() && !UiNav::npcDialogOpen();
     }
 
-    void drink()
+    // usePotion (ENG 00612FA0): thiscall on the engine (type, toHirelings) -> whether a potion was drunk; type 1 is
+    // healing, what Space drinks (the key switch at ENG 006186EE calls it). Resolved on first use; without it, Space.
+    using UsePotion = uint8_t(__fastcall*)(cEngine* self, void* edx, int type, int toHirelings);
+    const Sig::Entry kSigs[] = {
+        {"usePotion", "8B 0D ?? ?? ?? ?? 83 EC 08 53 55 56 57 E8 ?? ?? ?? ?? 8B F8 85 FF 0F 84 ?? ?? ?? ?? 8B 47 0C", 0,
+            Sig::Take::Match, &g_usePotion},
+    };
+
+    // Drinks a healing potion; false if the game said none was drunk (none left). With Space there is no answer.
+    bool drink()
     {
+        cEngine* engine = FrameHooks::engine();
+        if (g_usePotion && engine)
+        {
+            return reinterpret_cast<UsePotion>(g_usePotion)(engine, nullptr, 1, 0) != 0;
+        }
         Inject::key(VK_SPACE, true);
         Inject::key(VK_SPACE, false);
+        return true;
     }
 
     void drawMenu()
@@ -78,6 +100,10 @@ namespace
         if (g_heal > 0)
         {
             ImGui::TextDisabled("Una poción cura %d de vida (medido).", g_heal);
+        }
+        if (CombatState::noPotionsAt.load())
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.55f, 0.35f, 1.0f), "No quedan pociones de curación.");
         }
     }
 
@@ -95,7 +121,15 @@ void AutoPotion::onFrame()
 {
     // Its menu section, once (this mod has no install step).
     static std::once_flag menu;
-    std::call_once(menu, [] { ModkitMenu::add({"Pociones automáticas", &drawMenu, &saveMenu}); });
+    std::call_once(menu, [] {
+        ModkitMenu::add({"Pociones automáticas", &drawMenu, &saveMenu});
+        // The game's usePotion tells whether a potion was drunk; without it, Space (no answer).
+        if (Sig::resolve(kSigs) != 0)
+        {
+            g_usePotion = 0;
+        }
+        LOG("AutoPotion: drinks through {}", g_usePotion ? "the game's usePotion" : "the Space key");
+    });
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
     const std::unique_lock lock(frameLock, std::try_to_lock);
@@ -122,22 +156,32 @@ void AutoPotion::onFrame()
     if (g_measuring)
     {
         g_bestAfter = std::max(g_bestAfter, health);
+        g_worstAfter = std::min(g_worstAfter, health);
         if (static_cast<int>(now - g_drankAt) < static_cast<int>(kMeasureMs))
         {
             return;
         }
         g_measuring = false;
         const int gained = g_bestAfter - g_healthBefore;
-        // A few points are the hero's own regeneration, not a potion (none left, or Space did nothing).
+        // Hurt while it took effect: blows ate part of the healing, so the gain only says the potion heals at least
+        // that much.
+        const bool hurt = g_worstAfter < g_healthBefore;
         if (gained >= std::max(kMinPotionHeal, maximum * kMinPotionPercent / 100))
         {
-            // At full health the potion heals no further: only a gain short of the maximum is its full amount.
-            if (g_bestAfter < maximum || gained > g_heal)
+            // At full health the potion heals no further: only a gain short of the maximum, taken without blows, is
+            // its full amount; a larger gain always is a better estimate.
+            if (gained > g_heal || (g_bestAfter < maximum && !hurt))
             {
                 g_heal = gained;
             }
-            LOG("AutoPotion: healed {} ({} -> {} of {}), potion heals {}", gained, g_healthBefore, g_bestAfter,
-                maximum, g_heal);
+            LOG("AutoPotion: healed {} ({} -> {} of {}{}), potion heals {}", gained, g_healthBefore, g_bestAfter,
+                maximum, hurt ? ", hurt meanwhile" : "", g_heal);
+        }
+        else if (g_usePotion)
+        {
+            // The game said a potion was drunk: the blows ate its healing.
+            LOG("AutoPotion: the potion was drunk but the gain was {} ({})", gained,
+                hurt ? "hurt meanwhile" : "nothing seen");
         }
         else
         {
@@ -147,8 +191,7 @@ void AutoPotion::onFrame()
         }
     }
 
-    if (static_cast<int>(now - g_noneLeftUntil) < 0 ||
-        (g_drankAt && static_cast<int>(now - g_drankAt) < Config::autoPotion.intervalMs))
+    if (g_drankAt && static_cast<int>(now - g_drankAt) < Config::autoPotion.intervalMs)
     {
         return;
     }
@@ -159,10 +202,37 @@ void AutoPotion::onFrame()
     {
         return;
     }
-    LOG("AutoPotion: drinks at {} of {} ({} missing, potion heals {})", health, maximum, missing, g_heal);
-    drink();
+    // None left lately: no new try for a while, but in an emergency a look every few seconds (the game's usePotion
+    // tells at once whether one was drunk, and a potion picked up meanwhile counts).
+    if (static_cast<int>(now - g_noneLeftUntil) < 0 &&
+        (!emergency || !g_usePotion || static_cast<int>(now - g_lastTry) < static_cast<int>(kEmergencyRetryMs)))
+    {
+        return;
+    }
+    // A combat art's effect is being measured: a potion now would pass for its healing. Not when it is urgent.
+    if (!emergency && static_cast<int>(now - CombatState::measuringUntil.load()) < 0)
+    {
+        return;
+    }
+    g_lastTry = now;
+    if (!drink())
+    {
+        g_noneLeftUntil = now + kNoneLeftMs;
+        if (!CombatState::noPotionsAt.load())
+        {
+            LOG("AutoPotion: no healing potion left (at {} of {}), next look in {} s{}", health, maximum,
+                kNoneLeftMs / 1000, emergency ? ", every few seconds while in danger" : "");
+        }
+        CombatState::noPotionsAt = now;
+        return;
+    }
+    CombatState::noPotionsAt = 0;
+    CombatState::potionAt = now;
+    LOG("AutoPotion: drinks at {} of {} ({} missing, potion heals {}{})", health, maximum, missing, g_heal,
+        emergency ? ", emergency" : "");
     g_drankAt = now;
     g_healthBefore = health;
     g_bestAfter = health;
+    g_worstAfter = health;
     g_measuring = true;
 }
