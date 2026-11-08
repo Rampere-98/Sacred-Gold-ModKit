@@ -894,9 +894,16 @@ namespace
             {
                 cost *= 0.9f;       // at a hireling: help it
             }
-            if (f.maxHealth > 0 && f.health * 10 < f.maxHealth * 3)
+            if (atHero && d < melee)
             {
-                cost *= 0.8f;       // finish off the badly wounded
+                cost *= 0.85f;      // already striking the hero: each one down is fewer blows taken
+            }
+            if (f.maxHealth > 0)
+            {
+                // The less health left, the sooner it is down: from x0.6 at its last breath to x1 unhurt (finishing
+                // the wounded first, as a good player focuses one enemy down instead of spreading the blows).
+                const float left = std::clamp(static_cast<float>(f.health) / static_cast<float>(f.maxHealth), 0.0f, 1.0f);
+                cost *= 0.6f + 0.4f * left;
             }
             if (current)
             {

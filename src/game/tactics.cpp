@@ -706,6 +706,36 @@ namespace
             strong = (typical > 0 && target->maxHealth * 10 >= typical * 18) || seconds > 8.0f;
             easy = (seconds > 0.0f && seconds < 3.0f) || target->health * 10 < target->maxHealth * 2;
         }
+        // The densest group within the art range: an area art goes at its middle enemy, wherever the target is (the
+        // most enemies caught in one cast).
+        uint32_t cluster = 0;
+        int clusterSize = 0;
+        {
+            const float r = s.range * 0.3f;
+            const float reach = c.artRange > 0 ? static_cast<float>(c.artRange) : 1e9f;
+            for (int i = 0; i < s.count; ++i)
+            {
+                const float hx = s.foes[i].x - s.hx, hy = s.foes[i].y - s.hy;
+                if (s.foes[i].health <= 0 || hx * hx + hy * hy > reach * reach)
+                {
+                    continue;
+                }
+                int n = 0;
+                for (int j = 0; j < s.count; ++j)
+                {
+                    const float dx = s.foes[j].x - s.foes[i].x, dy = s.foes[j].y - s.foes[i].y;
+                    if (s.foes[j].health > 0 && dx * dx + dy * dy <= r * r)
+                    {
+                        ++n;
+                    }
+                }
+                if (n > clusterSize)
+                {
+                    clusterSize = n;
+                    cluster = s.foes[i].id;
+                }
+            }
+        }
         // Arts at the target only once it is near: further away the hero first walks there, and the art goes out late
         // or not at all (the plain attack brings the hero close meanwhile).
         bool inReach = false;
@@ -753,11 +783,17 @@ namespace
                 }
                 break;
             case Art::Area:
-                if (aimable && !easy && (around >= 3 || (danger && around >= 2)))
+                if (cluster && (clusterSize >= 3 || (danger && clusterSize >= 2)))
                 {
                     rank = 8;
-                    at_ = target->id;
-                    reason = "several enemies together";
+                    // Cast at the hero himself, it strikes around him: worth it only with the group close.
+                    if (learned(sa.art).self && close < 2)
+                    {
+                        rank = 0;
+                        break;
+                    }
+                    at_ = cluster;
+                    reason = clusterSize > around ? "a denser group elsewhere" : "several enemies together";
                 }
                 break;
             case Art::Single:
