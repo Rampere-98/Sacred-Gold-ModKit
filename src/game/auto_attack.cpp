@@ -793,7 +793,7 @@ namespace
         {
             if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
                 CombatState::action(self) == CombatState::Fighting ||
-                CombatState::action(self) == CombatState::CastingArt)
+                CombatState::casting(self))
             {
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;

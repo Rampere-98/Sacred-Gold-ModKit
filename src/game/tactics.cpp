@@ -59,7 +59,7 @@ namespace
 
     // The players' data (32 of 0x1180 bytes, ENG 005DEBC0 / 005DEC90). For each, the combat art slots (keys 6-0):
     // 20-byte entries at +0xC90, two per slot (the second for the alternate bar, +0x1162 bit 1), a kind word (0 =
-    // empty) and the art at +4; the selected slot of each group at +0xD58 (group 1, +0xD5A, the arts).
+    // empty, 2 a spell, 3 a weapon art; the engine then holds kind 0 or 1) and the art at +4; the selected slot of each group at +0xD58 (group 1, +0xD5A, the arts).
     constexpr size_t kPlayerSize = 0x1180;
     constexpr size_t kArtEntries = 0xC90;
     constexpr size_t kArtEntrySize = 20;
@@ -157,6 +157,7 @@ namespace
     {
         int heal = 0, area = 0, single = 0, none = 0;   // what each cast seemed to do
         DWORD readyAt = 0;                              // not cast again before (recharging)
+        int unselected = 0;                             // slot keys in a row the game did not take (a locked slot)
         DWORD lastCast = 0;
         // The recharge, timed from the end of the last cast taken (0: not seen yet). A cast taken after a gap says the
         // recharge is no longer than that; one refused, that it is longer. Gaps over kMaxRechargeMs say nothing (a
@@ -321,6 +322,66 @@ namespace
     {
         cObjectManager* objects = cObjectManager::instance();
         return objects ? objects->hero() : nullptr;
+    }
+
+    // The arts the hero has learned (seen live and in the save, 2026-11-08): the hero's stats at cCreature +0x3A8
+    // keep a vector (begin +0x102, end +0x106 of the stats) of 22-byte entries: a kind dword (1 a spell, 2 a weapon
+    // art), the id word at +4, the level word at +6 and, at +0x12, the seconds the art still recharges (a float, 0
+    // when ready; the game's check before a cast, ENG 00580DF0). The recharge depends on the hero's build, so it is
+    // read rather than guessed. A slot's kind word maps to it: 3 a weapon art, 2 a spell (ENG 0055FCC0).
+    constexpr size_t kLearnedBegin = 0x3A8 + 0x102;
+    constexpr size_t kLearnedEnd = 0x3A8 + 0x106;
+    constexpr size_t kLearnedSize = 22;
+    constexpr size_t kLearnedLeft = 0x12;
+
+    struct HeroArt
+    {
+        bool found = false;     // the hero has learned it
+        uint16_t level = 0;
+        float left = 0.0f;      // seconds of recharge still to go
+    };
+
+    // The hero's entry for the art in a slot; found false when the list cannot be read or does not have the art.
+    HeroArt heroArt(uint16_t slotKind, uint32_t art)
+    {
+        HeroArt r;
+        const uint32_t kind = slotKind == 3 ? 2 : slotKind == 2 ? 1 : 0;
+        const cCreature* hero = heroCreature();
+        if (!kind || !hero)
+        {
+            return r;
+        }
+        const uintptr_t begin = at<uintptr_t>(hero, kLearnedBegin);
+        const uintptr_t end = at<uintptr_t>(hero, kLearnedEnd);
+        if (!begin || end <= begin || (end - begin) % kLearnedSize || (end - begin) / kLearnedSize > 256)
+        {
+            return r;
+        }
+        for (uintptr_t e = begin; e < end; e += kLearnedSize)
+        {
+            const auto* p = reinterpret_cast<const uint8_t*>(e);
+            if (at<uint32_t>(p, 0) == kind && at<uint16_t>(p, 4) == static_cast<uint16_t>(art))
+            {
+                r.found = true;
+                r.level = at<uint16_t>(p, 6);
+                r.left = at<float>(p, kLearnedLeft);
+                return r;
+            }
+        }
+        return r;
+    }
+
+    // Whether the hero's art list could be read at all (else the recharge is guessed as before).
+    bool heroArtsReadable()
+    {
+        const cCreature* hero = heroCreature();
+        if (!hero)
+        {
+            return false;
+        }
+        const uintptr_t begin = at<uintptr_t>(hero, kLearnedBegin);
+        const uintptr_t end = at<uintptr_t>(hero, kLearnedEnd);
+        return begin && end > begin && (end - begin) % kLearnedSize == 0 && (end - begin) / kLearnedSize <= 256;
     }
 
     DWORD jitter(DWORD lo, DWORD hi)
@@ -574,11 +635,18 @@ namespace
         int pick = -1, pickRank = 0;
         uint32_t pickArt = 0, pickTarget = 0;
         const char* why = "";
-        bool wantedButRecharging = false;
+        bool wantedButRecharging = false, gameRecharging = false;
+        const bool readable = heroArtsReadable();
         for (int slot = 0; slot < kSlots; ++slot)
         {
             const SlotArt sa = slotArt(player, slot);
             if (!sa.kind || !sa.art)
+            {
+                continue;
+            }
+            // An art the hero has not learned is never cast (the game would refuse it).
+            const HeroArt ha = readable ? heroArt(sa.kind, sa.art) : HeroArt{};
+            if (readable && !ha.found)
             {
                 continue;
             }
@@ -641,6 +709,13 @@ namespace
             {
                 continue;
             }
+            // The game's own recharge when it can be read; the waits this side keeps (an art not selected, a target
+            // gone, the guess when the list cannot be read) on top.
+            if (ha.found && ha.left > 0.0f)
+            {
+                wantedButRecharging = gameRecharging = true;
+                continue;
+            }
             if ((learned(sa.art).readyAt && static_cast<int>(s.now - learned(sa.art).readyAt) < 0))
             {
                 wantedButRecharging = true;
@@ -657,7 +732,7 @@ namespace
         }
         // Concentration only for recharges the game showed (a cast refused lately), not for the waits this side keeps.
         g_artsRecharging = wantedButRecharging && pick < 0 && (danger || close >= 3 || strong) &&
-                           CombatState::within(g_refusedAt, s.now, 20000);
+                           (gameRecharging || CombatState::within(g_refusedAt, s.now, 20000));
         if (pick >= 0)
         {
             startArt(pick, pickArt, pickTarget, s, why);
@@ -973,11 +1048,17 @@ void Tactics::onFrame(DWORD now)
             {
                 return;
             }
-            LOG("Tactics: art {:x} not selected in the engine (it holds {:x}), not cast", g_art, engineArt);
-            learned(g_art).readyAt = now + 5000;
+            // A slot the hero has not unlocked yet (more come with the levels) is never taken: tried again ever later.
+            Learned& l = learned(g_art);
+            const int misses = std::min(++l.unselected, 6);
+            const DWORD wait = std::min<DWORD>(5000u << (misses - 1), 120000);
+            l.readyAt = now + wait;
+            LOG("Tactics: art {:x} not selected in the engine (it holds {:x}), not cast; next try in {} s", g_art,
+                engineArt, wait / 1000);
             finishArt(now);
             return;
         }
+        learned(g_art).unselected = 0;
         if (!sendArt(g_castTarget))
         {
             learned(g_art).readyAt = now + 5000;
@@ -993,7 +1074,7 @@ void Tactics::onFrame(DWORD now)
     case Phase::Confirming:
     {
         Learned& l = learned(g_art);
-        if (CombatState::action(heroCreature()) == CombatState::CastingArt)
+        if (CombatState::casting(heroCreature()))
         {
             l.taken(now);
             l.lastCast = now;
@@ -1035,7 +1116,7 @@ void Tactics::onFrame(DWORD now)
     case Phase::Casting:
     {
         // Under way while the hero's action says so; its last blow's damage shows a moment after.
-        const bool going = CombatState::action(heroCreature()) == CombatState::CastingArt;
+        const bool going = CombatState::casting(heroCreature());
         if (going && elapsed < static_cast<int>(kCastMaxMs))
         {
             g_doneAt = 0;
