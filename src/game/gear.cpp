@@ -325,6 +325,9 @@ namespace
         void* inv = inventory();
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         const uint32_t budget = static_cast<uint32_t>(gold * static_cast<uint64_t>(100 - g_settings.keepGoldPercent) / 100);
+        // The cheapest upgrade seen over budget, told once per merchant (what it would buy with more gold).
+        static uint32_t toldFor = 0;
+        uint32_t cheapest = 0, cheapestPrice = 0;
         for (int page = 0; page < kStockPages; ++page)
         {
             uint8_t* stock = entryOf(kFirstStockPage + page);
@@ -340,7 +343,16 @@ namespace
                 }
                 const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
                 uint16_t free = 0;
-                if (price > budget || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                if (price > budget)
+                {
+                    if (!cheapest || price < cheapestPrice)
+                    {
+                        cheapest = id;
+                        cheapestPrice = price;
+                    }
+                    return;
+                }
+                if (!fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
                 {
                     return;
                 }
@@ -360,6 +372,13 @@ namespace
             {
                 return true;
             }
+        }
+        const uint32_t merchant = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade);
+        if (cheapest && toldFor != merchant)
+        {
+            toldFor = merchant;
+            LOG("Gear: the cheapest upgrade here, {:x} (type {:x}), costs {} gold; {} to spend of {}", cheapest,
+                typeOf(cheapest), cheapestPrice, budget, gold);
         }
         return false;
     }
