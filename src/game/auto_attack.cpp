@@ -415,7 +415,10 @@ namespace
         order.mode = cOrder::walk;
         order.x = g_walkX;
         order.y = g_walkY;
-        order.follow = 1;
+        // The path-finding walk to the spot a click gives (follow 0). follow 1 is hold-to-walk: it heads for the
+        // cursor and ends within a tenth of a second unless the left button is held (seen live: walking, then 2,
+        // then standing, not a pixel moved).
+        order.follow = 0;
         engine->sendOrder(self, order);
     }
 
