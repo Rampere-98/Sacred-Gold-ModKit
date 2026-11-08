@@ -27,7 +27,7 @@ tabs, Start is Play. Text fields need the keyboard.
 | UI.Layout | Inventory | 0,4096 | |
 | UI.Layout | Stats, Equipment, Minimap | 4096,0 | |
 | UI.Layout | Portraits, Shops | 0,0 | Party portraits; blacksmith, merchant, combat art master, chest, cube and trade. |
-| AutoPotion | Enabled | 1 | Drinks healing potions by itself (the game's Space key) once the hero misses as much health as a potion heals, learned from the health each potion gave. Only in the running game world, never while the chat line or a dialog is open. |
+| AutoPotion | Enabled | 1 | Drinks healing potions by itself (through the game's usePotion, which tells whether one was left; the Space key if it is not found) once the hero misses as much health as a potion heals, learned from the health each potion gave. With none left it says so in the ModKit menu and only tries again every 3 s in an emergency. While a combat art's effect is being measured, only emergency drinks. Only in the running game world, never while the chat line or a dialog is open. |
 | AutoPotion | FirstPercent | 50 | Before a potion's healing is known: drink once this percent of health is missing. |
 | AutoPotion | EmergencyPercent | 25 | Always drink at or below this percent of health. |
 | AutoPotion | Interval | 1500 | Milliseconds at least between two potions. |
