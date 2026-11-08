@@ -158,6 +158,7 @@ namespace
         int heal = 0, area = 0, single = 0, none = 0;   // what each cast seemed to do
         DWORD readyAt = 0;                              // not cast again before (recharging)
         int unselected = 0;                             // slot keys in a row the game did not take (a locked slot)
+        int tries = 0;                                  // casts taken and measured, whatever they showed
         DWORD lastCast = 0;
         // The recharge, timed from the end of the last cast taken (0: not seen yet). A cast taken after a gap says the
         // recharge is no longer than that; one refused, that it is longer. Gaps over kMaxRechargeMs say nothing (a
@@ -468,6 +469,7 @@ namespace
     {
         Learned& l = learned(g_art);
         const Art before = l.kind();
+        ++l.tries;
         // A healing potion drunk around the cast (it heals over a second): the health regained is the potion's.
         const DWORD potion = CombatState::potionAt.load();
         const bool potionMeanwhile = potion && static_cast<int>(potion - g_castAt) >= -1500 &&
@@ -495,7 +497,8 @@ namespace
                 ++hurtOthers;
             }
         }
-        const bool healed = gain >= std::max(8, g_maxHealth * 6 / 100);
+        const int healThreshold = std::max(8, g_maxHealth * 6 / 100);
+        const bool healed = gain >= healThreshold;
         const char* seen;
         if (healed)
         {
@@ -511,6 +514,11 @@ namespace
         {
             ++l.single;
             seen = "hurt the target";
+        }
+        else if (g_castClose && g_maxHealth - g_healthAtCast < healThreshold)
+        {
+            // Too little health missing for a heal to show: nothing seen says nothing of a buff either.
+            seen = "did nothing seen, at full health";
         }
         else if (g_castClose)
         {
@@ -697,7 +705,7 @@ namespace
                 if (aimable && !easy && (strong || danger || around >= 3 || c.singleAlways))
                 {
                     const Learned& l = learned(sa.art);
-                    rank = l.heal + l.area + l.single + l.none == 0 && !danger ? 7 : 2;
+                    rank = l.tries == 0 && !danger ? 7 : 2;
                     at_ = target->id;
                     reason = "trying it out";
                 }

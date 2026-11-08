@@ -35,6 +35,7 @@ namespace
     int g_healthBefore = 0;         // the health just before it
     int g_bestAfter = 0;            // the highest health since
     int g_worstAfter = 0;           // the lowest health since (blows taken while it took effect)
+    int g_maxBefore = 0;            // the maximum health when it was drunk
     bool g_measuring = false;
     DWORD g_noneLeftUntil = 0;
     DWORD g_lastTry = 0;            // the last drink tried
@@ -166,7 +167,13 @@ void AutoPotion::onFrame()
         // Hurt while it took effect: blows ate part of the healing, so the gain only says the potion heals at least
         // that much.
         const bool hurt = g_worstAfter < g_healthBefore;
-        if (gained >= std::max(kMinPotionHeal, maximum * kMinPotionPercent / 100))
+        if (maximum != g_maxBefore)
+        {
+            // The maximum changed meanwhile (a level up, a game loaded, an item put on): the gain is no potion's.
+            LOG("AutoPotion: the maximum health changed ({} -> {}) while measuring, nothing learned", g_maxBefore,
+                maximum);
+        }
+        else if (gained >= std::max(kMinPotionHeal, maximum * kMinPotionPercent / 100))
         {
             // At full health the potion heals no further: only a gain short of the maximum, taken without blows, is
             // its full amount; a larger gain always is a better estimate.
@@ -235,5 +242,6 @@ void AutoPotion::onFrame()
     g_healthBefore = health;
     g_bestAfter = health;
     g_worstAfter = health;
+    g_maxBefore = maximum;
     g_measuring = true;
 }
