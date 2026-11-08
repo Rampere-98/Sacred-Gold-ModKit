@@ -591,14 +591,14 @@ namespace
             case Art::Heal:
                 if (missing * 100 >= s.maxHealth * 35 || (danger && missing * 100 >= s.maxHealth * 25))
                 {
-                    rank = 5;
+                    rank = 10;
                     reason = "health low";
                 }
                 break;
             case Art::Area:
                 if (aimable && !easy && (around >= 3 || (danger && around >= 2)))
                 {
-                    rank = 4;
+                    rank = 8;
                     at_ = target->id;
                     reason = "several enemies together";
                 }
@@ -606,7 +606,7 @@ namespace
             case Art::Single:
                 if (aimable && !easy && (strong || danger || c.singleAlways))
                 {
-                    rank = 3;
+                    rank = 6;
                     at_ = target->id;
                     reason = strong ? "a strong enemy" : danger ? "hard pressed" : "the main attack";
                 }
@@ -616,7 +616,7 @@ namespace
                     (!learned(sa.art).lastCast ||
                      static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
                 {
-                    rank = 2;
+                    rank = 4;
                     // At the enemy fought when there is one near: a buff still lands on the hero, and an art taken
                     // for a buff by mistake (one that strikes) shows what it does.
                     at_ = aimable ? target->id : 0;
@@ -624,10 +624,12 @@ namespace
                 }
                 break;
             case Art::Auto:
-                // Not known yet: tried where any art would be worth it, to learn what it does.
+                // Not known yet: tried where any art would be worth it, to learn what it does. Never cast yet, before
+                // the main attack (else an art put in a slot later waits for the main one's recharge to be tried).
                 if (aimable && !easy && (strong || danger || around >= 3 || c.singleAlways))
                 {
-                    rank = 1;
+                    const Learned& l = learned(sa.art);
+                    rank = l.heal + l.area + l.single + l.none == 0 && !danger ? 7 : 2;
                     at_ = target->id;
                     reason = "trying it out";
                 }
