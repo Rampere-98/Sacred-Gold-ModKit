@@ -511,7 +511,7 @@ namespace
     void chooseArt(const Tactics::Situation& s)
     {
         const uint8_t* player = playerData();
-        if (!player || static_cast<int>(s.now - g_nextArtAt) < 0)
+        if (!player || (g_nextArtAt && static_cast<int>(s.now - g_nextArtAt) < 0))
         {
             return;
         }
@@ -612,7 +612,8 @@ namespace
                 break;
             case Art::Buff:
                 if ((close >= 3 || strong || danger) && s.threat &&
-                    static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000)
+                    (!learned(sa.art).lastCast ||
+                     static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
                 {
                     rank = 2;
                     // At the enemy fought when there is one near: a buff still lands on the hero, and an art taken
@@ -637,7 +638,7 @@ namespace
             {
                 continue;
             }
-            if (static_cast<int>(s.now - learned(sa.art).readyAt) < 0)
+            if ((learned(sa.art).readyAt && static_cast<int>(s.now - learned(sa.art).readyAt) < 0))
             {
                 wantedButRecharging = true;
                 continue;
@@ -693,7 +694,7 @@ namespace
     void chooseConsumable(const Tactics::Situation& s)
     {
         const Config::Tactics& c = Config::tactics;
-        if (!c.consumables || static_cast<int>(s.now - g_nextPotionAt) < 0)
+        if (!c.consumables || (g_nextPotionAt && static_cast<int>(s.now - g_nextPotionAt) < 0))
         {
             return;
         }

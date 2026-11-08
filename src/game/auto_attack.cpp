@@ -1037,7 +1037,7 @@ namespace
         }
 
         // Then the rest, one at a time: no new order while the hero stoops for one.
-        if (static_cast<int>(now - g_pickupUntil) < 0)
+        if ((g_pickupUntil && static_cast<int>(now - g_pickupUntil) < 0))
         {
             return;
         }
@@ -1166,7 +1166,7 @@ namespace
             g_autoHeroY = hero->y;
             g_autoMovedAt = now;
         }
-        if (static_cast<int>(now - g_autoCollectLookAt) < 0 ||
+        if ((g_autoCollectLookAt && static_cast<int>(now - g_autoCollectLookAt) < 0) ||
             static_cast<int>(now - g_quietUntil) < static_cast<int>(kAutoCollectIdleMs) ||
             static_cast<int>(now - g_autoMovedAt) < static_cast<int>(kAutoCollectStillMs))
         {
@@ -1338,7 +1338,7 @@ void AutoAttack::onFrame()
         }
     }
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
-        static_cast<int>(now - g_quietUntil) < 0)
+        (g_quietUntil && static_cast<int>(now - g_quietUntil) < 0))
     {
         g_target = 0;
         g_pending = 0;
@@ -1349,7 +1349,7 @@ void AutoAttack::onFrame()
 
     // A combat art under way: no order that would cut it short.
     Tactics::onFrame(now);
-    if (Tactics::busy(now) || static_cast<int>(now - g_pickupUntil) < 0)
+    if (Tactics::busy(now) || (g_pickupUntil && static_cast<int>(now - g_pickupUntil) < 0))
     {
         return;
     }
