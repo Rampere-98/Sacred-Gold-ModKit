@@ -965,28 +965,30 @@ namespace
             tryPotion(Concentration, false, s.now, 60000, "Concentration", "the arts wanted are recharging");
             return;
         }
-        if (c.mentor && bigFight && s.threat && potionReady(Mentor, s.now))
-        {
-            tryPotion(Mentor, false, s.now, 120000, "Mentor", "a big fight");
-            return;
-        }
         if (c.healHirelings && potionReady(Healing, s.now) && s.hirelingCount > 0)
         {
-            // Hirelings: the creatures the auto attack saw follow the hero.
+            // Hirelings: the creatures the auto attack saw follow the hero. Before they are badly hurt (they die fast
+            // alone) and before Mentor: a hireling lost costs more than a slower fight.
             cObjectManager* objects = cObjectManager::instance();
             bool hurtHireling = false;
             for (int i = 0; objects && i < s.hirelingCount; ++i)
             {
                 const cCreature* h = objects->creature(s.hirelings[i]);
-                if (h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 45)
+                if (h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 60)
                 {
                     hurtHireling = true;
                 }
             }
             if (hurtHireling)
             {
-                tryPotion(Healing, true, s.now, 8000, "a healing potion to the hirelings", "a hireling is badly hurt");
+                tryPotion(Healing, true, s.now, 8000, "a healing potion to the hirelings", "a hireling is hurt");
+                return;
             }
+        }
+        if (c.mentor && bigFight && s.threat && potionReady(Mentor, s.now))
+        {
+            tryPotion(Mentor, false, s.now, 120000, "Mentor", "a big fight");
+            return;
         }
     }
 

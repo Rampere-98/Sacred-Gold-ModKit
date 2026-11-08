@@ -831,6 +831,24 @@ namespace
         float enemyCost = 0.0f;
         uint32_t enemy = 0;
         bool keepCurrent = false;
+        bool enemyEngaged = false, currentEngaged = false;
+        // What an ordinary enemy's maximum health is here: one well above hits harder (a strong one).
+        int typical = 0;
+        {
+            std::vector<int> maxima;
+            for (int i = 0; i < count; ++i)
+            {
+                if (foes[i].maxHealth > 0)
+                {
+                    maxima.push_back(foes[i].maxHealth);
+                }
+            }
+            if (!maxima.empty())
+            {
+                std::nth_element(maxima.begin(), maxima.begin() + maxima.size() / 2, maxima.end());
+                typical = maxima[maxima.size() / 2];
+            }
+        }
         for (int i = 0; i < count; ++i)
         {
             const AimAssist::Foe& f = foes[i];
@@ -890,35 +908,43 @@ namespace
             {
                 cost *= 0.6f;       // shooting at the hero from afar, nobody in the melee: go for it
             }
-            if (atHireling)
-            {
-                cost *= 0.9f;       // at a hireling: help it
-            }
+            // The threat first: who strikes the hero (the strong ones before the weak), then who strikes the
+            // hireling (it dies fast alone); a weak one standing by waits.
+            const bool strongFoe = typical > 0 && f.maxHealth * 2 >= typical * 3;
             if (atHero && d < melee)
             {
-                cost *= 0.85f;      // already striking the hero: each one down is fewer blows taken
+                cost *= strongFoe ? 0.45f : 0.6f;
             }
-            if (f.maxHealth > 0)
+            if (atHireling)
             {
-                // The less health left, the sooner it is down: from x0.6 at its last breath to x1 unhurt (finishing
-                // the wounded first, as a good player focuses one enemy down instead of spreading the blows).
-                const float left = std::clamp(static_cast<float>(f.health) / static_cast<float>(f.maxHealth), 0.0f, 1.0f);
-                cost *= 0.6f + 0.4f * left;
+                cost *= strongFoe ? 0.6f : 0.75f;
             }
+            if ((atHero || atHireling || current) && f.maxHealth > 0)
+            {
+                // Among those in the fight, the less health left, the sooner it is down (from x0.7 at its last breath
+                // to x1 unhurt): one focused down instead of blows spread. A weak one standing by gets no such pull.
+                const float left = std::clamp(static_cast<float>(f.health) / static_cast<float>(f.maxHealth), 0.0f, 1.0f);
+                cost *= 0.7f + 0.3f * left;
+            }
+            const bool striking = atHero || atHireling;
             if (current)
             {
                 // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least
                 // a moment (no back and forth).
                 cost *= 0.4f;
                 keepCurrent = now - g_targetSince < kKeepTargetMs;
+                currentEngaged = striking;
             }
-            if (!enemy || cost < enemyCost)
+            // One that strikes always before one that does not, whatever the distance.
+            if (!enemy || (striking && !enemyEngaged) || (striking == enemyEngaged && cost < enemyCost))
             {
                 enemy = f.id;
                 enemyCost = cost;
+                enemyEngaged = striking;
             }
         }
-        if (keepCurrent)
+        // Never off one that strikes for one that does not (the jumping from one to another).
+        if (keepCurrent || (currentEngaged && !enemyEngaged && g_target))
         {
             enemy = g_target;
         }
