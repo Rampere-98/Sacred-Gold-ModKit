@@ -14,6 +14,7 @@
 #include <mutex>
 #include <string>
 #include <deque>
+#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -22,18 +23,38 @@ namespace
     // One cell per tile (a map coordinate).
     constexpr double kTileSize = 53.66563;
 
+    // 6 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
     struct Cell
     {
-        uint16_t visits = 0;
-        uint16_t blocked = 0;
+        uint8_t visits = 0;     // saturating
+        uint8_t blocked = 0;    // saturating
         uint8_t r = 0, g = 0, b = 0;
         uint8_t samples = 0;    // ground color samples averaged (0: none yet)
+        bool known() const { return visits || blocked || samples; }
     };
-    std::unordered_map<uint64_t, Cell> g_cells;
+    // Squares in chunks of 32x32 (6 KB), only where something is known: a lookup is one hash and an index, and the
+    // memory is what was explored, not a node per square.
+    constexpr int kChunkShift = 5, kChunkSide = 1 << kChunkShift;
+    struct Chunk
+    {
+        Cell cells[kChunkSide * kChunkSide];
+    };
+    std::unordered_map<uint64_t, std::unique_ptr<Chunk>> g_chunks;
+    int g_known = 0;                                // squares known, all layers
+    std::unordered_map<int, int> g_visitedOn;       // squares stepped on, per layer
     std::mutex g_lock;
     bool g_loaded = false, g_dirty = false;
     uint32_t g_savedAt = 0;
     uint64_t g_lastKey = ~0ull;
+
+    // What the agent found and marks on its map (kept in the map file).
+    struct Landmark
+    {
+        MapMemory::Mark kind;
+        uint8_t layer;
+        int16_t tx, ty;
+    };
+    std::vector<Landmark> g_landmarks;
 
     // The ground sample asked for.
     bool g_want = false;
@@ -52,7 +73,15 @@ namespace
     std::vector<BlipAt> g_blips, g_blipsBuilding;
     bool g_route = false;
     int32_t g_routeX = 0, g_routeY = 0;
-    std::deque<std::pair<int32_t, int32_t>> g_trail;    // where the hero walked lately
+    // Where the hero walked lately: a point every half tile, none older than kTrailMs and at most kTrailPoints.
+    struct TrailPoint
+    {
+        int32_t x, y;
+        DWORD at;
+    };
+    constexpr DWORD kTrailMs = 45000;
+    constexpr size_t kTrailPoints = 60;
+    std::deque<TrailPoint> g_trail;
     bool g_heroKnown = false;
 
     int tileOf(int32_t v)
@@ -69,6 +98,68 @@ namespace
     uint64_t keyAt(int layer, int32_t x, int32_t y)
     {
         return key(layer, tileOf(x), tileOf(y));
+    }
+
+    int layerOfKey(uint64_t k) { return static_cast<int>(k >> 48); }
+    int txOfKey(uint64_t k) { return static_cast<int16_t>((k >> 16) & 0xFFFF); }
+    int tyOfKey(uint64_t k) { return static_cast<int16_t>(k & 0xFFFF); }
+
+    uint64_t chunkKey(int layer, int tx, int ty)
+    {
+        return key(layer, tx >> kChunkShift, ty >> kChunkShift);
+    }
+
+    // The square, or null where nothing is known (no chunk made). Under g_lock.
+    const Cell* find(int layer, int tx, int ty)
+    {
+        const auto it = g_chunks.find(chunkKey(layer, tx, ty));
+        if (it == g_chunks.end())
+        {
+            return nullptr;
+        }
+        const Cell& c = it->second->cells[((ty & (kChunkSide - 1)) << kChunkShift) | (tx & (kChunkSide - 1))];
+        return c.known() ? &c : nullptr;
+    }
+
+    const Cell* find(uint64_t k)
+    {
+        return find(layerOfKey(k), txOfKey(k), tyOfKey(k));
+    }
+
+    // Changes a square (made if new), keeping the counts. Under g_lock.
+    template <typename Fn>
+    void change(uint64_t k, Fn fn)
+    {
+        const int layer = layerOfKey(k), tx = txOfKey(k), ty = tyOfKey(k);
+        std::unique_ptr<Chunk>& chunk = g_chunks[chunkKey(layer, tx, ty)];
+        if (!chunk)
+        {
+            chunk = std::make_unique<Chunk>();
+        }
+        Cell& c = chunk->cells[((ty & (kChunkSide - 1)) << kChunkShift) | (tx & (kChunkSide - 1))];
+        const bool known = c.known(), visited = c.visits > 0;
+        fn(c);
+        g_known += (c.known() ? 1 : 0) - (known ? 1 : 0);
+        g_visitedOn[layer] += (c.visits > 0 ? 1 : 0) - (visited ? 1 : 0);
+        g_dirty = true;
+    }
+
+    // Each known square with its key. Under g_lock.
+    template <typename Fn>
+    void forEach(Fn fn)
+    {
+        for (const auto& [ck, chunk] : g_chunks)
+        {
+            const int layer = layerOfKey(ck), cx = txOfKey(ck), cy = tyOfKey(ck);
+            for (int i = 0; i < kChunkSide * kChunkSide; ++i)
+            {
+                if (chunk->cells[i].known())
+                {
+                    fn(key(layer, cx * kChunkSide + (i & (kChunkSide - 1)), cy * kChunkSide + (i >> kChunkShift)),
+                       chunk->cells[i]);
+                }
+            }
+        }
     }
 
     std::wstring path()
@@ -91,27 +182,38 @@ namespace
         char line[128];
         while (std::fgets(line, sizeof(line), f))
         {
-            int layer, tx, ty, visits, blocked;
+            int layer, tx, ty, visits, blocked, kind;
+            if (std::sscanf(line, "L %d %d %d %d", &kind, &layer, &tx, &ty) == 4)
+            {
+                if (kind >= 0 && kind < static_cast<int>(MapMemory::Mark::Count))
+                {
+                    g_landmarks.push_back({static_cast<MapMemory::Mark>(kind), static_cast<uint8_t>(layer),
+                                           static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
+                }
+                continue;
+            }
             unsigned color = 0, samples = 0;
             const int n = std::sscanf(line, "%d %d %d %d %d %x %u", &layer, &tx, &ty, &visits, &blocked, &color, &samples);
             if (n < 5)
             {
                 continue;
             }
-            Cell c;
-            c.visits = static_cast<uint16_t>(visits);
-            c.blocked = static_cast<uint16_t>(blocked);
-            if (n == 7)
-            {
-                c.r = static_cast<uint8_t>(color >> 16);
-                c.g = static_cast<uint8_t>(color >> 8);
-                c.b = static_cast<uint8_t>(color);
-                c.samples = static_cast<uint8_t>(std::min(samples, 255u));
-            }
-            g_cells[key(layer, tx, ty)] = c;
+            change(key(layer, tx, ty), [&](Cell& c) {
+                c.visits = static_cast<uint8_t>(std::clamp(visits, 0, 255));
+                c.blocked = static_cast<uint8_t>(std::clamp(blocked, 0, 255));
+                if (n == 7)
+                {
+                    c.r = static_cast<uint8_t>(color >> 16);
+                    c.g = static_cast<uint8_t>(color >> 8);
+                    c.b = static_cast<uint8_t>(color);
+                    c.samples = static_cast<uint8_t>(std::min(samples, 255u));
+                }
+            });
         }
         std::fclose(f);
-        LOG("MapMemory: {} map squares known", g_cells.size());
+        g_dirty = false;
+        LOG("MapMemory: {} map squares known in {} chunks ({} KB), {} landmarks", g_known, g_chunks.size(),
+            g_chunks.size() * sizeof(Chunk) / 1024, g_landmarks.size());
     }
 
     void ensureLoaded()
@@ -204,47 +306,88 @@ namespace
     int g_zoom = 4;     // pixels per square
     bool g_hud = true;  // the map on the screen's side, the menu closed too
 
-    // The map around the hero, `size` pixels square, at the cursor of the current ImGui window. Under g_lock.
+    // The map around the hero as a round radar, `size` pixels across, at the cursor of the current ImGui window, turned
+    // as the screen is: the game's view is isometric, a world step (dx, dy) in tiles goes (dx - dy, (dx + dy) / 2)
+    // on the screen (seen live: 41, -5 tiles went 254, 98 pixels right and down), so squares show as the ground's
+    // diamonds. Under g_lock.
     void drawMap(float size)
     {
-        const int half = static_cast<int>(size / g_zoom / 2);
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
-        dl->AddRectFilled(origin, ImVec2(origin.x + size, origin.y + size), IM_COL32(0, 0, 0, 255));
-        for (int dy = -half; dy < half; ++dy)
+        const float radius = size * 0.5f;
+        const ImVec2 mid(origin.x + radius, origin.y + radius);
+        const float s = g_zoom * 0.75f;     // half a diamond's width
+        // Tile coordinates (fractional, from the hero's position) to the radar.
+        const double hx = g_heroX / kTileSize, hy = g_heroY / kTileSize;
+        const auto project = [&](double tx, double ty) {
+            const double dx = tx - hx, dy = ty - hy;
+            return ImVec2(mid.x + static_cast<float>((dx - dy) * s), mid.y + static_cast<float>((dx + dy) * s * 0.5));
+        };
+        const auto at = [&](int32_t x, int32_t y) { return project(x / kTileSize, y / kTileSize); };
+        const auto inside = [&](const ImVec2& p, float margin) {
+            const float ex = p.x - mid.x, ey = p.y - mid.y;
+            return ex * ex + ey * ey <= (radius - margin) * (radius - margin);
+        };
+        dl->AddCircleFilled(mid, radius, IM_COL32(0, 0, 0, 255), 64);
+        // The tiles whose diamond lies inside the circle: |dx|, |dy| up to 1.5 radius / s.
+        const int reach = static_cast<int>(1.5f * radius / s) + 1;
+        uint64_t lastChunk = ~0ull;
+        const Chunk* chunk = nullptr;
+        for (int dy = -reach; dy <= reach; ++dy)
         {
-            for (int dx = -half; dx < half; ++dx)
+            for (int dx = -reach; dx <= reach; ++dx)
             {
-                const auto it = g_cells.find(key(g_heroLayer, g_heroTx + dx, g_heroTy + dy));
-                if (it == g_cells.end())
+                const int tx = g_heroTx + dx, ty = g_heroTy + dy;
+                // One hash per chunk, not per square.
+                const uint64_t ck = chunkKey(g_heroLayer, tx, ty);
+                if (ck != lastChunk)
+                {
+                    lastChunk = ck;
+                    const auto it = g_chunks.find(ck);
+                    chunk = it == g_chunks.end() ? nullptr : it->second.get();
+                }
+                if (!chunk)
                 {
                     continue;   // unexplored: the black
                 }
-                const Cell& c = it->second;
-                const ImVec2 a(origin.x + (dx + half) * g_zoom, origin.y + (dy + half) * g_zoom);
-                const ImVec2 b(a.x + g_zoom, a.y + g_zoom);
-                if (!c.visits)
+                const Cell& c = chunk->cells[((ty & (kChunkSide - 1)) << kChunkShift) | (tx & (kChunkSide - 1))];
+                if (!c.known())
                 {
-                    // Never reached (blocked): clear, a hollow square.
-                    dl->AddRectFilled(a, b, IM_COL32(0, 0, 0, 0));
-                    dl->AddRect(a, b, IM_COL32(120, 120, 140, 160));
                     continue;
                 }
-                dl->AddRectFilled(a, b, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
+                const ImVec2 centre = project(tx + 0.5, ty + 0.5);
+                if (!inside(centre, s))
+                {
+                    continue;
+                }
+                const ImVec2 n = project(tx, ty), e = project(tx + 1, ty), so = project(tx + 1, ty + 1),
+                             w = project(tx, ty + 1);
+                if (!c.visits)
+                {
+                    // Never reached (blocked): clear, a hollow diamond.
+                    dl->AddQuad(n, e, so, w, IM_COL32(120, 120, 140, 160));
+                    continue;
+                }
+                dl->AddQuadFilled(n, e, so, w, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
             }
         }
-        // World positions to the map: squares from the hero's, clipped to the map.
-        const ImVec2 mid(origin.x + half * g_zoom + g_zoom * 0.5f, origin.y + half * g_zoom + g_zoom * 0.5f);
-        const auto at = [&](int32_t x, int32_t y) {
-            return ImVec2(mid.x + static_cast<float>((x - g_heroX) / kTileSize) * g_zoom,
-                          mid.y + static_cast<float>((y - g_heroY) / kTileSize) * g_zoom);
-        };
+        dl->AddCircle(mid, radius, IM_COL32(200, 200, 200, 200), 64, 2.0f);
+        const int half = reach;
         dl->PushClipRect(origin, ImVec2(origin.x + size, origin.y + size), true);
-        // The trail: where it walked lately.
+        // The trail: where it walked lately, fading with age; points past kTrailMs are gone.
+        const DWORD now = GetTickCount();
+        while (!g_trail.empty() && now - g_trail.front().at > kTrailMs)
+        {
+            g_trail.pop_front();
+        }
         for (size_t i = 1; i < g_trail.size(); ++i)
         {
-            dl->AddLine(at(g_trail[i - 1].first, g_trail[i - 1].second), at(g_trail[i].first, g_trail[i].second),
-                        IM_COL32(255, 255, 255, 110), 1.0f);
+            const float fresh = 1.0f - static_cast<float>(now - g_trail[i].at) / kTrailMs;
+            const ImVec2 a = at(g_trail[i - 1].x, g_trail[i - 1].y), b = at(g_trail[i].x, g_trail[i].y);
+            if (inside(a, 1.0f) && inside(b, 1.0f))
+            {
+                dl->AddLine(a, b, IM_COL32(255, 255, 255, static_cast<int>(30 + 110 * std::max(0.0f, fresh))), 1.0f);
+            }
         }
         // The route: where it is heading now.
         if (g_route)
@@ -254,9 +397,48 @@ namespace
             dl->AddCircle(to, std::max(3.0f, g_zoom * 0.9f), IM_COL32(255, 220, 40, 230), 0, 1.5f);
         }
         const float dot = std::max(2.5f, g_zoom * 0.75f);
+        // What it found: merchant a gold diamond, way in or out a cyan triangle, portal a violet ring.
+        const float mark = std::max(4.0f, g_zoom * 1.4f);
+        for (const Landmark& l : g_landmarks)
+        {
+            if (l.layer != (g_heroLayer & 0xFF) || std::abs(l.tx - g_heroTx) > half + 2 || std::abs(l.ty - g_heroTy) > half + 2)
+            {
+                continue;
+            }
+            const ImVec2 p = project(l.tx + 0.5, l.ty + 0.5);
+            if (!inside(p, mark))
+            {
+                continue;
+            }
+            switch (l.kind)
+            {
+            case MapMemory::Mark::Merchant:
+                dl->AddQuadFilled(ImVec2(p.x, p.y - mark), ImVec2(p.x + mark, p.y), ImVec2(p.x, p.y + mark),
+                                  ImVec2(p.x - mark, p.y), IM_COL32(255, 200, 40, 255));
+                dl->AddQuad(ImVec2(p.x, p.y - mark), ImVec2(p.x + mark, p.y), ImVec2(p.x, p.y + mark),
+                            ImVec2(p.x - mark, p.y), IM_COL32(0, 0, 0, 255), 1.5f);
+                break;
+            case MapMemory::Mark::Entrance:
+                dl->AddTriangleFilled(ImVec2(p.x - mark, p.y - mark * 0.8f), ImVec2(p.x + mark, p.y - mark * 0.8f),
+                                      ImVec2(p.x, p.y + mark), IM_COL32(40, 230, 230, 255));
+                dl->AddTriangle(ImVec2(p.x - mark, p.y - mark * 0.8f), ImVec2(p.x + mark, p.y - mark * 0.8f),
+                                ImVec2(p.x, p.y + mark), IM_COL32(0, 0, 0, 255), 1.5f);
+                break;
+            case MapMemory::Mark::Portal:
+                dl->AddCircle(p, mark, IM_COL32(200, 90, 255, 255), 0, 2.5f);
+                dl->AddCircleFilled(p, mark * 0.35f, IM_COL32(200, 90, 255, 255));
+                break;
+            default:
+                break;
+            }
+        }
         for (const BlipAt& b : g_blips)
         {
             const ImVec2 p = at(b.x, b.y);
+            if (!inside(p, dot))
+            {
+                continue;
+            }
             switch (b.kind)
             {
             case MapMemory::Blip::Enemy:
@@ -280,12 +462,24 @@ namespace
 
     int seenOnLayer()
     {
-        int seen = 0;
-        for (const auto& [k, c] : g_cells)
+        const auto it = g_visitedOn.find(g_heroLayer & 0xFF);
+        return it == g_visitedOn.end() ? 0 : it->second;
+    }
+
+    // A landmark, unless one of its kind is already within a few squares. Under g_lock.
+    void addLandmark(MapMemory::Mark kind, int layer, int tx, int ty)
+    {
+        for (const Landmark& l : g_landmarks)
         {
-            seen += static_cast<int>(k >> 48) == g_heroLayer && c.visits ? 1 : 0;
+            if (l.kind == kind && l.layer == (layer & 0xFF) && std::abs(l.tx - tx) <= 4 && std::abs(l.ty - ty) <= 4)
+            {
+                return;
+            }
         }
-        return seen;
+        g_landmarks.push_back({kind, static_cast<uint8_t>(layer), static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
+        g_dirty = true;
+        static const char* const names[] = {"merchant", "way in or out", "portal"};
+        LOG("MapMemory: {} found at {},{} on layer {}", names[static_cast<int>(kind)], tx, ty, layer);
     }
 
     void drawMenu()
@@ -301,8 +495,11 @@ namespace
             ImGui::TextDisabled("Sin héroe en el mundo.");
             return;
         }
-        ImGui::Text("Capa %d: %d casillas pisadas (%d en total). Casilla del héroe: %d, %d.", g_heroLayer, seenOnLayer(),
-                    static_cast<int>(g_cells.size()), g_heroTx, g_heroTy);
+        ImGui::Text("Capa %d: %d casillas pisadas (%d en total, %u KB). Casilla del héroe: %d, %d.", g_heroLayer,
+                    seenOnLayer(), g_known, static_cast<unsigned>(g_chunks.size() * sizeof(Chunk) / 1024), g_heroTx,
+                    g_heroTy);
+        ImGui::TextDisabled("Hallazgos: %d. Rombo dorado: mercader. Triángulo cian: entrada o salida. Anillo violeta: "
+                            "portal.", static_cast<int>(g_landmarks.size()));
         drawMap(300.0f);
     }
 
@@ -322,7 +519,7 @@ namespace
         const float size = std::round(io.DisplaySize.y * 0.22f);
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y - 8.0f), ImGuiCond_Always,
                                 ImVec2(1.0f, 1.0f));
-        ImGui::SetNextWindowBgAlpha(0.55f);
+        ImGui::SetNextWindowBgAlpha(0.0f);     // only the round radar and its title show
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
                                        ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
@@ -353,12 +550,42 @@ void MapMemory::install()
         g_zoom = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"Zoom", 4, ini.c_str())), 2, 10);
         ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu});
         Overlay::setHud(&drawHud);
+        // The whole map in memory from the start: the agent always has it at hand.
+        const std::lock_guard lock(g_lock);
+        ensureLoaded();
     });
+}
+
+void MapMemory::forgetHero()
+{
+    const std::lock_guard lock(g_lock);
+    g_heroKnown = false;
+    g_trail.clear();
+    g_lastKey = ~0ull;
+}
+
+void MapMemory::mark(Mark kind, int layer, int32_t x, int32_t y)
+{
+    install();
+    const std::lock_guard lock(g_lock);
+    addLandmark(kind, layer, tileOf(x), tileOf(y));
 }
 
 void MapMemory::setHero(int layer, int32_t x, int32_t y)
 {
     const std::lock_guard lock(g_lock);
+    // A way into another layer (a door, stairs, a cave) or a jump on the same one (a portal): both ends marked.
+    if (g_heroKnown)
+    {
+        const double jx = static_cast<double>(x) - g_heroX, jy = static_cast<double>(y) - g_heroY;
+        const bool otherLayer = layer != g_heroLayer;
+        if (otherLayer || jx * jx + jy * jy > (30 * kTileSize) * (30 * kTileSize))
+        {
+            const MapMemory::Mark kind = otherLayer ? MapMemory::Mark::Entrance : MapMemory::Mark::Portal;
+            addLandmark(kind, g_heroLayer, g_heroTx, g_heroTy);
+            addLandmark(kind, layer, tileOf(x), tileOf(y));
+        }
+    }
     g_heroLayer = layer;
     g_heroTx = tileOf(x);
     g_heroTy = tileOf(y);
@@ -368,7 +595,7 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
     // The trail, a point every half tile or so; a jump (teleport, another layer) starts it anew.
     if (!g_trail.empty())
     {
-        const double dx = x - g_trail.back().first, dy = y - g_trail.back().second;
+        const double dx = x - g_trail.back().x, dy = y - g_trail.back().y;
         if (dx * dx + dy * dy > (30 * kTileSize) * (30 * kTileSize))
         {
             g_trail.clear();
@@ -378,8 +605,8 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
             return;
         }
     }
-    g_trail.emplace_back(x, y);
-    if (g_trail.size() > 120)
+    g_trail.push_back({x, y, GetTickCount()});
+    if (g_trail.size() > kTrailPoints)
     {
         g_trail.pop_front();
     }
@@ -397,20 +624,18 @@ void MapMemory::visit(int layer, int32_t x, int32_t y)
         return;     // one visit per entering a square, not per look
     }
     g_lastKey = k;
-    Cell& c = g_cells[k];
-    c.visits = static_cast<uint16_t>(std::min(c.visits + 1, 60000));
-    // Reached: whatever blocked it before was the way, not the place.
-    c.blocked = c.blocked > 0 ? static_cast<uint16_t>(c.blocked - 1) : 0;
-    g_dirty = true;
+    change(k, [](Cell& c) {
+        c.visits = static_cast<uint8_t>(std::min(c.visits + 1, 255));
+        // Reached: whatever blocked it before was the way, not the place.
+        c.blocked = c.blocked > 0 ? static_cast<uint8_t>(c.blocked - 1) : 0;
+    });
 }
 
 void MapMemory::blocked(int layer, int32_t x, int32_t y)
 {
     const std::lock_guard lock(g_lock);
     ensureLoaded();
-    Cell& c = g_cells[keyAt(layer, x, y)];
-    c.blocked = static_cast<uint16_t>(std::min(c.blocked + 1, 1000));
-    g_dirty = true;
+    change(keyAt(layer, x, y), [](Cell& c) { c.blocked = static_cast<uint8_t>(std::min(c.blocked + 1, 255)); });
 }
 
 float MapMemory::cost(int layer, int32_t x, int32_t y)
@@ -424,11 +649,10 @@ float MapMemory::cost(int layer, int32_t x, int32_t y)
     {
         for (int dx = -1; dx <= 1; ++dx)
         {
-            const auto it = g_cells.find(key(layer, tx + dx, ty + dy));
-            if (it != g_cells.end())
+            if (const Cell* c = find(layer, tx + dx, ty + dy))
             {
-                visits += it->second.visits;
-                blocked += it->second.blocked;
+                visits += c->visits;
+                blocked += c->blocked;
             }
         }
     }
@@ -438,26 +662,22 @@ float MapMemory::cost(int layer, int32_t x, int32_t y)
 int MapMemory::cells()
 {
     const std::lock_guard lock(g_lock);
-    return static_cast<int>(g_cells.size());
+    return g_known;
 }
 
 int MapMemory::cellsOn(int layer)
 {
     const std::lock_guard lock(g_lock);
-    int n = 0;
-    for (const auto& [k, c] : g_cells)
-    {
-        n += static_cast<int>(k >> 48) == (layer & 0xFF) && c.visits > 0 ? 1 : 0;
-    }
-    return n;
+    const auto it = g_visitedOn.find(layer & 0xFF);
+    return it == g_visitedOn.end() ? 0 : it->second;
 }
 
 void MapMemory::wantGround(int layer, int32_t x, int32_t y, float sx, float sy)
 {
     const std::lock_guard lock(g_lock);
     const uint64_t k = keyAt(layer, x, y);
-    const auto it = g_cells.find(k);
-    if (it != g_cells.end() && it->second.samples >= 3)
+    const Cell* c = find(k);
+    if (c && c->samples >= 3)
     {
         return;
     }
@@ -490,13 +710,13 @@ void MapMemory::afterWorld()
         return;
     }
     const std::lock_guard lock(g_lock);
-    Cell& c = g_cells[k];
-    const int n = c.samples;
-    c.r = static_cast<uint8_t>((c.r * n + r) / (n + 1));
-    c.g = static_cast<uint8_t>((c.g * n + g) / (n + 1));
-    c.b = static_cast<uint8_t>((c.b * n + b) / (n + 1));
-    c.samples = static_cast<uint8_t>(std::min(n + 1, 255));
-    g_dirty = true;
+    change(k, [&](Cell& c) {
+        const int n = c.samples;
+        c.r = static_cast<uint8_t>((c.r * n + r) / (n + 1));
+        c.g = static_cast<uint8_t>((c.g * n + g) / (n + 1));
+        c.b = static_cast<uint8_t>((c.b * n + b) / (n + 1));
+        c.samples = static_cast<uint8_t>(std::min(n + 1, 255));
+    });
 }
 
 void MapMemory::save(uint32_t now, uint32_t minMs)
@@ -512,10 +732,13 @@ void MapMemory::save(uint32_t now, uint32_t minMs)
     {
         return;
     }
-    for (const auto& [k, c] : g_cells)
+    forEach([f](uint64_t k, const Cell& c) {
+        std::fprintf(f, "%d %d %d %u %u %06x %u\n", layerOfKey(k), txOfKey(k), tyOfKey(k), c.visits, c.blocked,
+                     (c.r << 16) | (c.g << 8) | c.b, c.samples);
+    });
+    for (const Landmark& l : g_landmarks)
     {
-        std::fprintf(f, "%d %d %d %u %u %06x %u\n", static_cast<int>(k >> 48), static_cast<int16_t>((k >> 16) & 0xFFFF),
-                     static_cast<int16_t>(k & 0xFFFF), c.visits, c.blocked, (c.r << 16) | (c.g << 8) | c.b, c.samples);
+        std::fprintf(f, "L %d %d %d %d\n", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
     }
     std::fclose(f);
     MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);

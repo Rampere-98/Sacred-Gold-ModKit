@@ -1453,6 +1453,7 @@ namespace
     void resetGame(const char* why)
     {
         LOG("AutoAttack: {}, per-game state cleared", why);
+        MapMemory::forgetHero();
         endCollect(why);
         g_lootDone.clear();
         g_lootFailures.clear();

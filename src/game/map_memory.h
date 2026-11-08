@@ -34,6 +34,13 @@ namespace MapMemory
     void endRadar();
     void setRoute(bool route, int32_t x = 0, int32_t y = 0);
 
+    // What the agent found, kept on its map with a symbol: a merchant (a shop opened there), a way into another layer
+    // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends).
+    enum class Mark : uint8_t { Merchant, Entrance, Portal, Count };
+    void mark(Mark kind, int layer, int32_t x, int32_t y);
+    // A game loaded: the hero's next position is no jump.
+    void forgetHero();
+
     // Writes the file if something changed (at most every `minMs`).
     void save(uint32_t now, uint32_t minMs);
 }

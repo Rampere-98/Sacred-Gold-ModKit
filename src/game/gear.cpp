@@ -1,4 +1,5 @@
 #include "game/gear.h"
+#include "game/map_memory.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
 #include "log.h"
@@ -465,6 +466,19 @@ void Gear::onFrame(DWORD now, bool calm)
 {
     static std::once_flag once;
     std::call_once(once, install);
+    // A shop opened: the merchant goes on the agent's map, where the hero stands (beside him).
+    static uint32_t lastMerchant = 0;
+    if (void* inv = g_ready ? inventory() : nullptr)
+    {
+        const uint32_t merchant = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade);
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (merchant && merchant != lastMerchant && hero)
+        {
+            MapMemory::mark(MapMemory::Mark::Merchant, *(reinterpret_cast<const uint8_t*>(hero) + 0x24), hero->x, hero->y);
+        }
+        lastMerchant = merchant;
+    }
     static DWORD nextAt = 0;
     if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy) ||
         (nextAt && static_cast<int>(now - nextAt) < 0) || g_working)
