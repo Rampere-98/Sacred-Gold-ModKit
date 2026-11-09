@@ -246,7 +246,7 @@ namespace
     std::unordered_set<uint32_t> g_lootDone;
 
     // The hero gets no nearer to the loot for this long: it cannot reach it (behind a fence, in a house).
-    constexpr DWORD kLootStuckMs = 3500;
+    constexpr DWORD kLootStuckMs = 6000;
     // How long it may stand at the loot before we leave it.
     constexpr DWORD kLootAtMs = 3000;
     // A loot order is given once (giving it again restarts the pick up, so gold farther than a second away was
@@ -301,11 +301,11 @@ namespace
         return objects && CombatState::casting(objects->hero());
     }
 
-    // On the way to a quest the collect takes only what lies by the way: a wide screen shows loot 30 tiles back,
-    // and going for it, then for the quest again, the hero went back and forth (seen live, 2026-11-09). Never
-    // further than kLootMaxTiles (a fixed thing's place read wrong put one 3000 tiles off).
+    // All the loot seen is taken before the hero goes on, on a trip too (the player's wish, 2026-11-09: none left
+    // behind but when it does not fit). Never further than kLootMaxTiles (a fixed thing's place read wrong put one
+    // 3000 tiles off). g_questTravel: the hero is on a trip.
     bool g_questTravel = false;
-    constexpr double kLootMaxTiles = 60.0, kLootOnTheWayTiles = 30.0;
+    constexpr double kLootMaxTiles = 60.0;
 
     bool lootNear(int32_t x, int32_t y)
     {
@@ -317,7 +317,7 @@ namespace
         }
         const double tiles = std::max(std::abs(static_cast<double>(x - hero->x)), std::abs(static_cast<double>(y - hero->y))) /
                              kFixedTile;
-        return tiles <= (g_questTravel ? kLootOnTheWayTiles : kLootMaxTiles);
+        return tiles <= kLootMaxTiles;     // all of it before going on, on a trip too (the player's wish)
     }
 
     bool acceptLoot(uint32_t id, void*)
@@ -1545,6 +1545,83 @@ namespace
         return side == 1 || side == 3 || side == 4 || side == 7;
     }
 
+    // A long walk (to a quest, a farming zone, a merchant) watched for progress: ClickWalk can stay on its route with
+    // the hero shaking on one spot (seen live 2026-11-09, 194 tiles to a quest). No 2 tiles nearer in 20 s: the route
+    // dropped and a step aside (8 tiles, a random way) before trying again; the third time the goal is left 3 min.
+    struct Travel
+    {
+        int32_t x = 0, y = 0;
+        double best = 0.0;
+        DWORD bestAt = 0, lastAt = 0, detourUntil = 0;
+        int fails = 0;
+    };
+    Travel g_travel;
+    std::unordered_map<uint64_t, DWORD> g_travelBlocked;
+
+    bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
+    {
+        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(x / kTileSize)) << 32) |
+                             static_cast<uint32_t>(y / kTileSize);
+        if (const auto it = g_travelBlocked.find(key); it != g_travelBlocked.end())
+        {
+            if (static_cast<int>(now - it->second) < 0)
+            {
+                return false;
+            }
+            g_travelBlocked.erase(it);
+        }
+        const double d = std::hypot(static_cast<double>(x - self->x), static_cast<double>(y - self->y));
+        Travel& t = g_travel;
+        // A new goal, or back from a fight or a collect (the time away is no lack of progress).
+        if (std::abs(x - t.x) > 3 * kTileSize || std::abs(y - t.y) > 3 * kTileSize)
+        {
+            t = Travel{x, y, d, now, now, 0, 0};
+        }
+        if (now - t.lastAt > 2000)
+        {
+            t.bestAt = now;
+        }
+        t.lastAt = now;
+        if (d < t.best - 2.0 * kTileSize)
+        {
+            t.best = d;
+            t.bestAt = now;
+            t.fails = 0;
+        }
+        if (t.detourUntil && static_cast<int>(now - t.detourUntil) < 0)
+        {
+            return true;
+        }
+        t.detourUntil = 0;
+        if (now - t.bestAt > 20000)
+        {
+            ClickWalk::cancel();
+            if (++t.fails >= 3)
+            {
+                LOG("AutoAttack: no way found to tile {},{} ({:.0f} tiles): left 3 min", static_cast<int>(x / kTileSize),
+                    static_cast<int>(y / kTileSize), d / kTileSize);
+                g_travelBlocked[key] = now + 180000;
+                t = Travel{};
+                return false;
+            }
+            const double angle = (std::rand() % 360) * 3.14159265358979 / 180.0;
+            const int32_t sx = self->x + static_cast<int32_t>(std::cos(angle) * 8.0 * kTileSize);
+            const int32_t sy = self->y + static_cast<int32_t>(std::sin(angle) * 8.0 * kTileSize);
+            LOG("AutoAttack: no nearer to tile {},{} in 20 s (try {}): a step aside first", static_cast<int>(x / kTileSize),
+                static_cast<int>(y / kTileSize), t.fails);
+            ClickWalk::walkTo(sx, sy, false);
+            t.detourUntil = now + 6000;
+            t.bestAt = now;
+            return true;
+        }
+        if (!ClickWalk::routing() && now - askAt > 4000)
+        {
+            askAt = now;
+            ClickWalk::walkTo(x, y, false);
+        }
+        return true;
+    }
+
     void roam(DWORD now)
     {
         if ((!Config::autoAttack.roam && !Config::autoAttack.quests) || g_retreatUntil)
@@ -1613,7 +1690,7 @@ namespace
             }
             if (best)
             {
-                g_questTravel = true;   // loot only on the way
+                g_questTravel = true;
                 if (best->id != g_shopId)
                 {
                     LOG("AutoAttack: backpack full, off to merchant {:x} ({:.0f} tiles)", best->id, bestDistance / kTileSize);
@@ -1623,10 +1700,10 @@ namespace
                 }
                 if (bestDistance > 3.0 * kTileSize)
                 {
-                    if (!ClickWalk::routing() && now - g_shopAskAt > 4000)
+                    if (!travel(now, self, best->x, best->y, g_shopAskAt))
                     {
-                        g_shopAskAt = now;
-                        ClickWalk::walkTo(best->x, best->y, false);
+                        g_shopFailedAt[best->id] = now;
+                        g_shopId = 0;
                     }
                 }
                 else if (!g_shopClickAt || now - g_shopClickAt > 3000)
@@ -1667,23 +1744,25 @@ namespace
             if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
             {
                 g_questTravel = true;
-                if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                if (qx != g_questX || qy != g_questY)
                 {
-                    if (qx != g_questX || qy != g_questY)
-                    {
-                        LOG("AutoAttack: off to the quest at tile {},{} ({:.0f} tiles)", static_cast<int>(qx / kTileSize),
-                            static_cast<int>(qy / kTileSize),
-                            std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) / kTileSize);
-                        g_questX = qx;
-                        g_questY = qy;
-                    }
-                    g_questAskAt = now;
-                    ClickWalk::walkTo(qx, qy, false);
+                    LOG("AutoAttack: off to the quest at tile {},{} ({:.0f} tiles)", static_cast<int>(qx / kTileSize),
+                        static_cast<int>(qy / kTileSize),
+                        std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) / kTileSize);
+                    g_questX = qx;
+                    g_questY = qy;
                 }
-                MapMemory::setRoute(true, qx, qy);
-                g_roamAt = 0;
-                return;
+                if (travel(now, self, qx, qy, g_questAskAt))
+                {
+                    MapMemory::setRoute(true, qx, qy);
+                    g_roamAt = 0;
+                    return;
+                }
+                g_questTravel = false;     // no way there for now: the rest of the agent's play meanwhile
+                questHere = false;
             }
+            else
+            {
             g_homeX = qx;
             g_homeY = qy;
             // There: the quest's creature, if one, is spoken to.
@@ -1733,6 +1812,7 @@ namespace
                 g_roamAt = 0;
                 return;
             }
+            }
         }
         // A chest not yet opened within 150 tiles: there (the collect opens it once it is near). Given up after 90 s
         // on the way to one (behind a wall, across water).
@@ -1772,14 +1852,12 @@ namespace
             if (away > 20.0 * kTileSize)
             {
                 // The way to farm is farming too: all the loot around is taken (no quest waits).
-                if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                if (travel(now, self, g_farmX, g_farmY, g_questAskAt))
                 {
-                    g_questAskAt = now;
-                    ClickWalk::walkTo(g_farmX, g_farmY, false);
+                    MapMemory::setRoute(true, g_farmX, g_farmY);
+                    g_roamAt = 0;
+                    return;
                 }
-                MapMemory::setRoute(true, g_farmX, g_farmY);
-                g_roamAt = 0;
-                return;
             }
             g_homeX = g_farmX;
             g_homeY = g_farmY;
@@ -1919,7 +1997,7 @@ namespace
     // wells) taken one by one, each with the order a click on it gives. Never the game's collect (the A key and the
     // taskbar button stay the player's, as in the plain game). The auto attack waits meanwhile; a click of the
     // player's or a hit taken ends it.
-    constexpr DWORD kCollectMaxMs = 30000;
+    constexpr DWORD kCollectMaxMs = 90000;
     bool g_collecting = false;
     DWORD g_collectStart = 0;
     int g_collectHealth = 0;
