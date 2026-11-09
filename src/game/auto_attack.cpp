@@ -222,9 +222,12 @@ namespace
         int count = 0;
     };
     std::unordered_map<uint32_t, LootFailure> g_lootFailures;
-    // Not reached (behind a fence, across a river): tried again a minute later, once.
-    constexpr int kLootTries = 2;
+    // Not reached (behind a fence, across a river): tried again a minute later (then two), up to kLootTries in all.
+    // Still there with the hero at it (a pick up cut short by a blow, a nudge lost): again after kLootSoonMs. Seen
+    // live (2026-11-09): a weapon left for good after one such try, the backpack with room.
+    constexpr int kLootTries = 4;
     constexpr DWORD kLootRetryMs = 60000;
+    constexpr DWORD kLootSoonMs = 4000;
 
     bool lootBlocked(uint32_t id, DWORD now)
     {
@@ -234,7 +237,7 @@ namespace
                (it->second.count >= kLootTries || static_cast<int>(now - it->second.retryAt) < 0);
     }
 
-    void lootFailed(uint32_t id, DWORD now)
+    void lootFailed(uint32_t id, DWORD now, bool soon = false)
     {
         id = lootKey(id);
         if (g_lootFailures.size() > 1024)
@@ -243,7 +246,7 @@ namespace
         }
         LootFailure& f = g_lootFailures[id];
         ++f.count;
-        f.retryAt = now + kLootRetryMs * f.count;
+        f.retryAt = now + (soon ? kLootSoonMs : kLootRetryMs * f.count);
     }
     // Loot the hero stood at and that stayed: an opened container, an item that did not fit. Never gone for again.
     std::unordered_set<uint32_t> g_lootDone;
@@ -270,6 +273,7 @@ namespace
     bool g_lootInstead = false;
     bool g_collectOne = false;
     DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
+    bool g_lootStill = false;       // lootDone gave up on it with the hero at it and the thing still there
     float g_lootBest = 0.0f;        // the nearest the hero got to it, world units
     DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
@@ -492,7 +496,8 @@ namespace
         }
         if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
         {
-            LOG("AutoAttack: loot {:x} still there with the hero at it, left", id);
+            LOG("AutoAttack: loot {:x} still there with the hero at it, again in {} s", id, kLootSoonMs / 1000);
+            g_lootStill = true;
             return true;
         }
         return false;
@@ -807,6 +812,7 @@ namespace
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
     std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
+    uint32_t g_lastShooter = 0;                             // the last one taken for the shooter (logged once)
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
     constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
     constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
@@ -1130,6 +1136,38 @@ namespace
                 enemyEngaged = striking;
             }
         }
+        // Hurt with nobody in the melee and no enemy seen striking (an archer's or caster's aim is not always read):
+        // the nearest enemy within the look's reach is taken for the shooter and gone for. Seen live (2026-11-09):
+        // the hero stood taking arrows until it died.
+        if (hurt && !inMelee && !enemyEngaged)
+        {
+            float best = 0.0f;
+            uint32_t shooter = 0;
+            for (int i = 0; i < count; ++i)
+            {
+                const auto d = distances.find(foes[i].id);
+                if (d == distances.end() || (g_unreachable.count(foes[i].id) && d->second > melee))
+                {
+                    continue;
+                }
+                if (!shooter || d->second < best)
+                {
+                    shooter = foes[i].id;
+                    best = d->second;
+                }
+            }
+            if (shooter)
+            {
+                if (shooter != g_target && shooter != g_lastShooter)
+                {
+                    LOG("AutoAttack: hurt with nobody close: {:x} at {:.0f} px taken for the shooter", shooter, best);
+                }
+                g_lastShooter = shooter;
+                enemy = shooter;
+                enemyEngaged = true;
+                threat = true;
+            }
+        }
         // Never off one that strikes for one that does not (the jumping from one to another).
         if (keepCurrent || (currentEngaged && !enemyEngaged && g_target))
         {
@@ -1153,7 +1191,7 @@ namespace
                 // No danger of dying (60 % of health or more): loot first, the fights wait (the user: more
                 // efficient). In danger, only loot nearer than the enemy.
                 const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
-                const bool safe = maximum > 0 && health * 10 >= maximum * 6;
+                const bool safe = maximum > 0 && health * 10 >= maximum * 6 && !hurt;
                 if (safe || lootDistance < it->second)
                 {
                     LOG("AutoAttack: loot {:x} first ({:.0f} px; enemy {:x} at {:.0f} px; {})", loot.id, lootDistance,
@@ -2720,7 +2758,7 @@ namespace
                 // restarts it, cut short again and again; at the loot after a walk there (far loot) the hero stands
                 // with no pick up order yet, so it gets one.
                 const int sinceSent = static_cast<int>(now - g_sentAt);
-                const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
+                const bool stalled = g_lootAtSince || static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
                 cObjectManager* objects = cObjectManager::instance();
                 const bool idle = objects && CombatState::action(objects->hero()) == CombatState::Standing;
                 if (idle && stalled && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
@@ -2729,7 +2767,9 @@ namespace
                 }
                 return;
             }
-            if (g_lootAtSince)
+            // Done for good only when the hero stood at it and it is no item still lying there (an opened container,
+            // a used well); an item at its feet is tried again soon, one not reached a minute later.
+            if (g_lootAtSince && !g_lootStill)
             {
                 if (g_lootDone.size() > 4096)
                 {
@@ -2739,8 +2779,9 @@ namespace
             }
             else
             {
-                lootFailed(g_target, now);
+                lootFailed(g_target, now, g_lootStill);
             }
+            g_lootStill = false;
             g_target = 0;
             if (g_collectOne)
             {
@@ -2761,6 +2802,7 @@ namespace
             g_looting = true;
             g_sentAt = now;
             g_lootAtSince = 0;
+            g_lootStill = false;
             g_lootBestAt = now;
             g_lootBest = 1e9f;
         }
