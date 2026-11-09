@@ -937,8 +937,17 @@ void MapMemory::install()
         }
         ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu});
         Overlay::setHud(&drawHud);
-        // The whole map in memory from the start, read on a thread of its own: a large file held the presenting
-        // thread for over a second when a game began (seen with the hitch watch).
+        // The whole map in memory from the start (preload() has usually read it by now).
+        MapMemory::preload();
+    });
+}
+
+void MapMemory::preload()
+{
+    // Read on a thread of its own from the game's start, while the menus and movies run: on the presenting thread a
+    // large file held the first frames of a game for over a second (seen with the hitch watch).
+    static std::once_flag once;
+    std::call_once(once, [] {
         std::thread([] {
             const std::lock_guard lock(g_lock);
             ensureLoaded();

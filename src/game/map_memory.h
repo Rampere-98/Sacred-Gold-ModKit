@@ -31,6 +31,8 @@ namespace MapMemory
     void afterWorld();
     // Its ModKit menu section: the explored map around the hero, a square per cell in the ground's color, blocked
     // ones left clear, unexplored ones black (dark ground is lifted above black so it still reads as explored).
+    // Starts reading the map file on a thread of its own (once; install() calls it too).
+    void preload();
     void install();
     void setHero(int layer, int32_t x, int32_t y);
 
