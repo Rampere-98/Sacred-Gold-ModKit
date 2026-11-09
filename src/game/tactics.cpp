@@ -344,7 +344,7 @@ namespace
     constexpr DWORD kSelectMaxMs = 600;     // the engine has not taken the art by then: given up
     constexpr DWORD kConfirmMs = 1000;      // the hero has not started the art by then: the game refused it
     constexpr DWORD kConfirmWalkMs = 3000;  // ... unless it is walking up to the target first, at most this long
-    constexpr DWORD kCastMaxMs = 15000;     // an art lasting longer is not waited for (a combo of four: ~8 s)
+    constexpr DWORD kCastMaxMs = 15000;     // an art lasting longer is not waited for (combos: kComboMaxMs)
     constexpr DWORD kSettleMs = 200;        // after the art is done, its last blow's damage shows
 
     // The hero, also when mounted (the rider casts).
@@ -381,13 +381,18 @@ namespace
     // A combo under way (cCreature +0x2B4, nonzero ~0.2 s after the order is taken, also while the hero still walks
     // up to the target; back to 0 when it ends or is cut short by another order; seen live by Manolito, 2026-11-09).
     constexpr size_t kComboRunning = 0x2B4;
+    // ... but +0x2B4 clears as the last piece goes out: the combo ends when +0x401 clears too (the hero standing,
+    // ENG 00542C91). A combo of four with a walk first: ~19 s.
+    constexpr size_t kComboPiece = 0x401;
+    constexpr DWORD kComboMaxMs = 30000;
 
     // The hero's entry for the art in a slot; found false when the list cannot be read or does not have the art.
     // The art being cast is a combo and the game runs it (walking to the target counts: its pieces follow).
     bool comboRunning()
     {
         const cCreature* hero = heroCreature();
-        return hero && g_art >= kFirstCombo && g_art <= kLastCombo && at<uint8_t>(hero, kComboRunning) != 0;
+        return hero && g_art >= kFirstCombo && g_art <= kLastCombo &&
+               (at<uint8_t>(hero, kComboRunning) != 0 || at<uint8_t>(hero, kComboPiece) != 0);
     }
 
     HeroArt heroArt(uint16_t slotKind, uint32_t art)
@@ -514,7 +519,8 @@ namespace
         g_foesAtCast.clear();
         g_retapped = false;
         // AutoPotion waits with drinks that are not urgent until the art is measured (a bound, moved up as it ends).
-        CombatState::measuringUntil = s.now + kSelectMaxMs + kConfirmWalkMs + kCastMaxMs;
+        CombatState::measuringUntil = s.now + kSelectMaxMs + kConfirmWalkMs +
+                                      (art >= kFirstCombo && art <= kLastCombo ? kComboMaxMs : kCastMaxMs);
         // An art the game casts at the hero acts there, wherever the target is.
         g_castClose = !target || learned(art).self;
         for (int i = 0; i < s.count; ++i)
@@ -1317,7 +1323,8 @@ void Tactics::onFrame(DWORD now)
     {
         // Under way while the hero's action says so; its last blow's damage shows a moment after.
         const bool going = CombatState::casting(heroCreature()) || comboRunning();
-        if (going && elapsed < static_cast<int>(kCastMaxMs))
+        const bool combo = g_art >= kFirstCombo && g_art <= kLastCombo;
+        if (going && elapsed < static_cast<int>(combo ? kComboMaxMs : kCastMaxMs))
         {
             g_doneAt = 0;
             return;
