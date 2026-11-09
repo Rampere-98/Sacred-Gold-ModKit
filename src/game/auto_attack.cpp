@@ -354,6 +354,13 @@ namespace
         {
             return false;
         }
+        // The backpack full: items are left lying (none fits; seen live, 2026-11-09: each tried again and again on the
+        // way to the merchant), but dropped gold (flags +0x14 & 0x00100000), which goes to the purse.
+        if (loot == Loot::Item && Gear::packFull() &&
+            !(*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + 0x14) & 0x00100000))
+        {
+            return false;
+        }
         return loot == Loot::Item || loot == Loot::Container;
     }
 
@@ -1113,7 +1120,9 @@ namespace
             // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
             // too. Seeking fights, any other enemy within Range as well. The current one while it is engaged or
             // within 1.5 Range.
-            if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!Config::autoAttack.seek || d > range))
+            // On the way to the merchant with the backpack full: only those that attack (no fight sought).
+            const bool seek = Config::autoAttack.seek && !Gear::wantsShop();
+            if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
             }

@@ -15,6 +15,8 @@ namespace Gear
 
     // Merchant trips ([Gear] Trips): the backpack is full, the agent should take the hero to a merchant.
     bool wantsShop();
+    // The backpack has no room left (whatever the trips setting): the agent leaves items lying.
+    bool packFull();
     // The agent opened a shop for the trip: sold to, upgrades put on (whatever the menu says), then done.
     void tripOpened();
     // The trip's shop has nothing more (once): the agent closes it.

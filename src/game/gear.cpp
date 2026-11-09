@@ -721,6 +721,11 @@ void Gear::onFrame(DWORD now, bool calm)
     Inject::call(&work, nullptr);
 }
 
+bool Gear::packFull()
+{
+    return g_ready && g_full;
+}
+
 bool Gear::wantsShop()
 {
     const DWORD quiet = g_noTripUntil;
