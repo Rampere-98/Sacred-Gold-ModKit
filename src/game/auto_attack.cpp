@@ -477,6 +477,15 @@ namespace
         {
             g_lootAtSince = now;
         }
+        // A container the hero opened (flags +0x14 & 0x4000): done once its lid is up (a moment for the spill), its
+        // contents on the ground for the next collect.
+        if (loot && lootOf(loot) == Loot::Container &&
+            (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(loot) + 0x14) & 0x4000) &&
+            now - g_lootAtSince > 800)
+        {
+            LOG("AutoAttack: container {:x} opened", id);
+            return true;
+        }
         if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
         {
             LOG("AutoAttack: loot {:x} still there with the hero at it, left", id);
