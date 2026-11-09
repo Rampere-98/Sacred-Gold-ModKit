@@ -19,7 +19,8 @@ namespace Config
         bool pickup = true;     // the agent's own collect (never the game's A): items, chests and containers, the hand-cursor fixed things (hiding places, wells)
         int minRarity = 0;      // equipment picked up from this grade on: 0 white, 1 blue, 2 yellow, 3 gold/unique
         bool keepSets = true;
-        int rarityFromLevel = 15;   // the grade filter only from this hero level on: early on every piece of gear counts   // set pieces (green) always, whatever the grade
+        int rarityGoldPerLevel = 1000;  // the grade filter only once the purse holds this much per hero level: below,
+                                        // every piece is taken (to put on early, to sell for gold)   // set pieces (green) always, whatever the grade
         bool lootInFight = true;    // loot nearer than the enemy fought is taken first, enemies about or not
         bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on
         int lootRange = 1600;    // ... within this many screen pixels of the hero

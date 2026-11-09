@@ -356,12 +356,16 @@ namespace
         }
         // Equipment below the grade asked for is left lying (the player's wish, 2026-11-09: no junk in the backpack);
         // set pieces as asked; potions, runes, gold and the rest always.
-        // Early on (below the level set) every piece is taken: the hero needs the basic gear to put on (the player's
-        // wish, 2026-11-09). The hero's level: u16 at +0x3A8 + 0x56.
+        // The grade filter only with gold enough (the player's wish, 2026-11-09): low grades are worth gold at a
+        // merchant, and early on the basic gear is what the hero puts on. Enough: so much per hero level. The hero's
+        // level: u16 at +0x3A8 + 0x56; the purse: u32 at +0x3A8 + 0x46 (Gear's kGold).
         const cCreature* hero = objects ? objects->hero() : nullptr;
-        const int heroLevel = hero ? *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x3A8 + 0x56) : 0;
-        if (loot == Loot::Item && heroLevel >= Config::autoAttack.rarityFromLevel &&
-            (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
+        const uint8_t* heroBytes = reinterpret_cast<const uint8_t*>(hero);
+        const int heroLevel = hero ? *reinterpret_cast<const uint16_t*>(heroBytes + 0x3A8 + 0x56) : 0;
+        const uint32_t heroGold = hero ? *reinterpret_cast<const uint32_t*>(heroBytes + 0x3A8 + 0x46) : 0;
+        const bool goldEnough = hero && static_cast<uint64_t>(heroGold) >=
+                                            static_cast<uint64_t>(Config::autoAttack.rarityGoldPerLevel) * std::max(heroLevel, 1);
+        if (loot == Loot::Item && goldEnough && (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
         {
             const int grade = Gear::grade(id);
             const bool keep = grade < 0 || (grade == 4 ? Config::autoAttack.keepSets || Config::autoAttack.minRarity == 0
@@ -376,7 +380,8 @@ namespace
                 if (s_told.insert(id).second)
                 {
                     static const char* kNames[] = {"white", "blue", "yellow", "gold", "set"};
-                    LOG("AutoAttack: item {:x} ({}) below the grade asked for, left lying", id, kNames[grade]);
+                    LOG("AutoAttack: item {:x} ({}) below the grade asked for, left lying ({} gold, level {})", id,
+                        kNames[grade], heroGold, heroLevel);
                 }
                 return false;
             }
@@ -3372,8 +3377,9 @@ namespace
                                             "Solo dorado (único)"};
             ImGui::Combo("Equipo que recoge", &c.minRarity, kGrades, 4);
             ImGui::SetItemTooltip("El equipo por debajo de este grado se queda en el suelo; pociones, runas y oro siempre.");
-            ImGui::SliderInt("Filtrar desde el nivel", &c.rarityFromLevel, 1, 100);
-            ImGui::SetItemTooltip("Por debajo de este nivel recoge todo el equipo, para tener con qué equiparse.");
+            ImGui::SliderInt("Oro suficiente por nivel", &c.rarityGoldPerLevel, 0, 20000);
+            ImGui::SetItemTooltip("El filtro solo actúa con este oro por nivel del héroe; con menos, recoge todo el "
+                                  "equipo para equiparse y venderlo.");
             ImGui::Checkbox("Siempre las piezas de set (verde)", &c.keepSets);
         }
         ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
@@ -3400,7 +3406,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
         ModkitMenu::write(ini, L"AutoAttack", L"MinRarity", c.minRarity);
         ModkitMenu::write(ini, L"AutoAttack", L"KeepSets", c.keepSets);
-        ModkitMenu::write(ini, L"AutoAttack", L"RarityFromLevel", c.rarityFromLevel);
+        ModkitMenu::write(ini, L"AutoAttack", L"RarityGoldPerLevel", c.rarityGoldPerLevel);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
