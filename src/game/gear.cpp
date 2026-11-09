@@ -85,7 +85,9 @@ namespace
     // Runes: cItemUpgrade (vtable ENG 00891D90), types 0x14FF..0x1696. Each tried once: one of another class, or a
     // requirement not met, stays in the backpack and is not tried again.
     constexpr uintptr_t kRuneVtable = 0x891D90;
-    std::unordered_set<uint32_t> g_runesTried;
+    // Runes tried, with the hero's level then: one refused (a level requirement) is tried again once the hero has
+    // gone up a level (the player, 2026-11-09: runes are to be used as soon as they can be).
+    std::unordered_map<uint32_t, int> g_runesTried;
 
     template <class F>
     F fn(uintptr_t a)
@@ -539,14 +541,17 @@ namespace
 
     bool readRune(cCreature* hero, uint8_t* pack)
     {
+        const int heroLevel = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + kStats + 0x56);
         cObjectManager* objects = cObjectManager::instance();
         uint32_t rune = 0;
         eachItem(pack, [&](uint32_t id, int, int, int) {
             cObject* item = rune || !objects ? nullptr : objects->object(id);
             const auto* o = reinterpret_cast<const uint8_t*>(item);
             const uint32_t type = o ? *reinterpret_cast<const uint32_t*>(o + kItemType) & 0xFFFF : 0;
-            if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && type >= 0x14FF && type <= 0x1696 &&
-                !g_runesTried.count(id))
+            const auto tried = g_runesTried.find(id);
+            // By its class or its type: seen live, a rune of the hero's own (0x1601) never read and then sold.
+            if (o && (*reinterpret_cast<const uintptr_t*>(o) == kRuneVtable || (type >= 0x14FF && type <= 0x1696)) &&
+                (tried == g_runesTried.end() || tried->second < heroLevel))
             {
                 rune = id;
             }
@@ -555,7 +560,7 @@ namespace
         {
             return false;
         }
-        g_runesTried.insert(rune);
+        g_runesTried[rune] = heroLevel;
         const bool used = fn<UseItem>(g_useItem)(hero, nullptr, rune) != 0;
         LOG("Gear: rune {:x} (type {:x}) read: {}", rune, typeOf(rune), used ? "done" : "refused (class or requirement)");
         return true;
