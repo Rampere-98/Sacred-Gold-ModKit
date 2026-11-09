@@ -337,6 +337,12 @@ namespace
             return false;
         }
         const Loot loot = object ? lootOf(object) : Loot::None;
+        // A container already opened (object flags +0x14 & 0x4000, seen live 2026-11-09: 0x94000001 shut, 0x9400C001
+        // open; also after a load): nothing in it any more.
+        if (loot == Loot::Container && (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + 0x14) & 0x4000))
+        {
+            return false;
+        }
         return loot == Loot::Item || loot == Loot::Container;
     }
 
