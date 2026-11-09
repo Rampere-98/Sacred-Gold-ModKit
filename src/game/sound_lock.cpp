@@ -59,11 +59,31 @@ namespace
         }
         if (!TryAcquireSRWLockExclusive(&g_lock.srw))
         {
+            // Waited for 250 ms at most. Seen live (2026-11-09, a full hang): the game's thread holds this lock and
+            // calls into Miles (mss32), which waits for its timer thread; that thread, in a sound callback of the
+            // game's, waits here for the lock. After 250 ms the caller goes on without it (its unlock then does
+            // nothing, as it is not the owner): the holder is blocked waiting for this very callback.
             const int64_t start = D3DStats::now();
-            AcquireSRWLockExclusive(&g_lock.srw);
+            const DWORD since = GetTickCount();
+            bool got = false;
+            while (!(got = TryAcquireSRWLockExclusive(&g_lock.srw)) && GetTickCount() - since < 250)
+            {
+                Sleep(1);
+            }
             if (D3DStats::isRenderThread())
             {
                 D3DStats::addTime(D3DStats::TSoundWait, D3DStats::now() - start);
+            }
+            if (!got)
+            {
+                static std::atomic<int> s_told{0};
+                if (s_told.fetch_add(1) < 5)
+                {
+                    LOG("Sound lock: thread {} waited 250 ms for thread {}: going on without the lock (a Miles "
+                        "deadlock avoided)",
+                        thread, g_lock.owner.load(std::memory_order_relaxed));
+                }
+                return;
             }
         }
         g_lock.owner.store(thread, std::memory_order_relaxed);
