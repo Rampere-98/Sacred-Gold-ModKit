@@ -429,6 +429,18 @@ namespace
             {
                 return;
             }
+            // Runes are never sold (the player, 2026-11-09): another class's rune is traded at the rune trader for one
+            // of the hero's own, worth far more than the 2 gold a merchant gives (seen live: sold 0x1501, 0x1527, 0x1694
+            // for 2 gold, and even one of the hero's own, 0x1601).
+            if (cObjectManager* objects = cObjectManager::instance())
+            {
+                const auto* o = reinterpret_cast<const uint8_t*>(objects->object(id));
+                const uint32_t type = o ? *reinterpret_cast<const uint32_t*>(o + kItemType) & 0xFFFF : 0;
+                if (o && (*reinterpret_cast<const uintptr_t*>(o) == kRuneVtable || (type >= 0x14FF && type <= 0x1696)))
+                {
+                    return;
+                }
+            }
             bool fits = false;
             const bool classOk = fn<CanUse>(g_canUse)(hero, nullptr, id, 1) != 0;
             const int slot = classOk ? bestSlot(hero, id, 0.0f, nullptr, &fits) : -1;
