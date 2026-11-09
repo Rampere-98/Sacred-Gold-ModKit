@@ -857,7 +857,12 @@ namespace
             return;
         }
         const ImGuiIO& io = ImGui::GetIO();
-        const float size = std::round(io.DisplaySize.y * 0.22f);
+        // Alt held (the player's wish, 2026-11-09): the radar larger, 55% of the screen's height instead of 22%, for a
+        // closer look; only while the game has the focus (Alt-Tab elsewhere leaves it as it is).
+        DWORD owner = 0;
+        GetWindowThreadProcessId(GetForegroundWindow(), &owner);
+        const bool large = owner == GetCurrentProcessId() && (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
+        const float size = std::round(io.DisplaySize.y * (large ? 0.55f : 0.22f));
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y - 8.0f), ImGuiCond_Always,
                                 ImVec2(1.0f, 1.0f));
         ImGui::SetNextWindowBgAlpha(0.0f);     // only the round radar and its title show: no frame, no padding
