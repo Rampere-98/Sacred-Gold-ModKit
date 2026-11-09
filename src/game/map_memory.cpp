@@ -94,6 +94,7 @@ namespace
         int32_t x, y;
     };
     std::vector<BlipAt> g_blips, g_blipsBuilding;
+    std::vector<MapMemory::QuestMark> g_questMarks;
     bool g_route = false;
     int32_t g_routeX = 0, g_routeY = 0;
     // Where the hero walked lately: a point every half tile, none older than kTrailMs and at most kTrailPoints.
@@ -663,6 +664,61 @@ namespace
                 break;
             default:
                 break;
+            }
+        }
+        // Quests: the journal's targets as rings (at the rim when off the radar), the givers' and receivers' signs.
+        {
+            const ImU32 yellow = IM_COL32(255, 215, 30, 255), white = IM_COL32(235, 235, 235, 255);
+            const float fontSize = std::max(14.0f, mark * 2.4f);
+            ImFont* font = ImGui::GetFont();
+            for (const MapMemory::QuestMark& q : g_questMarks)
+            {
+                if (q.layer != (g_heroLayer & 0xFF))
+                {
+                    continue;
+                }
+                ImVec2 p = at(q.x, q.y);
+                const ImU32 color = q.yellow ? yellow : white;
+                if (q.glyph == MapMemory::Glyph::Target)
+                {
+                    const float ring = mark * 1.5f;
+                    if (!inside(p, ring))
+                    {
+                        // Off the radar: a dot on the rim, toward it.
+                        const float ex = p.x - mid.x, ey = p.y - mid.y, len = std::sqrt(ex * ex + ey * ey);
+                        if (len < 1.0f)
+                        {
+                            continue;
+                        }
+                        const float r = radius - ring - 2.0f;
+                        p = ImVec2(mid.x + ex / len * r, mid.y + ey / len * r);
+                        dl->AddCircleFilled(p, ring * 0.6f, color);
+                        dl->AddCircle(p, ring * 0.6f, IM_COL32(0, 0, 0, 255), 0, 1.5f);
+                        continue;
+                    }
+                    dl->AddCircle(p, ring, IM_COL32(0, 0, 0, 255), 0, 4.0f);
+                    dl->AddCircle(p, ring, color, 0, 2.5f);
+                    continue;
+                }
+                if (!inside(p, fontSize * 0.5f))
+                {
+                    continue;
+                }
+                const char* text = q.glyph == MapMemory::Glyph::Offer ? "!" : q.glyph == MapMemory::Glyph::Report ? "?" : "?!";
+                const ImVec2 extent = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
+                const ImVec2 corner(p.x - extent.x * 0.5f, p.y - extent.y * 0.5f);
+                for (int ox = -1; ox <= 1; ++ox)
+                {
+                    for (int oy = -1; oy <= 1; ++oy)
+                    {
+                        if (ox || oy)
+                        {
+                            dl->AddText(font, fontSize, ImVec2(corner.x + ox * 1.5f, corner.y + oy * 1.5f),
+                                        IM_COL32(0, 0, 0, 255), text);
+                        }
+                    }
+                }
+                dl->AddText(font, fontSize, corner, color, text);
             }
         }
         // The hero: white with a dark rim, to stand out from the route and the enemies.
@@ -1241,6 +1297,12 @@ void MapMemory::setRoute(bool route, int32_t x, int32_t y)
     g_route = route;
     g_routeX = x;
     g_routeY = y;
+}
+
+void MapMemory::setQuestMarks(std::vector<QuestMark> marks)
+{
+    const std::lock_guard lock(g_lock);
+    g_questMarks.swap(marks);
 }
 
 void MapMemory::endRadar()

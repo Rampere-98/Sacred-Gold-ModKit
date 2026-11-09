@@ -1182,6 +1182,89 @@ namespace
         return found;
     }
 
+    // The quest signs for the agent's map, once a second: every creature the game marks with an overhead icon (object
+    // flags +0x14 & 0x80000), its icon as npcIconId (ENG 00499E90) picks it: crafts first (creature +0x200: 0x1000
+    // smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable; none of them a quest sign), else the dialog record
+    // +0x245 (u32 index, seen live 2026-11-09; 0 none) of [0xAACF80 +0x755C .. +0x7560), 0x50 bytes, icon at +0x48:
+    // 0 "!" (dialogs "auftrag*", quest offered), 1 "?" ("ziel*", report), 4/5 the others; +10 the same greyed (not yet
+    // for the hero). Plus the journal's targets under way, the one the agent goes for in yellow.
+    DWORD g_questMarksAt = 0;
+
+    void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY)
+    {
+        if (g_questMarksAt && now - g_questMarksAt < 1000)
+        {
+            return;
+        }
+        g_questMarksAt = now;
+        std::vector<MapMemory::QuestMark> marks;
+        const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
+        const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
+        const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
+        if (manager && dialogs && dialogsEnd > dialogs)
+        {
+            const size_t dialogCount = static_cast<size_t>(dialogsEnd - dialogs) / 0x50;
+            const auto table = *reinterpret_cast<const uint8_t* const* const*>(manager + 4);
+            const auto tableEnd = *reinterpret_cast<const uint8_t* const* const*>(manager + 8);
+            if (table && tableEnd > table && tableEnd - table < 0x40000)
+            {
+                for (const uint8_t* const* it = table; it < tableEnd; ++it)
+                {
+                    const uint8_t* o = *it;
+                    if (!o || !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) ||
+                        (*reinterpret_cast<const uint32_t*>(o + 0x200) & (0x1000 | 0x2000 | 0x4000 | 0x4000000)))
+                    {
+                        continue;
+                    }
+                    const uint32_t dialog = *reinterpret_cast<const uint32_t*>(o + 0x245);
+                    if (!dialog || dialog >= dialogCount)
+                    {
+                        continue;
+                    }
+                    const uint32_t icon = *reinterpret_cast<const uint32_t*>(dialogs + dialog * 0x50 + 0x48);
+                    MapMemory::Glyph glyph;
+                    switch (icon % 10)
+                    {
+                    case 0: glyph = MapMemory::Glyph::Offer; break;
+                    case 1: glyph = MapMemory::Glyph::Report; break;
+                    case 4:
+                    case 5: glyph = MapMemory::Glyph::Other; break;
+                    default: continue;
+                    }
+                    if (icon >= 20)
+                    {
+                        continue;
+                    }
+                    marks.push_back({glyph, icon < 10, *(o + 0x24), *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                     *reinterpret_cast<const int32_t*>(o + 0x20)});
+                }
+            }
+        }
+        // The journal: every quest under way, its target a ring; the agent's own (questTarget's pick) in yellow.
+        int32_t gx = 0, gy = 0;
+        double radius = 0.0;
+        uint32_t who = 0;
+        const bool goal = questTarget(heroX, heroY, gx, gy, radius, who);
+        const auto begin = *reinterpret_cast<const uint8_t* const*>(0xAAD3A4);
+        const auto end = *reinterpret_cast<const uint8_t* const*>(0xAAD3A8);
+        constexpr size_t kRecord = 0x174;
+        if (begin && end > begin && !((end - begin) % kRecord) && (end - begin) / kRecord <= 512)
+        {
+            for (const uint8_t* r = begin; r < end; r += kRecord)
+            {
+                const int32_t state = *reinterpret_cast<const int32_t*>(r + 4);
+                const int32_t tx = *reinterpret_cast<const int32_t*>(r + 0x18), ty = *reinterpret_cast<const int32_t*>(r + 0x1C);
+                if ((state != 1 && state != 2) || tx <= 0 || ty <= 0)
+                {
+                    continue;
+                }
+                const int32_t wx = static_cast<int32_t>((tx + 0.5) * kTileSize), wy = static_cast<int32_t>((ty + 0.5) * kTileSize);
+                marks.push_back({MapMemory::Glyph::Target, goal && wx == gx && wy == gy, 0, wx, wy});
+            }
+        }
+        MapMemory::setQuestMarks(std::move(marks));
+    }
+
     DWORD g_questAskAt = 0;
     int32_t g_questX = 0, g_questY = 0;
 
@@ -1942,6 +2025,7 @@ void AutoAttack::onFrame()
         {
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
+            scanQuestMarks(now, self->x, self->y);
             if (float sx, sy; AimAssist::hero(sx, sy))
             {
                 MapMemory::wantGround(layer, self->x, self->y, sx, sy);

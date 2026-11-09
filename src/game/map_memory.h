@@ -43,6 +43,19 @@ namespace MapMemory
     void endRadar();
     void setRoute(bool route, int32_t x = 0, int32_t y = 0);
 
+    // Quests on the map, as the game shows them over the heads: "!" a quest to take, "?" one to report, "?!" the others
+    // with a quest icon; yellow when the game has it for the hero now, white when not yet. A ring: a quest's target
+    // from the journal (yellow the one the agent goes for), at the rim when off the radar.
+    enum class Glyph : uint8_t { Offer, Report, Other, Target };
+    struct QuestMark
+    {
+        Glyph glyph;
+        bool yellow;
+        uint8_t layer;
+        int32_t x, y;   // world
+    };
+    void setQuestMarks(std::vector<QuestMark> marks);
+
     // What the agent found, kept on its map with a symbol: a merchant (a shop opened there), a way into another layer
     // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends).
     enum class Mark : uint8_t { Merchant, Entrance, Portal, Count };
