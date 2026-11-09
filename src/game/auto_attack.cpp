@@ -294,6 +294,25 @@ namespace
         return objects && CombatState::casting(objects->hero());
     }
 
+    // On the way to a quest the collect takes only what lies by the way: a wide screen shows loot 30 tiles back,
+    // and going for it, then for the quest again, the hero went back and forth (seen live, 2026-11-09). Never
+    // further than kLootMaxTiles (a fixed thing's place read wrong put one 3000 tiles off).
+    bool g_questTravel = false;
+    constexpr double kLootMaxTiles = 40.0, kLootOnTheWayTiles = 10.0;
+
+    bool lootNear(int32_t x, int32_t y)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!hero)
+        {
+            return false;
+        }
+        const double tiles = std::max(std::abs(static_cast<double>(x - hero->x)), std::abs(static_cast<double>(y - hero->y))) /
+                             kFixedTile;
+        return tiles <= (g_questTravel ? kLootOnTheWayTiles : kLootMaxTiles);
+    }
+
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_lootDone.count(lootKey(id)))
@@ -302,10 +321,15 @@ namespace
         }
         if (isFixed(id))
         {
-            return fixedUsable(id);
+            int32_t x = 0, y = 0;
+            return fixedPosition(id, x, y) && lootNear(x, y) && fixedUsable(id);
         }
         cObjectManager* objects = cObjectManager::instance();
         cObject* object = objects ? objects->object(id) : nullptr;
+        if (object && !lootNear(object->x, object->y))
+        {
+            return false;
+        }
         const Loot loot = object ? lootOf(object) : Loot::None;
         return loot == Loot::Item || loot == Loot::Container;
     }
@@ -340,7 +364,7 @@ namespace
             int32_t x = 0, y = 0;
             fixedPosition(id, x, y);
             const double dx = x - hero->x, dy = y - hero->y;
-            if (std::abs(dx) > reach || std::abs(dy) > reach || dx * dx + dy * dy >= best ||
+            if (std::abs(dx) > reach || std::abs(dy) > reach || dx * dx + dy * dy >= best || !lootNear(x, y) ||
                 lootBlocked(id, GetTickCount()) || g_lootDone.count(lootKey(id)))
             {
                 continue;
@@ -1210,10 +1234,12 @@ namespace
         // what attacks on the way; there, the roaming looks around it.
         int32_t qx = 0, qy = 0;
         double qr = 0.0;
+        g_questTravel = false;
         if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr))
         {
             if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
             {
+                g_questTravel = true;
                 if (!ClickWalk::walking() && now - g_questAskAt > 4000)
                 {
                     if (qx != g_questX || qy != g_questY)
