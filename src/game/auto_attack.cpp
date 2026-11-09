@@ -1676,7 +1676,8 @@ void AutoAttack::onFrame()
     }
     // Collect always (AutoCollect), and also whenever the auto attack fights for the player: the loot of each fight
     // taken once it is over, before the next (the player's own play keeps to A unless AutoCollect is on).
-    if (Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground && !Controller::drives() &&
+    if (Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground &&
+        !Controller::drives() && !ClickWalk::walking() &&
         Controller::worldRunning() && heroAlive())
     {
         autoCollect(now);
@@ -1712,8 +1713,9 @@ void AutoAttack::onFrame()
     {
         Gear::onFrame(now, !g_collecting && !g_target && !g_pending && !g_retreatUntil && !Tactics::busy(now));
     }
+    // A walk the player asked for on the agent's map: left be unless the hero is attacked.
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
-        (g_quietUntil && static_cast<int>(now - g_quietUntil) < 0))
+        (g_quietUntil && static_cast<int>(now - g_quietUntil) < 0) || (ClickWalk::walking() && !underAttack()))
     {
         g_target = 0;
         g_pending = 0;

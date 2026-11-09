@@ -2,6 +2,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 // What the hero has seen of the world, for the auto attack's roaming: the map in cells of a few tiles, per layer (the
 // surface, each dungeon and interior has its own), each with how often the hero was there and how often a walk into it
@@ -13,6 +15,10 @@ namespace MapMemory
     void visit(int layer, int32_t x, int32_t y);
     // A walk toward (x, y) got the hero no further.
     void blocked(int layer, int32_t x, int32_t y);
+    // A route over what the map knows, tile by tile from (fromX, fromY) to (toX, toY) on `layer`: walked and
+    // walkable tiles cheap, never seen ones dearer (they may be anything), unwalkable ones never. Empty and false
+    // when there is none or the ends lie too far apart for one search (~1000 tiles).
+    bool route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
     // How little worth going to: the more seen and blocked, the higher.
     float cost(int layer, int32_t x, int32_t y);
     // Cells known, and of them on `layer`.

@@ -1,6 +1,7 @@
 #include "game/map_memory.h"
 #include "game/combat_learn.h"
 #include "game/click_walk.h"
+#include <queue>
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
 #include "overlay/overlay.h"
@@ -439,7 +440,8 @@ namespace
     // as the screen is: the game's view is isometric, a world step (dx, dy) in tiles goes (dx - dy, (dx + dy) / 2)
     // on the screen (seen live: 41, -5 tiles went 254, 98 pixels right and down), so squares show as the ground's
     // diamonds. Under g_lock.
-    void drawMap(float size)
+    // The map in the menu takes clicks: the hero walks there (ClickWalk, a route over this map when far).
+    void drawMap(float size, bool clickable = false)
     {
         const ImVec2 origin = ImGui::GetCursorScreenPos();
         ImDrawList* dl = ImGui::GetWindowDrawList();
@@ -667,7 +669,23 @@ namespace
         dl->AddCircleFilled(mid, dot * 1.2f, IM_COL32(255, 255, 255, 255));
         dl->AddCircle(mid, dot * 1.2f, IM_COL32(0, 0, 0, 255), 0, 1.5f);
         dl->PopClipRect();
-        ImGui::Dummy(ImVec2(size, size));
+        if (!clickable)
+        {
+            ImGui::Dummy(ImVec2(size, size));
+            return;
+        }
+        ImGui::InvisibleButton("##agentmapclick", ImVec2(size, size));
+        if (ImGui::IsItemHovered() && inside(ImGui::GetIO().MousePos, 0.0f))
+        {
+            // Back from the radar to tiles: ex = (dx - dy) s, ey = (dx + dy) s / 2.
+            const float ex = (ImGui::GetIO().MousePos.x - mid.x) / s, ey = (ImGui::GetIO().MousePos.y - mid.y) / (s * 0.5f);
+            const double tx = hx + (ex + ey) * 0.5, ty = hy + (ey - ex) * 0.5;
+            ImGui::SetTooltip("Clic: ir allí (%.0f casillas)", std::max(std::abs(tx - hx), std::abs(ty - hy)));
+            if (ImGui::IsItemClicked(ImGuiMouseButton_Left))
+            {
+                ClickWalk::walkTo(static_cast<int32_t>(tx * kTileSize), static_cast<int32_t>(ty * kTileSize));
+            }
+        }
     }
 
     int seenOnLayer()
@@ -716,7 +734,8 @@ namespace
             g_landmarks.clear();
             g_dirty = true;
         }
-        drawMap(300.0f);
+        ImGui::TextDisabled("Clic en el mapa: el héroe va allí, por lo conocido, sin límite de distancia.");
+        drawMap(300.0f, true);
         drawFoeFilters();
     }
 
@@ -966,6 +985,121 @@ void MapMemory::visit(int layer, int32_t x, int32_t y)
         // Reached: whatever blocked it before was the way, not the place.
         c.blocked = c.blocked > 0 ? static_cast<uint8_t>(c.blocked - 1) : 0;
     });
+}
+
+bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
+{
+    out.clear();
+    // A box around both ends; too far apart for one search (32 bit: keep it to a few MB), no route.
+    constexpr int kMargin = 48, kMaxSide = 1100;
+    const int x0 = std::min(fromX, toX) - kMargin, y0 = std::min(fromY, toY) - kMargin;
+    const int w = std::abs(toX - fromX) + 2 * kMargin + 1, h = std::abs(toY - fromY) + 2 * kMargin + 1;
+    if (w > kMaxSide || h > kMaxSide)
+    {
+        return false;
+    }
+    const std::lock_guard lock(g_lock);
+    ensureLoaded();
+    // Per tile, the step's cost: walked or walkable by the tile test 10, never seen 22 (may be anything), not
+    // walkable or blocked again and again: no way.
+    std::vector<uint8_t> step(static_cast<size_t>(w) * h, 22);
+    for (int cy = (y0 >> kChunkShift); cy <= ((y0 + h - 1) >> kChunkShift); ++cy)
+    {
+        for (int cx = (x0 >> kChunkShift); cx <= ((x0 + w - 1) >> kChunkShift); ++cx)
+        {
+            const auto it = g_chunks.find(chunkKey(layer, cx << kChunkShift, cy << kChunkShift));
+            if (it == g_chunks.end())
+            {
+                continue;
+            }
+            for (int i = 0; i < kChunkSide * kChunkSide; ++i)
+            {
+                const int tx = (cx << kChunkShift) + (i & (kChunkSide - 1)), ty = (cy << kChunkShift) + (i >> kChunkShift);
+                if (tx < x0 || ty < y0 || tx >= x0 + w || ty >= y0 + h)
+                {
+                    continue;
+                }
+                const Cell& c = it->second->cells[i];
+                uint8_t v = 22;
+                if (c.visits || c.scan == 1)
+                {
+                    v = 10;
+                }
+                else if (c.scan == 2 || c.blocked >= 2)
+                {
+                    v = 0;
+                }
+                step[static_cast<size_t>(ty - y0) * w + (tx - x0)] = v;
+            }
+        }
+    }
+    const auto index = [&](int x, int y) { return (y - y0) * w + (x - x0); };
+    const int startCell = index(fromX, fromY), goalCell = index(toX, toY);
+    step[startCell] = 10;
+    step[goalCell] = std::max<uint8_t>(step[goalCell], 10);
+    std::vector<int32_t> cost(static_cast<size_t>(w) * h, INT32_MAX);
+    std::vector<int8_t> came(static_cast<size_t>(w) * h, -1);
+    static constexpr int kDx[8] = {1, -1, 0, 0, 1, 1, -1, -1};
+    static constexpr int kDy[8] = {0, 0, 1, -1, 1, -1, 1, -1};
+    // Weighted a little past admissible: fast over open unknown ground, the route still close to the shortest.
+    const auto estimate = [&](int x, int y) {
+        const int dx = std::abs(x - toX), dy = std::abs(y - toY);
+        return 12 * (dx + dy) - 7 * std::min(dx, dy);
+    };
+    using Entry = std::pair<int32_t, int32_t>;
+    std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;
+    cost[startCell] = 0;
+    open.push({estimate(fromX, fromY), startCell});
+    bool reached = false;
+    while (!open.empty())
+    {
+        const auto [f, cell] = open.top();
+        open.pop();
+        const int x = x0 + cell % w, y = y0 + cell / w;
+        if (f - estimate(x, y) > cost[cell])
+        {
+            continue;
+        }
+        if (cell == goalCell)
+        {
+            reached = true;
+            break;
+        }
+        for (int d = 0; d < 8; ++d)
+        {
+            const int nx = x + kDx[d], ny = y + kDy[d];
+            if (nx < x0 || ny < y0 || nx >= x0 + w || ny >= y0 + h)
+            {
+                continue;
+            }
+            const int n = index(nx, ny);
+            if (!step[n] || (d >= 4 && (!step[index(nx, y)] || !step[index(x, ny)])))
+            {
+                continue;
+            }
+            const int32_t c = cost[cell] + (d < 4 ? step[n] : step[n] * 14 / 10);
+            if (c < cost[n])
+            {
+                cost[n] = c;
+                came[n] = static_cast<int8_t>(d);
+                open.push({c + estimate(nx, ny), n});
+            }
+        }
+    }
+    if (!reached)
+    {
+        return false;
+    }
+    for (int cell = goalCell; cell != startCell;)
+    {
+        const int x = x0 + cell % w, y = y0 + cell / w;
+        out.push_back({x, y});
+        const int d = came[cell];
+        cell = index(x - kDx[d], y - kDy[d]);
+    }
+    out.push_back({fromX, fromY});
+    std::reverse(out.begin(), out.end());
+    return true;
 }
 
 void MapMemory::blocked(int layer, int32_t x, int32_t y)

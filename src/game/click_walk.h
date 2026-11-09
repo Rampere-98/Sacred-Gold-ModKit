@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Clicks on far ground. A click walks by path finding, and both path finders (cPathAstar, cPathFloodfill) search a
 // 64x64 tile grid around the walker (start - 32 .. start + 31 per tile axis): a target further out on either axis,
 // or one whose way around a river or a wall leaves that grid, finds no path and the hero stays put. At 1024x768 the
@@ -18,6 +20,12 @@ namespace ClickWalk
 
     // Once per presented frame: while a far walk lasts, asks the window's thread now and then for the next leg.
     void onFrame();
+
+    // The hero walks to world (x, y), however far (a click on the agent's map): as a click there, routed over the
+    // loaded sectors and, beyond them, over the agent's map memory, stretch after stretch.
+    void walkTo(int32_t x, int32_t y);
+    // A walk asked for on the agent's map in progress (the auto attack leaves it be unless the hero is attacked).
+    bool walking();
 
     // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test: 1 yes, 0 no, -1 not
     // known (the tile outside the loaded sectors, or no tile test in this build).

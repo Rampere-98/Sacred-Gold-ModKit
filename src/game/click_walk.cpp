@@ -1,6 +1,7 @@
 #include "game/click_walk.h"
 #include "config/debug.h"
 #include "game/frame_hooks.h"
+#include "game/map_memory.h"
 #include "game/wide_sectors.h"
 #include "input/inject.h"
 #include "log.h"
@@ -182,6 +183,8 @@ namespace
         size_t legEnd = 0;                      // the current leg's end
         int legTiles = kLegTiles;               // how far out legs end (shorter after a stuck one)
         int replans = 0;
+        bool partial = false;                   // ends short of the goal, at the loaded sectors' edge: planned on
+        int hops = 0;                           // partial routes walked toward one goal
     };
 
     Grid g_grid;
@@ -201,11 +204,48 @@ namespace
         {
             return false;
         }
+        // A goal beyond the loaded sectors (a click on the agent's map): first as far as they reach, along a route over
+        // what the map memory knows (walked, or walkable by the tile test), else straight at it; planned on from there.
+        constexpr int kEdge = 12;
+        const auto nearEdge = [](int x, int y) {
+            return x < g_grid.baseX + kEdge || y < g_grid.baseY + kEdge || x >= g_grid.baseX + kSide - kEdge ||
+                   y >= g_grid.baseY + kSide - kEdge;
+        };
+        bool partial = false;
+        if (nearEdge(goal.x, goal.y))
+        {
+            partial = true;
+            std::vector<std::pair<int, int>> far;
+            Cell stop = start;
+            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, far))
+            {
+                for (const auto& [x, y] : far)
+                {
+                    if (nearEdge(x, y))
+                    {
+                        break;
+                    }
+                    stop = {x, y};
+                }
+            }
+            else
+            {
+                const double dx = goal.x - start.x, dy = goal.y - start.y;
+                const double reach = kSide / 2.0 - kEdge - 4;
+                const double scale = std::min(1.0, reach / std::max(std::abs(dx), std::abs(dy)));
+                stop = {start.x + static_cast<int>(dx * scale), start.y + static_cast<int>(dy * scale)};
+            }
+            if (chebyshev(stop, start.x, start.y) < 4)
+            {
+                return false;
+            }
+            goal = stop;
+        }
         if (!g_grid.walkable(goal.x, goal.y))
         {
             // A click on a wall, a tree or water: the nearest tile around it one can stand on.
             bool found = false;
-            for (int r = 1; r <= 4 && !found; ++r)
+            for (int r = 1; r <= (partial ? 12 : 4) && !found; ++r)
             {
                 int bestD = INT_MAX;
                 Cell best{};
@@ -313,6 +353,7 @@ namespace
         g_route.from = 0;
         g_route.legEnd = 0;
         g_route.legTiles = kLegTiles;
+        g_route.partial = partial;
         return true;
     }
 
@@ -353,6 +394,8 @@ namespace
     // A far walk in progress (the window thread's, but for g_active, which the render thread reads).
     std::atomic<bool> g_active{false};
     bool g_ours = false;                        // the order going out is our next leg
+    bool g_asking = false;                      // the order going out is one asked for on the agent's map
+    std::atomic<bool> g_fromMap{false};         // the far walk is one asked for on the agent's map
     int32_t g_goalX = 0, g_goalY = 0;           // where the player clicked
     int32_t g_lastX = 0, g_lastY = 0;           // the hero at the last check
     int32_t g_legX = 0, g_legY = 0;             // the hero when the current leg went out
@@ -372,6 +415,7 @@ namespace
 
     void finish(const char* why)
     {
+        g_fromMap = false;
         g_routed = false;
         g_native = false;
         if (g_active.exchange(false) && Config::debug.uiTrace)
@@ -405,6 +449,7 @@ namespace
             {
                 // Any other order for the hero (a click, hold-to-walk, an attack, stop) ends a far walk.
                 finish("another order");
+                g_fromMap = g_asking;
             }
             if (order->type == cOrder::move && order->mode == cOrder::walk && !order->follow)
             {
@@ -431,6 +476,7 @@ namespace
                     {
                         g_routed = true;
                         g_route.replans = 0;
+                        g_route.hops = 0;
                         g_active = true;
                         target(end, order->x, order->y);
                         if (Config::debug.uiTrace)
@@ -501,6 +547,35 @@ namespace
         const int toEnd = chebyshev(end, at.x, at.y);
         if (g_route.legEnd + 1 == g_route.cells.size())
         {
+            if (g_route.partial)
+            {
+                // Nearing the end of a stretch short of the goal: the next one from here, the sectors around moved on.
+                if (toEnd > kAheadTiles && !stopped)
+                {
+                    return;
+                }
+                if (stopped && toEnd > 2 && ++g_route.replans > kMaxReplans)
+                {
+                    finish("blocked");
+                    return;
+                }
+                Cell next{};
+                g_grid.layer = layerOf(hero);
+                if (++g_route.hops > 400 || !plan(at, cellOf(g_goalX, g_goalY)) || !nextLeg(at, next))
+                {
+                    finish("blocked");
+                    return;
+                }
+                int32_t x, y;
+                target(next, x, y);
+                if (Config::debug.uiTrace)
+                {
+                    LOG("Click walk: next stretch toward {},{} ({} route tiles{})", g_goalX, g_goalY,
+                        g_route.cells.size(), g_route.partial ? ", short of the goal" : "");
+                }
+                sendLeg(engine, hero, x, y);
+                return;
+            }
             if (stopped)
             {
                 finish(toEnd <= 2 ? "arrived" : "stopped short");
@@ -572,6 +647,32 @@ namespace
         sendLeg(engine, hero, x, y);
     }
 
+    // A walk asked for from the agent's map: sent as the player's click would be, so the hook above routes it.
+    std::atomic<int32_t> g_askX{0}, g_askY{0};
+
+    void askedWalk(void*)
+    {
+        cEngine* engine = FrameHooks::engine();
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!engine || !hero || (engine->flags & (cEngine::loading | cEngine::noWorldInput)) ||
+            engine->controlled != hero->id)
+        {
+            return;
+        }
+        cOrder order;
+        order.type = cOrder::move;
+        order.mode = cOrder::walk;
+        order.x = g_askX;
+        order.y = g_askY;
+        LOG("Click walk: to {},{} from the agent's map ({:.0f} tiles)", order.x, order.y,
+            std::max(std::abs(static_cast<double>(order.x) - hero->x), std::abs(static_cast<double>(order.y) - hero->y)) /
+                kTileSize);
+        g_asking = true;
+        engine->sendOrder(hero, order);
+        g_asking = false;
+    }
+
     // On the window's thread, where the game sends its own orders: the next leg.
     void continueWalk(void*)
     {
@@ -625,6 +726,7 @@ namespace
             {
                 g_routed = true;
                 g_route.replans = 0;
+                g_route.hops = 0;
                 int32_t x, y;
                 target(end, x, y);
                 if (Config::debug.uiTrace)
@@ -677,6 +779,18 @@ namespace
         }
         sendLeg(engine, hero, g_goalX, g_goalY);
     }
+}
+
+void ClickWalk::walkTo(int32_t x, int32_t y)
+{
+    g_askX = x;
+    g_askY = y;
+    Inject::call(&askedWalk, nullptr);
+}
+
+bool ClickWalk::walking()
+{
+    return g_active && g_fromMap;
 }
 
 int ClickWalk::walkable(int layer, int tx, int ty)
