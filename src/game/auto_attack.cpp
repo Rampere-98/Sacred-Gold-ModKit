@@ -1802,15 +1802,15 @@ namespace
             cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
             // The quest's creature far away (the Gladiator's arena fight names one 5000 tiles off, its opponent
             // only comes when the fight starts): nothing to go for here, the rest of the agent's play meanwhile.
-            if (const double far = npc ? std::max(std::abs(static_cast<double>(npc->x - self->x)),
+            if (const double away = npc ? std::max(std::abs(static_cast<double>(npc->x - self->x)),
                                                   std::abs(static_cast<double>(npc->y - self->y))) / kTileSize : 0.0;
-                far > 60.0)
+                away > 60.0)
             {
                 static uint32_t farId = 0;
                 if (who != farId)
                 {
                     farId = who;
-                    LOG("AutoAttack: quest creature {:x} is {:.0f} tiles away, not here: playing on", who, far);
+                    LOG("AutoAttack: quest creature {:x} is {:.0f} tiles away, not here: playing on", who, away);
                 }
                 npc = nullptr;
             }
