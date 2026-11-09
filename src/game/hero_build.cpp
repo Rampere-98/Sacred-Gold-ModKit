@@ -207,20 +207,22 @@ namespace
         return 1.0f;
     }
 
-    // Attributes by the class (order of the character window: strength, endurance, dexterity, physical regeneration,
-    // intelligence, mental regeneration): how much of each, relative. 1 seraphim, 2 gladiator, 3 battle mage, 4 dark
-    // elf, 5 wood elf, 6/7 vampiress, 8 dwarf, 9 daemon.
+    // Attributes by the class (order of the character window, global.res 71321354..59: strength, endurance,
+    // dexterity, physical regeneration, mental regeneration, charisma; no intelligence in Sacred): how much of each,
+    // relative. Charisma only lowers prices and adds poison damage (GAME_GUIDE): the dark elf's poison only. Mental
+    // regeneration recharges the arts. 1 seraphim, 2 gladiator, 3 battle mage, 4 dark elf, 5 wood elf, 6/7 vampiress,
+    // 8 dwarf, 9 daemon.
     const int kAttrPlan[10][6] = {
-        {2, 3, 2, 1, 1, 1},     // unknown
-        {3, 3, 2, 1, 1, 1},     // seraphim
+        {2, 3, 2, 1, 1, 0},     // unknown
+        {3, 3, 2, 1, 2, 0},     // seraphim
         {4, 3, 2, 1, 0, 0},     // gladiator
-        {0, 3, 1, 0, 4, 2},     // battle mage
-        {1, 3, 4, 1, 1, 0},     // dark elf
-        {0, 3, 4, 1, 2, 1},     // wood elf
+        {0, 3, 1, 0, 4, 0},     // battle mage
+        {1, 3, 4, 1, 1, 1},     // dark elf
+        {0, 3, 4, 1, 2, 0},     // wood elf
         {4, 3, 2, 1, 0, 0},     // vampiress
         {4, 3, 2, 1, 0, 0},     // vampiress (other form)
-        {3, 3, 2, 1, 0, 1},     // dwarf
-        {2, 3, 1, 1, 3, 1},     // daemon
+        {3, 3, 2, 1, 1, 0},     // dwarf
+        {2, 3, 1, 1, 3, 0},     // daemon
     };
 
     std::atomic<bool> g_working{false};
