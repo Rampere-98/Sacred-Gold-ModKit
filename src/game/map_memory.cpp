@@ -1304,8 +1304,7 @@ namespace
                 const Cell& c = chunk.cells[i];
                 if (c.known())
                 {
-                    std::fprintf(f, "%d %d %d %u %u %06x %u %u
-", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
+                    std::fprintf(f, "%d %d %d %u %u %06x %u %u\n", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
                                  cy * kChunkSide + (i >> kChunkShift), c.visits, c.blocked, (c.r << 16) | (c.g << 8) | c.b,
                                  c.samples, c.scan);
                 }
@@ -1313,18 +1312,15 @@ namespace
         }
         for (const Landmark& l : copy.landmarks)
         {
-            std::fprintf(f, "L %d %d %d %d
-", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
+            std::fprintf(f, "L %d %d %d %d\n", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
         }
         for (const auto& [type, name] : copy.names)
         {
-            std::fprintf(f, "N %u %s
-", type, name.c_str());
+            std::fprintf(f, "N %u %s\n", type, name.c_str());
         }
         for (const Sighting& s : copy.sightings)
         {
-            std::fprintf(f, "E %u %d %d %d
-", s.type, s.layer, s.tx, s.ty);
+            std::fprintf(f, "E %u %d %d %d\n", s.type, s.layer, s.tx, s.ty);
         }
         std::fclose(f);
         MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);
