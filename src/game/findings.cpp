@@ -44,6 +44,16 @@ void Findings::write(const char* kind, int x, int y, const std::string& text)
     {
         return;
     }
+    // A shooter anywhere once in 30 s: a fight walked across tiles gave a burst of the same finding.
+    const std::string kindKey = std::string(kind) == "shooter" ? kind : std::string();
+    if (const auto it = g_lastAt.find(kindKey); !kindKey.empty() && it != g_lastAt.end() && now - it->second < 30000)
+    {
+        return;
+    }
+    if (!kindKey.empty())
+    {
+        g_lastAt[kindKey] = now;
+    }
     if (g_lastAt.size() > 4096)
     {
         g_lastAt.clear();

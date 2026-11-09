@@ -276,6 +276,7 @@ namespace
     bool g_collectOne = false;
     DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
     bool g_lootStill = false;       // lootDone gave up on it with the hero at it and the thing still there
+    bool g_lootStale = false;       // ... or its id now names another fixed thing (the table shifted): nothing marked
     float g_lootBest = 0.0f;        // the nearest the hero got to it, world units
     DWORD g_lootBestAt = 0;         // when it got that near
     DWORD g_sentAt = 0;             // when the last order went out
@@ -464,6 +465,19 @@ namespace
         {
             return true;
         }
+        // A fixed thing's table shifts when the game removes one of its entries (a used stone): the id then names
+        // another record (the review of the findings, 2026-11-09: «not reached» at 111 to 4366 tiles, F_Stein_0011
+        // e8 -> e7 in 22 s). Its place read again: moved off, it is left at once, and nothing is marked for it.
+        if (!loot)
+        {
+            int32_t fx = 0, fy = 0;
+            if (!fixedPosition(id, fx, fy) || std::abs(fx - g_fixedX) > 3 * 53.66563f || std::abs(fy - g_fixedY) > 3 * 53.66563f)
+            {
+                LOG("AutoAttack: fixed thing {:x} is another one now (its table shifted), left", id);
+                g_lootStale = true;
+                return true;
+            }
+        }
         const int32_t lx = loot ? loot->x : g_fixedX, ly = loot ? loot->y : g_fixedY;
         const float dx = static_cast<float>(lx - hero->x), dy = static_cast<float>(ly - hero->y);
         const float distance = std::sqrt(dx * dx + dy * dy);
@@ -584,6 +598,13 @@ namespace
             int32_t x = 0, y = 0;
             if (!fixedPosition(id, x, y))
             {
+                return false;
+            }
+            // Beyond the loot range: a stale id (its table shifted), not a thing to walk to.
+            if (std::abs(x - self->x) > 60 * kTileSize || std::abs(y - self->y) > 60 * kTileSize)
+            {
+                LOG("AutoAttack: fixed thing {:x} reads {:.0f} tiles off: a stale id, not gone for", id,
+                    std::max(std::abs(x - self->x), std::abs(y - self->y)) / kTileSize);
                 return false;
             }
             g_fixedX = x;
@@ -819,6 +840,7 @@ namespace
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
     uint32_t g_lastShooter = 0;                             // the last one taken for the shooter (logged once)
     int g_unseenHits = 0;                                   // hits in a row with no enemy to answer
+    DWORD g_meleeAt = 0;                                    // the last look with an enemy in the melee
     DWORD g_unseenHitAt = 0;
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
     constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
@@ -1148,14 +1170,20 @@ namespace
         // Hurt with nobody in the melee and no enemy seen striking (an archer's or caster's aim is not always read):
         // the nearest enemy within the look's reach is taken for the shooter and gone for. Seen live (2026-11-09):
         // the hero stood taking arrows until it died.
-        if (hurt && !inMelee && !enemyEngaged)
+        if (inMelee)
+        {
+            g_meleeAt = now;
+        }
+        // Only with nobody in the melee for 3 s (a blow from one just killed is no shot from afar) and within twice
+        // the Range (the nearest at any distance was a guess: the review of the findings, 2026-11-09).
+        if (hurt && !inMelee && !enemyEngaged && (!g_meleeAt || now - g_meleeAt > 3000))
         {
             float best = 0.0f;
             uint32_t shooter = 0;
             for (int i = 0; i < count; ++i)
             {
                 const auto d = distances.find(foes[i].id);
-                if (d == distances.end() || (g_unreachable.count(foes[i].id) && d->second > melee))
+                if (d == distances.end() || d->second > range * 2.0f || (g_unreachable.count(foes[i].id) && d->second > melee))
                 {
                     continue;
                 }
@@ -2884,7 +2912,11 @@ namespace
                 const bool stalled = g_lootAtSince || static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
                 cObjectManager* objects = cObjectManager::instance();
                 const bool idle = objects && CombatState::action(objects->hero()) == CombatState::Standing;
-                if (idle && stalled && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
+                // Just arrived after a walk there (the order sent was the walk): the use order now, the hero still
+                // walking or not (seen: a well reached, 3 s standing at it, used only on the retry).
+                const bool arrivedUnsent = g_lootAtSince && static_cast<int>(g_sentAt - g_lootAtSince) < 0 &&
+                                           now - g_lootAtSince > 300;
+                if (((idle && stalled) || arrivedUnsent) && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
                 {
                     g_sentAt = now;
                 }
@@ -2892,7 +2924,11 @@ namespace
             }
             // Done for good only when the hero stood at it and it is no item still lying there (an opened container,
             // a used well); an item at its feet is tried again soon, one not reached a minute later.
-            if (g_lootAtSince && !g_lootStill)
+            if (g_lootStale)
+            {
+                // nothing marked: the id names another thing now, the next look finds the right one
+            }
+            else if (g_lootAtSince && !g_lootStill)
             {
                 if (g_lootDone.size() > 4096)
                 {
@@ -2905,6 +2941,7 @@ namespace
                 lootFailed(g_target, now, g_lootStill);
             }
             g_lootStill = false;
+            g_lootStale = false;
             g_target = 0;
             if (g_collectOne)
             {
@@ -2926,6 +2963,7 @@ namespace
             g_sentAt = now;
             g_lootAtSince = 0;
             g_lootStill = false;
+            g_lootStale = false;
             g_lootBestAt = now;
             g_lootBest = 1e9f;
         }
