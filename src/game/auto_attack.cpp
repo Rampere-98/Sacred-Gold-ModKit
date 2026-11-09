@@ -1071,7 +1071,7 @@ namespace
 
         bool chosen = false;
         g_lootInstead = false;
-        if (enemy && Config::autoAttack.pickup)
+        if (enemy && Config::autoAttack.pickup && Config::autoAttack.lootInFight)
         {
             AimAssist::Target loot;
             const auto it = distances.find(enemy);
@@ -1209,7 +1209,7 @@ namespace
     // flags +0x14 & 0x80000), its icon as npcIconId (ENG 00499E90) picks it: crafts first (creature +0x200: 0x1000
     // smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable; none of them a quest sign), else the dialog record
     // +0x245 (u32 index, seen live 2026-11-09; 0 none) of [0xAACF80 +0x755C .. +0x7560), 0x50 bytes, icon at +0x48:
-    // 0 "!" (dialogs "auftrag*", quest offered), 1 "?" ("ziel*", report), 4/5 the others; +10 the same greyed (not yet
+    // 0 "?!" (dialogs "auftrag*", quest offered), 1 "!" ("ziel*", report), 4/5 the others ("?"); +10 greyed (not yet
     // for the hero). Plus the journal's targets under way, the one the agent goes for in yellow.
     DWORD g_questMarksAt = 0;
     // The merchants in the world (creature +0x200 & 0x2000), from the same pass: where a full backpack goes.
@@ -1957,6 +1957,9 @@ namespace
         ImGui::SetItemTooltip("Con su propia recogida (no usa la tecla A, que queda como en el juego): objetos del "
                               "suelo, cofres, escondites y pozos del radio, uno a uno, sin combate cerca.");
         ImGui::BeginDisabled(!c.pickup);
+        ImGui::Checkbox("Recoger también en combate (si está más cerca que el enemigo)", &c.lootInFight);
+        ImGui::SetItemTooltip("Recoger y luchar valen lo mismo: un objeto más cerca que el enemigo se recoge primero "
+                              "(uno, y vuelve a la pelea).");
         ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
         ImGui::SetItemTooltip("Apagado: solo recoge tras los combates que hace por ti.");
         ImGui::EndDisabled();
@@ -1976,6 +1979,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
         ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
         ModkitMenu::write(ini, L"AutoAttack", L"Background", c.background);
+        ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);

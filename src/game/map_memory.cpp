@@ -75,6 +75,7 @@ namespace
     std::unordered_map<uint32_t, std::string> g_kindNames;
     // Its filters (ModKit menu, [Map] in SacredBild.ini).
     bool g_showFoes = true;
+    bool g_showQuests = true;
     float g_minDanger = 0.0f;           // % of the hero's health per second; above 0 the kinds not yet learned hide
     bool g_onlyKilled = false;
     std::unordered_set<uint32_t> g_hiddenKinds;
@@ -374,6 +375,7 @@ namespace
     {
         ImGui::SeparatorText("Enciclopedia en el mapa");
         ImGui::Checkbox("Mostrar dónde se encontró a cada enemigo", &g_showFoes);
+        ImGui::Checkbox("Mostrar misiones (?! dar, ! informar; amarillo ya disponible, blanco aún no)", &g_showQuests);
         ImGui::SetItemTooltip("Una cruz por tipo y lugar: de verde (pega poco) a rojo (pega fuerte); gris si aún no se sabe.");
         ImGui::SliderFloat("Peligro mínimo (% de vida/s)", &g_minDanger, 0.0f, 5.0f, "%.1f");
         ImGui::SetItemTooltip("Por encima de 0 se ocultan los tipos que aún no ha aprendido.");
@@ -673,6 +675,10 @@ namespace
             ImFont* font = ImGui::GetFont();
             for (const MapMemory::QuestMark& q : g_questMarks)
             {
+                if (!g_showQuests)
+                {
+                    break;
+                }
                 if (q.layer != (g_heroLayer & 0xFF))
                 {
                     continue;
@@ -704,7 +710,7 @@ namespace
                 {
                     continue;
                 }
-                const char* text = q.glyph == MapMemory::Glyph::Offer ? "!" : q.glyph == MapMemory::Glyph::Report ? "?" : "?!";
+                const char* text = q.glyph == MapMemory::Glyph::Offer ? "?!" : q.glyph == MapMemory::Glyph::Report ? "!" : "?";
                 const ImVec2 extent = font->CalcTextSizeA(fontSize, FLT_MAX, 0.0f, text);
                 const ImVec2 corner(p.x - extent.x * 0.5f, p.y - extent.y * 0.5f);
                 for (int ox = -1; ox <= 1; ++ox)
@@ -828,6 +834,7 @@ namespace
         ModkitMenu::write(ini, L"Map", L"Hud", g_hud);
         ModkitMenu::write(ini, L"Map", L"Zoom", g_zoom);
         ModkitMenu::write(ini, L"Map", L"Foes", g_showFoes);
+        ModkitMenu::write(ini, L"Map", L"Quests", g_showQuests);
         ModkitMenu::write(ini, L"Map", L"FoeMinDanger", static_cast<int>(std::lround(g_minDanger * 10.0f)));
         ModkitMenu::write(ini, L"Map", L"FoeOnlyKilled", g_onlyKilled);
         std::wstring hidden;
@@ -853,6 +860,7 @@ void MapMemory::install()
         g_hud = GetPrivateProfileIntW(L"Map", L"Hud", 1, ini.c_str()) != 0;
         g_zoom = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"Zoom", 4, ini.c_str())), 2, 10);
         g_showFoes = GetPrivateProfileIntW(L"Map", L"Foes", 1, ini.c_str()) != 0;
+        g_showQuests = GetPrivateProfileIntW(L"Map", L"Quests", 1, ini.c_str()) != 0;
         g_minDanger = std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Map", L"FoeMinDanger", 0, ini.c_str())), 0, 50) / 10.0f;
         g_onlyKilled = GetPrivateProfileIntW(L"Map", L"FoeOnlyKilled", 0, ini.c_str()) != 0;
         wchar_t hidden[2048] = {};

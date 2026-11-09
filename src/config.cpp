@@ -159,6 +159,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.seek = readBool(ini, L"AutoAttack", L"Seek", Config::autoAttack.seek);
     Config::autoAttack.roam = readBool(ini, L"AutoAttack", L"Roam", Config::autoAttack.roam);
     Config::autoAttack.background = readBool(ini, L"AutoAttack", L"Background", Config::autoAttack.background);
+    Config::autoAttack.lootInFight = readBool(ini, L"AutoAttack", L"LootInFight", Config::autoAttack.lootInFight);
     Config::autoAttack.quests = readBool(ini, L"AutoAttack", L"Quests", Config::autoAttack.quests);
     Config::autoAttack.roamStep = readInt(ini, L"AutoAttack", L"RoamStep", Config::autoAttack.roamStep);
     Config::autoAttack.pauseMs = std::clamp(readInt(ini, L"AutoAttack", L"Pause", Config::autoAttack.pauseMs), 0, 10000);
