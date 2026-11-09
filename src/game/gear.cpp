@@ -539,7 +539,7 @@ namespace
 
     // An item left in the cursor's hand (seen live, 2026-11-09: a healing potion picked up while the inventory was
     // open stayed there): into the backpack once it has been held 3 s (a drag of the player's is quicker). The hand:
-    // cMouse at [0xCDDB5C], +0x68 the held entry (+0 kind, 1 an item; +4 its id), Manolito's catalogue «Objeto en el
+    // cMouse at [0xCDDB5C], +0x68 the held entry (+0 u16 kind, 1 an item; +4 its id), Manolito's catalogue «Objeto en el
     // cursor». Put into the backpack first, then the hand emptied (cMouse::clear keeps the item).
     void stashHeld(uint8_t* pack)
     {
@@ -547,7 +547,8 @@ namespace
         static DWORD s_heldSince = 0;
         uint8_t* mouse = g_mouseClear ? *reinterpret_cast<uint8_t**>(0xCDDB5C) : nullptr;
         const uint8_t* held = mouse ? *reinterpret_cast<uint8_t* const*>(mouse + 0x68) : nullptr;
-        const uint32_t id = held && *reinterpret_cast<const uint32_t*>(held) == 1 ? *reinterpret_cast<const uint32_t*>(held + 4) : 0;
+        // +0 is a u16 kind (1 an item); the u16 after it is something else (0x19 seen live with a glaive held).
+        const uint32_t id = held && *reinterpret_cast<const uint16_t*>(held) == 1 ? *reinterpret_cast<const uint32_t*>(held + 4) : 0;
         const DWORD now = GetTickCount();
         if (!id || id != s_heldId)
         {
