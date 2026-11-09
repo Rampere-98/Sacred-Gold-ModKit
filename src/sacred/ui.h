@@ -640,11 +640,11 @@ namespace Sacred
             questbook,      // the log book (cUI_Diary)
             savegame,       // full screen
             escapeMenu,
-            _b4,
+            purchase,       // cUI_Purchase (window 13)
             master,         // combat art master, 0,0 640x336
             options,        // full screen
             chest,          // 0,0 640x320
-            _c4,
+            horse,          // cUI_Horse: the stable boy (buy, heal the horse), window 17
             networkInfo,    // the player list of a network game (cUI_NetworkInfo)
             netPortraits,   // 0,0 896x64
             character,      // character export, full screen
