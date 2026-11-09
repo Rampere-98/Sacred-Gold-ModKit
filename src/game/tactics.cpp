@@ -650,10 +650,62 @@ namespace
 
     // --- Choosing ------------------------------------------------------------------------------------------------
 
+    // What the game's own data says an art does (docs: the art records' aiming and names, read by Manolito,
+    // 2026-11-09): a cast at a lone enemy cannot tell an area art from a single one, nor a buff that hurt nearby.
+    Art knownUse(uint32_t art)
+    {
+        switch (art)
+        {
+        case 0x42D: case 0x421: case 0x3FC:             // multi strike, spinning strike
+        case 0xF:                                       // celestial light
+        case 0xB: case 0x1A: case 0x23:                 // fire spiral, meteor shower, ice ring
+            return Art::Area;
+        case 0x11: case 0x15: case 0x16:                // light blades (aura), strength of faith, shield of light
+        case 0x3F6: case 0x3F7: case 0x3F8:             // fear, heroic valor, dagger gaze
+        case 0x2: case 0x18: case 0x1E:                 // stone skin, flame skin, shield wall
+            return Art::Buff;
+        case 0x7:                                       // spiritual healing
+            return Art::Heal;
+        default:
+            return Art::Auto;
+        }
+    }
+
+    // A combo by its pieces (stats +0x10E: 38-byte records, u32 arts at +2): an area one with two area pieces or more.
+    Art comboUse(uint32_t combo)
+    {
+        const cCreature* hero = heroCreature();
+        if (!hero || combo < kFirstCombo || combo > kLastCombo)
+        {
+            return Art::Auto;
+        }
+        const auto* stats = reinterpret_cast<const uint8_t*>(hero) + 0x3A8;
+        const auto* records = *reinterpret_cast<const uint8_t* const*>(stats + 0x10E);
+        if (!records)
+        {
+            return Art::Auto;
+        }
+        const uint8_t* r = records + (combo - kFirstCombo) * 38;
+        int area = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            area += knownUse(*reinterpret_cast<const uint32_t*>(r + 2 + 4 * i)) == Art::Area;
+        }
+        return area >= 2 ? Art::Area : Art::Auto;
+    }
+
     Art slotUse(int slot, uint32_t art)
     {
         const Art set = Config::tactics.slots[slot];
-        return set != Art::Auto ? set : learned(art).kind();
+        if (set != Art::Auto)
+        {
+            return set;
+        }
+        if (const Art known = art >= kFirstCombo && art <= kLastCombo ? comboUse(art) : knownUse(art); known != Art::Auto)
+        {
+            return known;
+        }
+        return learned(art).kind();
     }
 
     int median(std::vector<int> v)

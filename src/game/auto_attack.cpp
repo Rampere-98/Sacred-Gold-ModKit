@@ -305,7 +305,7 @@ namespace
     // and going for it, then for the quest again, the hero went back and forth (seen live, 2026-11-09). Never
     // further than kLootMaxTiles (a fixed thing's place read wrong put one 3000 tiles off).
     bool g_questTravel = false;
-    constexpr double kLootMaxTiles = 40.0, kLootOnTheWayTiles = 10.0;
+    constexpr double kLootMaxTiles = 40.0, kLootOnTheWayTiles = 18.0;
 
     bool lootNear(int32_t x, int32_t y)
     {
@@ -1771,7 +1771,7 @@ namespace
             const double away = std::hypot(static_cast<double>(g_farmX - self->x), static_cast<double>(g_farmY - self->y));
             if (away > 20.0 * kTileSize)
             {
-                g_questTravel = true;   // loot only on the way
+                // The way to farm is farming too: all the loot around is taken (no quest waits).
                 if (!ClickWalk::routing() && now - g_questAskAt > 4000)
                 {
                     g_questAskAt = now;
