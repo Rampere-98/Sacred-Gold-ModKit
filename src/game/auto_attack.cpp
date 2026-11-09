@@ -2188,7 +2188,7 @@ namespace
                         const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
                         const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
                         const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
-                        if (!chestNear && wd > 2.0 * kTileSize && !approachStalled(wx, wy, wd, now))
+                        if (!chestNear && wd > 0.6 * kTileSize && !approachStalled(wx, wy, wd, now))
                         {
                             g_questTravel = false;
                             if (!ClickWalk::routing() && now - g_questAskAt > 4000)
@@ -2232,7 +2232,7 @@ namespace
                     g_homeY = wy;
                     const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
                     const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
-                    if (!chestNear && wd > 2.0 * kTileSize && !approachStalled(wx, wy, wd, now))
+                    if (!chestNear && wd > 0.6 * kTileSize && !approachStalled(wx, wy, wd, now))
                     {
                         static uint64_t toldCentre = 0;
                         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(nx)) << 32) | static_cast<uint32_t>(ny);
