@@ -817,16 +817,32 @@ namespace
         const float size = std::round(io.DisplaySize.y * 0.22f);
         ImGui::SetNextWindowPos(ImVec2(io.DisplaySize.x - 8.0f, io.DisplaySize.y - 8.0f), ImGuiCond_Always,
                                 ImVec2(1.0f, 1.0f));
-        ImGui::SetNextWindowBgAlpha(0.0f);     // only the round radar and its title show
+        ImGui::SetNextWindowBgAlpha(0.0f);     // only the round radar and its title show: no frame, no padding
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
+        ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(0.0f, 0.0f));
+        ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0.0f, 4.0f));
         const ImGuiWindowFlags flags = ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoInputs |
                                        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoFocusOnAppearing |
-                                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize;
+                                       ImGuiWindowFlags_NoNav | ImGuiWindowFlags_AlwaysAutoResize |
+                                       ImGuiWindowFlags_NoBackground;
         if (ImGui::Begin("##agentmap", nullptr, flags))
         {
-            ImGui::Text("Visión del agente  capa %d  %d casillas", g_heroLayer, seenOnLayer());
+            // The title centered over the radar, with a shadow to read on any ground.
+            char title[96];
+            std::snprintf(title, sizeof(title), "Visión del agente · capa %d", g_heroLayer);
+            const ImVec2 extent = ImGui::CalcTextSize(title);
+            const float width = std::max(size, extent.x);
+            const ImVec2 origin = ImGui::GetCursorScreenPos();
+            const ImVec2 at(origin.x + std::round((width - extent.x) * 0.5f), origin.y);
+            ImDrawList* dl = ImGui::GetWindowDrawList();
+            dl->AddText(ImVec2(at.x + 1.0f, at.y + 1.0f), IM_COL32(0, 0, 0, 230), title);
+            dl->AddText(at, IM_COL32(235, 235, 235, 255), title);
+            ImGui::Dummy(ImVec2(width, extent.y));
+            ImGui::SetCursorPosX(ImGui::GetCursorPosX() + std::round((width - size) * 0.5f));
             drawMap(size);
         }
         ImGui::End();
+        ImGui::PopStyleVar(3);
     }
 
     void saveMenu(const std::wstring& ini)
