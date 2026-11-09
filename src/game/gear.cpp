@@ -34,7 +34,7 @@ namespace
     uintptr_t g_inventoryPtr = 0, g_typeMgrPtr = 0;     // the globals holding cInventory* and the type manager
     uintptr_t g_getEntry = 0, g_findFree = 0, g_putItem = 0, g_removeItem = 0, g_typeSize = 0, g_getInfo = 0,
               g_getValue = 0, g_equip = 0, g_getEquipped = 0, g_canUse = 0, g_slotAccepts = 0, g_price = 0,
-              g_addGoldCall = 0, g_useItem = 0;
+              g_addGoldCall = 0, g_useItem = 0, g_mouseClear = 0;
     uintptr_t g_addGold = 0;
     const Sig::Entry kSigs[] = {
         {"cInventory", "8B 35 ?? ?? ?? ?? 85 F6 74 1A 8B CE C7 05 ?? ?? ?? ?? 00 00 00 00 E8 ?? ?? ?? ?? 56 E8 ?? ?? ?? ?? 83 C4 04 5E C3 90 90 90 90 90 90 90 90 90 8B 44 24 04 66 3D 20 00", 2,
@@ -78,6 +78,7 @@ namespace
     using Price = uint32_t(__fastcall*)(void* inv, void*, uint32_t id, int buy);
     using AddGold = void(__fastcall*)(void* stats, void*, int delta);
     using UseItem = uint8_t(__fastcall*)(cCreature* c, void*, uint32_t id);
+    using MouseClear = void(__fastcall*)(void* mouse, void*);
 
     // Runes: cItemUpgrade (vtable ENG 00891D90), types 0x14FF..0x1696. Each tried once: one of another class, or a
     // requirement not met, stays in the backpack and is not tried again.
@@ -536,6 +537,47 @@ namespace
         return !fn<FindFree>(g_findFree)(pack, nullptr, 2, 2, &free, 0);
     }
 
+    // An item left in the cursor's hand (seen live, 2026-11-09: a healing potion picked up while the inventory was
+    // open stayed there): into the backpack once it has been held 3 s (a drag of the player's is quicker). The hand:
+    // cMouse at [0xCDDB5C], +0x68 the held entry (+0 kind, 1 an item; +4 its id), Manolito's catalogue «Objeto en el
+    // cursor». Put into the backpack first, then the hand emptied (cMouse::clear keeps the item).
+    void stashHeld(uint8_t* pack)
+    {
+        static uint32_t s_heldId = 0;
+        static DWORD s_heldSince = 0;
+        uint8_t* mouse = g_mouseClear ? *reinterpret_cast<uint8_t**>(0xCDDB5C) : nullptr;
+        const uint8_t* held = mouse ? *reinterpret_cast<uint8_t* const*>(mouse + 0x68) : nullptr;
+        const uint32_t id = held && *reinterpret_cast<const uint32_t*>(held) == 1 ? *reinterpret_cast<const uint32_t*>(held + 4) : 0;
+        const DWORD now = GetTickCount();
+        if (!id || id != s_heldId)
+        {
+            s_heldId = id;
+            s_heldSince = now;
+            return;
+        }
+        if (now - s_heldSince < 3000 || !cObjectManager::instance()->object(id))
+        {
+            return;
+        }
+        int w = 0, h = 0;
+        uint16_t free = 0;
+        if (!sizeOf(id, w, h) || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+        {
+            static uint32_t s_told = 0;
+            if (s_told != id)
+            {
+                s_told = id;
+                LOG("Gear: {:x} (type {:x}) held on the cursor: no room in the backpack", id, typeOf(id));
+            }
+            return;
+        }
+        fn<PutItem>(g_putItem)(pack, nullptr, free, id, w, h, 1);
+        fn<MouseClear>(g_mouseClear)(mouse, nullptr);
+        LOG("Gear: {:x} (type {:x}) held on the cursor {} s: put into the backpack", id, typeOf(id),
+            (now - s_heldSince) / 1000);
+        s_heldId = 0;
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -544,6 +586,7 @@ namespace
         uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
         if (hero && inv && pack && hero->health > 0)
         {
+            stashHeld(pack);
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
@@ -632,6 +675,11 @@ namespace
         g_settings.keepGoldPercent =
             std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gear", L"KeepGoldPercent", 50, ini.c_str())), 0, 95);
         const size_t missing = Sig::resolve(kSigs);
+        // cMouse::clear (ENG 006556F0, Manolito): empties the cursor's hand without destroying what it held. Apart:
+        // without it only the held item's stashing is off.
+        const Sig::Entry kMouseSig[] = {
+            {"cMouse::clear", "83 EC 14 53 57 8B F9 33 DB 8B 47 68", 0, Sig::Take::Match, &g_mouseClear}};
+        Sig::resolve(kMouseSig);
         if (g_addGoldCall && *reinterpret_cast<const uint8_t*>(g_addGoldCall) == 0xE8)
         {
             g_addGold = g_addGoldCall + 5 + *reinterpret_cast<const int32_t*>(g_addGoldCall + 1);
