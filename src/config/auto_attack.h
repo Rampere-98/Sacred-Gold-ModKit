@@ -11,7 +11,8 @@ namespace Config
         bool seek = false;      // also go after any enemy within range; off: only those attacking the hero or the player's
         int roamStep = 6;       // tiles a roaming step goes (shorter where that tile cannot be stood on)
         bool roam = false;
-        bool quests = false;    // nothing around: off to the quest under way's target (main first), roaming there      // nothing around: walk off a step at a time toward ground not seen yet (the agent map)
+        bool quests = false;
+        bool background = true; // the agent plays on with the game's window in the background    // nothing around: off to the quest under way's target (main first), roaming there      // nothing around: walk off a step at a time toward ground not seen yet (the agent map)
         int pauseMs = 700;      // no auto attack for this long after the player's own mouse click
         bool pickup = true;     // the agent's own collect (never the game's A): items, chests and containers, the hand-cursor fixed things (hiding places, wells)
         bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on

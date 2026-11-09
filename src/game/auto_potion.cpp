@@ -2,6 +2,7 @@
 #include "config/auto_potion.h"
 #include "game/combat_state.h"
 #include "game/focus.h"
+#include "config/auto_attack.h"
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
 #include "game/ui_nav.h"
@@ -141,7 +142,7 @@ void AutoPotion::onFrame()
     }
     cObjectManager* objects = cObjectManager::instance();
     cCreature* hero = objects ? objects->hero() : nullptr;
-    if (!hero || hero->maxHealth <= 0 || !Focus::foreground() || !worldRunning())
+    if (!hero || hero->maxHealth <= 0 || !(Focus::foreground() || Config::autoAttack.background) || !worldRunning())
     {
         return;
     }

@@ -137,6 +137,20 @@ namespace
         return kFixedId | (tx << 16) | ty;
     }
 
+    // Stones with the hand cursor (F_Stein): runes, plaques and gravestones (seen live, 2026-11-09: a click opens
+    // the gravestone's dialog, "Abrir" / "Salir"; "Abrir" gives a second one with the outcome, "Aceptar": empty, an
+    // item, or enemies). Each is tried once: the dialogs are answered with their first answer (Enter), and a stone
+    // with only text closes the same way.
+    bool fixedStone(const uint8_t* record)
+    {
+        return record && std::memcmp(record + kFixedName, "F_Stein", 7) == 0;
+    }
+
+    bool fixedStone(uint32_t id)
+    {
+        return isFixed(id) && fixedStone(fixedRecord(id));
+    }
+
     bool fixedUsable(uint32_t id)
     {
         const uint8_t* record = fixedRecord(id);
@@ -144,7 +158,8 @@ namespace
         {
             return false;
         }
-        const bool usable = *reinterpret_cast<const uint32_t*>(record + kFixedKind) == kFixedUsable;
+        const bool usable =
+            *reinterpret_cast<const uint32_t*>(record + kFixedKind) == kFixedUsable || fixedStone(record);
         static std::unordered_set<uint32_t> logged;
         if (logged.insert(id).second && logged.size() < 512)
         {
@@ -1649,6 +1664,8 @@ namespace
         ImGui::Checkbox("Explorar cuando no hay nadie", &c.roam);
         ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
         ImGui::Checkbox("Ir a la misión activa", &c.quests);
+        ImGui::Checkbox("Seguir jugando en segundo plano", &c.background);
+        ImGui::SetItemTooltip("El agente sigue con la ventana del juego sin foco (no usa tu ratón ni tu teclado).");
         ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
                               "cercana), sin límite de distancia; allí explora alrededor.");
         if (ImGui::IsItemHovered())
@@ -1682,6 +1699,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Roam", c.roam);
         ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
         ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
+        ModkitMenu::write(ini, L"AutoAttack", L"Background", c.background);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
@@ -1715,11 +1733,14 @@ void AutoAttack::onFrame()
         return;
     }
     const DWORD now = GetTickCount();
-    const bool foreground = Focus::foreground();
+    // The player's keys and clicks only while the game has the focus; the agent itself (orders, Enter posted to the
+    // game's window) also plays on in the background ([AutoAttack] Background).
+    const bool focused = Focus::foreground();
+    const bool foreground = focused || Config::autoAttack.background;
     checkNewGame();
 
     // The toggle key, on its press and only while the game has the focus.
-    const bool keyDown = foreground && physicallyDown(Config::autoAttack.key);
+    const bool keyDown = focused && physicallyDown(Config::autoAttack.key);
     if (keyDown && !g_keyWasDown)
     {
         g_on = !g_on;
@@ -1729,7 +1750,7 @@ void AutoAttack::onFrame()
     }
     g_keyWasDown = keyDown;
 
-    if (foreground && playerClicks())
+    if (focused && playerClicks())
     {
         g_quietUntil = now + static_cast<DWORD>(Config::autoAttack.pauseMs);
         endCollect("player's click");
@@ -1740,6 +1761,39 @@ void AutoAttack::onFrame()
     if (g_quietUntil && static_cast<int>(now - g_quietUntil) < 1500)
     {
         notePlayerTarget();
+    }
+    // A stone's dialogs (a gravestone: "Abrir", then the outcome's "Aceptar"): the first answer each time, as Enter
+    // picks it; once none is open any more, the stone is done (enemies it raised are the fight's).
+    static DWORD s_answerAt = 0;
+    static int s_answers = 0;
+    if (g_collecting && foreground && UiNav::npcDialogOpen() && fixedStone(g_target))
+    {
+        if (static_cast<int>(now - s_answerAt) > 700)
+        {
+            if (++s_answers > 4)
+            {
+                LOG("AutoAttack: stone {:x} keeps its dialog open, left to the player", g_target);
+                g_lootDone.insert(lootKey(g_target));
+                s_answers = 0;
+                endCollect("dialog");
+                return;
+            }
+            LOG("AutoAttack: stone {:x}: dialog, answer 1 (Enter)", g_target);
+            s_answerAt = now;
+            Inject::key(VK_RETURN, true);
+            Inject::key(VK_RETURN, false);
+        }
+        return;
+    }
+    if (s_answers && !UiNav::npcDialogOpen() && static_cast<int>(now - s_answerAt) > 900)
+    {
+        if (g_collecting && g_target)
+        {
+            LOG("AutoAttack: stone {:x} used ({} answers)", g_target, s_answers);
+            g_lootDone.insert(lootKey(g_target));
+            g_target = 0;
+        }
+        s_answers = 0;
     }
     // A dialog opened while collecting: an NPC who spoke up as the hero passed, more often than the loot's own text
     // (fixtures with text are left out by their flags and kind already). The collect stops and leaves the dialog to
