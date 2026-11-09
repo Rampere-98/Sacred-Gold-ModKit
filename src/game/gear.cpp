@@ -9,6 +9,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <atomic>
+#include <cstring>
 #include <cstdint>
 #include <mutex>
 #include <string>
@@ -27,7 +28,8 @@ namespace
         bool buy = false;
         int keepGoldPercent = 50;   // buying spends at most the rest
         bool trips = true;      // to a merchant when the backpack is full
-        bool runes = true;      // read the runes in the backpack (learn the art, or a level more)
+        bool runes = true;
+        bool scrolls = true;    // read the scrolls and books of the backpack (the encyclopedia: monsters, the undead)      // read the runes in the backpack (learn the art, or a level more)
     };
     Settings g_settings;
 
@@ -547,6 +549,49 @@ namespace
         return true;
     }
 
+    // The scrolls in the backpack (cScroll3D, by RTTI): read once each with the use that potions take (Manolito,
+    // 2026-11-09: useItem 0x54AA80 accepts their category 0x10; most are books for the encyclopedia, of monsters and
+    // the undead among them, which the player wants the agent to know). One a call, while calm.
+    std::unordered_set<uint32_t> g_scrollsTried;
+
+    bool isScroll(const cObject* item)
+    {
+        struct TypeDescriptor
+        {
+            const void* vtable;
+            void* spare;
+            char name[1];
+        };
+        struct Locator
+        {
+            uint32_t signature, offset, cdOffset;
+            const TypeDescriptor* type;
+        };
+        const auto* locator = reinterpret_cast<const Locator* const*>(*reinterpret_cast<const void* const*>(item))[-1];
+        return locator && locator->type && std::strcmp(locator->type->name, ".?AVcScroll3D@@") == 0;
+    }
+
+    bool readScroll(cCreature* hero, uint8_t* pack)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        uint32_t scroll = 0;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            cObject* item = scroll || !objects || g_scrollsTried.count(id) ? nullptr : objects->object(id);
+            if (item && isScroll(item))
+            {
+                scroll = id;
+            }
+        });
+        if (!scroll)
+        {
+            return false;
+        }
+        g_scrollsTried.insert(scroll);
+        const bool used = fn<UseItem>(g_useItem)(hero, nullptr, scroll) != 0;
+        LOG("Gear: scroll {:x} (type {:x}) read: {}", scroll, typeOf(scroll), used ? "done" : "refused");
+        return true;
+    }
+
     bool g_calm = false;
     std::atomic<bool> g_working{false};
 
@@ -632,6 +677,9 @@ namespace
             else if (g_calm && !shop && g_settings.runes && g_useItem && readRune(hero, pack))
             {
             }
+            else if (g_calm && !shop && g_settings.scrolls && g_useItem && readScroll(hero, pack))
+            {
+            }
             else
             {
                 acted = false;
@@ -677,6 +725,7 @@ namespace
         ImGui::Checkbox("Comprar mejoras (con un mercader abierto)", &g_settings.buy);
         ImGui::SliderInt("Oro que guarda (%)", &g_settings.keepGoldPercent, 0, 95);
         ImGui::Checkbox("Leer las runas de la mochila", &g_settings.runes);
+        ImGui::Checkbox("Leer los pergaminos y libros (enciclopedia)", &g_settings.scrolls);
         ImGui::SetItemTooltip("Fuera de combate, como el clic derecho: aprende el arte o le sube un nivel. Las de otra "
                               "clase se quedan en la mochila.");
         ImGui::Checkbox("Ir al mercader con la mochila llena", &g_settings.trips);
@@ -692,6 +741,7 @@ namespace
         ModkitMenu::write(ini, L"Gear", L"KeepGoldPercent", g_settings.keepGoldPercent);
         ModkitMenu::write(ini, L"Gear", L"Trips", g_settings.trips);
         ModkitMenu::write(ini, L"Gear", L"Runes", g_settings.runes);
+        ModkitMenu::write(ini, L"Gear", L"Scrolls", g_settings.scrolls);
     }
 
     void install()
@@ -702,6 +752,7 @@ namespace
         g_settings.buy = GetPrivateProfileIntW(L"Gear", L"Buy", 0, ini.c_str()) != 0;
         g_settings.trips = GetPrivateProfileIntW(L"Gear", L"Trips", 1, ini.c_str()) != 0;
         g_settings.runes = GetPrivateProfileIntW(L"Gear", L"Runes", 1, ini.c_str()) != 0;
+        g_settings.scrolls = GetPrivateProfileIntW(L"Gear", L"Scrolls", 1, ini.c_str()) != 0;
         g_settings.keepGoldPercent =
             std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gear", L"KeepGoldPercent", 50, ini.c_str())), 0, 95);
         const size_t missing = Sig::resolve(kSigs);
@@ -739,7 +790,8 @@ void Gear::onFrame(DWORD now, bool calm)
         lastMerchant = merchant;
     }
     static DWORD nextAt = 0;
-    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips || g_settings.runes) ||
+    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips || g_settings.runes ||
+                      g_settings.scrolls) ||
         (nextAt && static_cast<int>(now - nextAt) < 0) || g_working)
     {
         return;
