@@ -76,12 +76,70 @@ namespace
         waitIdle(reinterpret_cast<uintptr_t>(*(static_cast<void**>(_AddressOfReturnAddress()) + 1)));
     }
 
+    // Granny's own entry guard (every API function: lock inc byte [0x1006CB38], then spin until the dword is 1) is no
+    // lock: two threads entering together both see 2 and spin forever (seen: the presenting thread and the game's main
+    // thread, the game frozen at two cores). A real lock around every Granny call keeps one thread inside at a time.
+    CRITICAL_SECTION g_grannyLock;
+    struct Returns
+    {
+        void* at[64];
+        uint32_t depth = 0;
+    };
+    thread_local Returns t_returns;
+
+    // From the stubs, after waitFromStub: takes the lock and makes the Granny call return through leaveThunk.
+    void leaveThunk();
+    void __cdecl enterFromStub()
+    {
+        EnterCriticalSection(&g_grannyLock);
+        void** ret = static_cast<void**>(_AddressOfReturnAddress()) + 1;
+        Returns& r = t_returns;
+        if (r.depth < 64)
+        {
+            r.at[r.depth++] = *ret;
+            *ret = reinterpret_cast<void*>(&leaveThunk);
+        }
+        else
+        {
+            LeaveCriticalSection(&g_grannyLock);     // nested too deep: this call goes unguarded
+        }
+    }
+
+    void* __cdecl leaveGranny()
+    {
+        Returns& r = t_returns;
+        void* ret = r.at[--r.depth];
+        LeaveCriticalSection(&g_grannyLock);
+        return ret;
+    }
+
+    // The Granny call returned here: eax, edx, ecx (and st0) as it left them, then on to the game's return address.
+    __declspec(naked) void leaveThunk()
+    {
+        __asm
+        {
+            push eax
+            push eax
+            push edx
+            push ecx
+            call leaveGranny
+            mov [esp + 12], eax
+            pop ecx
+            pop edx
+            pop eax
+            ret
+        }
+    }
+
     int __stdcall asyncAdvanceTime(void* handle, double seconds)
     {
         waitIdle(reinterpret_cast<uintptr_t>(_ReturnAddress()));
         if (GetCurrentThreadId() == g_workerId)
         {
-            return g_origAdvanceTime(handle, seconds);
+            EnterCriticalSection(&g_grannyLock);
+            const int result = g_origAdvanceTime(handle, seconds);
+            LeaveCriticalSection(&g_grannyLock);
+            return result;
         }
         g_jobHandle = handle;
         g_jobSeconds = seconds;
@@ -102,7 +160,9 @@ namespace
             _control87(g_jobFpu, _MCW_PC | _MCW_RC | _MCW_EM);
             _mm_setcsr(g_jobMxcsr);
             const int64_t start = qpc();
+            EnterCriticalSection(&g_grannyLock);
             g_origAdvanceTime(g_jobHandle, g_jobSeconds);
+            LeaveCriticalSection(&g_grannyLock);
             g_advanceTicks.fetch_add(qpc() - start, std::memory_order_relaxed);
             g_jobs.fetch_add(1, std::memory_order_relaxed);
             g_busy.store(false, std::memory_order_release);
@@ -127,10 +187,8 @@ namespace
 
 void GrannyAsync::install()
 {
-    if (!Config::render.asyncAnimation)
-    {
-        return;
-    }
+    InitializeCriticalSectionAndSpinCount(&g_grannyLock, 4000);
+    const bool async = Config::render.asyncAnimation;
     auto* base = reinterpret_cast<uint8_t*>(GetModuleHandleW(nullptr));
     const IMAGE_IMPORT_DESCRIPTOR* imp = grannyImports(base);
     if (!imp)
@@ -146,8 +204,8 @@ void GrannyAsync::install()
         ++count;
     }
 
-    // Per import: call waitFromStub; jmp [original].
-    constexpr size_t kStubSize = 11;
+    // Per import: call waitFromStub; call enterFromStub; jmp [original].
+    constexpr size_t kStubSize = 16;
     auto* stubs = static_cast<uint8_t*>(VirtualAlloc(nullptr, count * kStubSize, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
     g_originals = new void*[count];
     if (!stubs)
@@ -162,7 +220,7 @@ void GrannyAsync::install()
         const char* name = IMAGE_SNAP_BY_ORDINAL(names[i].u1.Ordinal)
             ? ""
             : reinterpret_cast<const char*>(reinterpret_cast<IMAGE_IMPORT_BY_NAME*>(base + names[i].u1.AddressOfData)->Name);
-        if (std::strcmp(name, "_GrannyAdvanceTime@12") == 0)
+        if (async && std::strcmp(name, "_GrannyAdvanceTime@12") == 0)
         {
             g_origAdvanceTime = reinterpret_cast<AdvanceTimeFn>(original);
             patches.emplace_back(reinterpret_cast<uintptr_t>(&slots[i].u1.Function), reinterpret_cast<void*>(&asyncAdvanceTime));
@@ -173,21 +231,28 @@ void GrannyAsync::install()
         stub[0] = 0xE8;
         const int32_t rel = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&waitFromStub) - reinterpret_cast<uintptr_t>(stub + 5));
         std::memcpy(stub + 1, &rel, 4);
-        stub[5] = 0xFF;
-        stub[6] = 0x25;
+        stub[5] = 0xE8;
+        const int32_t relEnter = static_cast<int32_t>(reinterpret_cast<uintptr_t>(&enterFromStub) - reinterpret_cast<uintptr_t>(stub + 10));
+        std::memcpy(stub + 6, &relEnter, 4);
+        stub[10] = 0xFF;
+        stub[11] = 0x25;
         void** target = &g_originals[i];
-        std::memcpy(stub + 7, &target, 4);
+        std::memcpy(stub + 12, &target, 4);
         patches.emplace_back(reinterpret_cast<uintptr_t>(&slots[i].u1.Function), stub);
-    }
-    if (!g_origAdvanceTime)
-    {
-        LOG("Animation: GrannyAdvanceTime not imported, staying synchronous");
-        VirtualFree(stubs, 0, MEM_RELEASE);
-        return;
     }
     DWORD old = 0;
     VirtualProtect(stubs, count * kStubSize, PAGE_EXECUTE_READ, &old);
     FlushInstructionCache(GetCurrentProcess(), stubs, count * kStubSize);
+    if (!async || !g_origAdvanceTime)
+    {
+        for (const auto& [slot, target] : patches)
+        {
+            Patch::write(slot, &target, sizeof(target));
+        }
+        LOG("Animation: synchronous{}, {} Granny imports behind one lock", async ? " (GrannyAdvanceTime not imported)" : "",
+            count);
+        return;
+    }
 
     g_jobEvent = CreateEventW(nullptr, FALSE, FALSE, nullptr);
     g_idleEvent = CreateEventW(nullptr, TRUE, TRUE, nullptr);
@@ -209,8 +274,8 @@ void GrannyAsync::install()
     {
         Patch::write(slot, &target, sizeof(target));
     }
-    LOG("Animation: GrannyAdvanceTime runs on worker thread {}, {} other Granny imports wait for it", g_workerId,
-        count - 1);
+    LOG("Animation: GrannyAdvanceTime runs on worker thread {}, {} other Granny imports wait for it, all behind one lock",
+        g_workerId, count - 1);
 }
 
 void GrannyAsync::onFrame()
