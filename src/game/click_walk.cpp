@@ -648,18 +648,21 @@ namespace
     }
 
     // A walk asked for from the agent's map: sent as the player's click would be, so the hook above routes it.
+    // Asked with the ModKit menu open, when the game takes no orders: kept until it does (the menu closed).
     std::atomic<int32_t> g_askX{0}, g_askY{0};
+    std::atomic<bool> g_askPending{false};
 
     void askedWalk(void*)
     {
         cEngine* engine = FrameHooks::engine();
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
-        if (!engine || !hero || (engine->flags & (cEngine::loading | cEngine::noWorldInput)) ||
+        if (!g_askPending || !engine || !hero || (engine->flags & (cEngine::loading | cEngine::noWorldInput)) ||
             engine->controlled != hero->id)
         {
             return;
         }
+        g_askPending = false;
         cOrder order;
         order.type = cOrder::move;
         order.mode = cOrder::walk;
@@ -785,7 +788,7 @@ void ClickWalk::walkTo(int32_t x, int32_t y)
 {
     g_askX = x;
     g_askY = y;
-    Inject::call(&askedWalk, nullptr);
+    g_askPending = true;
 }
 
 bool ClickWalk::walking()
@@ -839,6 +842,10 @@ void ClickWalk::install()
 
 void ClickWalk::onFrame()
 {
+    if (g_askPending)
+    {
+        Inject::call(&askedWalk, nullptr);
+    }
     if (!g_active)
     {
         return;

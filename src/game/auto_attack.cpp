@@ -1358,10 +1358,14 @@ namespace
             }
             if (!lootDone(g_target, now))
             {
-                // Again only when the hero stalls: a new order restarts the pick up.
+                // Again only when the hero stalls and stands idle: a new order during the pick up (the hero stooping)
+                // restarts it, cut short again and again; at the loot after a walk there (far loot) the hero stands
+                // with no pick up order yet, so it gets one.
                 const int sinceSent = static_cast<int>(now - g_sentAt);
                 const bool stalled = static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootNudgeMs);
-                if (!g_lootAtSince && stalled && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
+                cObjectManager* objects = cObjectManager::instance();
+                const bool idle = objects && CombatState::action(objects->hero()) == CombatState::Standing;
+                if (idle && stalled && sinceSent > static_cast<int>(kLootNudgeMs) && attack(g_target))
                 {
                     g_sentAt = now;
                 }
