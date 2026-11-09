@@ -1095,6 +1095,12 @@ bool UiNav::npcDialogOpen()
     return npcDialog() != nullptr;
 }
 
+bool UiNav::portalBoxOpen()
+{
+    auto* box = static_cast<cUI_BusyDlg*>(messageBox());
+    return box && (box->mode == cUI_BusyDlg::surfacePortals || box->mode == cUI_BusyDlg::underworldPortals);
+}
+
 bool UiNav::npcAnswer(int index, float& outX, float& outY)
 {
     Rect r;

@@ -30,6 +30,7 @@
 #include <cstdlib>
 #include <iterator>
 #include <mutex>
+#include <thread>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -2277,8 +2278,42 @@ namespace
     }
 }
 
+namespace
+{
+    // The portal box opens when the hero steps on a portal (on the way to loot, an enemy, a quest) and holds the
+    // whole game in its modal loop: no frames, so onFrame cannot see it. A thread of its own closes it (Escape, the
+    // box's Cancel) once it has stood 1.5 s with the agent on; the player's own portal trips are theirs.
+    void watchPortalBox()
+    {
+        DWORD since = 0, toldAt = 0;
+        for (;;)
+        {
+            Sleep(500);
+            const bool on = *static_cast<volatile bool*>(&g_on);
+            if (!on || !UiNav::portalBoxOpen())
+            {
+                since = 0;
+                continue;
+            }
+            const DWORD now = GetTickCount();
+            if (!since)
+            {
+                since = now;
+            }
+            else if (now - since > 1500 && now - toldAt > 2000)
+            {
+                LOG("AutoAttack: the portal box opened under the agent (a portal stepped on): closed");
+                toldAt = now;
+                Inject::key(VK_ESCAPE, true);
+                Inject::key(VK_ESCAPE, false);
+            }
+        }
+    }
+}
+
 void AutoAttack::install()
 {
+    std::thread(&watchPortalBox).detach();
     // The controller installs the world pick hook; without it, we do.
     if (!Config::controller.enabled)
     {

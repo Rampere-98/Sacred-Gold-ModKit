@@ -92,6 +92,8 @@ namespace UiNav
 
     // An NPC dialog with answers is open (a popup whose answers are set); Enter picks the first.
     bool npcDialogOpen();
+    // The portal box (surface or underworld list) is open: the game stands still in its modal loop meanwhile.
+    bool portalBoxOpen();
     // The screen point of the open NPC dialog's answer `index` (0..3), to click it; false if it has none there.
     bool npcAnswer(int index, float& outX, float& outY);
     bool npcAnswerRect(int index, Rect& out);
