@@ -19,7 +19,7 @@ namespace Config
         bool pickup = true;     // the agent's own collect (never the game's A): items, chests and containers, the hand-cursor fixed things (hiding places, wells)
         bool lootInFight = true;    // loot nearer than the enemy fought is taken first, enemies about or not
         bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on
-        int lootRange = 800;    // ... within this many screen pixels of the hero
+        int lootRange = 1600;    // ... within this many screen pixels of the hero
         int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
     };
     inline AutoAttack autoAttack;

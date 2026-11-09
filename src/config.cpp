@@ -168,6 +168,10 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.pickup = readBool(ini, L"AutoAttack", L"Pickup", Config::autoAttack.pickup);
     Config::autoAttack.autoCollect = readBool(ini, L"AutoAttack", L"AutoCollect", Config::autoAttack.autoCollect);
     Config::autoAttack.lootRange = std::clamp(readInt(ini, L"AutoAttack", L"LootRange", Config::autoAttack.lootRange), 50, 3000);
+    if (Config::autoAttack.lootRange == 800)
+    {
+        Config::autoAttack.lootRange = 1600;   // the old default: a 32:9 screen shows loot twice as far
+    }
     Config::autoAttack.repeatMs = std::clamp(readInt(ini, L"AutoAttack", L"Repeat", Config::autoAttack.repeatMs), 0, 10000);
     Config::autoPotion.enabled = readBool(ini, L"AutoPotion", L"Enabled", Config::autoPotion.enabled);
     Config::autoPotion.firstPercent = std::clamp(readInt(ini, L"AutoPotion", L"FirstPercent", Config::autoPotion.firstPercent), 5, 95);

@@ -305,7 +305,7 @@ namespace
     // and going for it, then for the quest again, the hero went back and forth (seen live, 2026-11-09). Never
     // further than kLootMaxTiles (a fixed thing's place read wrong put one 3000 tiles off).
     bool g_questTravel = false;
-    constexpr double kLootMaxTiles = 40.0, kLootOnTheWayTiles = 18.0;
+    constexpr double kLootMaxTiles = 60.0, kLootOnTheWayTiles = 18.0;
 
     bool lootNear(int32_t x, int32_t y)
     {
@@ -2251,7 +2251,7 @@ namespace
         ImGui::SetItemTooltip("Apagado: solo recoge tras los combates que hace por ti.");
         ImGui::EndDisabled();
         ImGui::SliderInt("Radio de ataque (px)", &c.range, 100, 1500);
-        ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 2000);
+        ImGui::SliderInt("Radio de recogida (px)", &c.lootRange, 100, 3000);
         ImGui::SliderInt("Pausa tras tu clic (ms)", &c.pauseMs, 0, 3000);
         ImGui::SliderInt("Repetir orden (ms)", &c.repeatMs, 0, 3000);
         ImGui::SetItemTooltip("Cada cuánto se repite la orden de ataque; 0 = una sola vez por objetivo.");
