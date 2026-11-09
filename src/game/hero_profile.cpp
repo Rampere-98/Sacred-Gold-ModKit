@@ -4,6 +4,7 @@
 #include "sacred/object.h"
 
 #include <imgui.h>
+#include <windows.h>
 #include <mutex>
 
 using namespace Sacred;
@@ -12,6 +13,46 @@ namespace
 {
     constexpr size_t kStats = 0x3A8;
     HeroProfile::Data g_last;
+
+    // Addresses from Manolito's catalogue (docs/AGENT_ADDRESSES.md «Arma equipada, vampiresa y montura», ENG exe).
+    constexpr uintptr_t kItemTypes = 0xAAB5E4;      // [ ] + type*0x80: +0x18 u16 weapon-info index
+    constexpr uintptr_t kWeaponInfo = 0x563004;     // [[kItemTypes] + this] + index*0x102: +0x1E u8 subclass
+    constexpr uintptr_t kObjects = 0xAD5C40;        // [[ ]+4] + 4*(id & 0xFFFF): the object
+
+    template <class T>
+    T read(uintptr_t a)
+    {
+        T v{};
+        __try
+        {
+            v = *reinterpret_cast<const T*>(a);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+        }
+        return v;
+    }
+
+    uint8_t weaponKind(uintptr_t hero, uint32_t slot)
+    {
+        const uint32_t id = read<uint32_t>(hero + 0x1A4 + slot * 4);
+        const uintptr_t objects = read<uintptr_t>(kObjects);
+        const uintptr_t table = objects ? read<uintptr_t>(objects + 4) : 0;
+        const uintptr_t item = id && table ? read<uintptr_t>(table + 4 * (id & 0xFFFF)) : 0;
+        const uintptr_t types = read<uintptr_t>(kItemTypes);
+        if (!item || !types)
+        {
+            return 0;
+        }
+        const uint32_t type = read<uint32_t>(item + 0x10);
+        if (type > 0x10000)
+        {
+            return 0;
+        }
+        const uint16_t index = read<uint16_t>(types + type * 0x80 + 0x18);
+        const uintptr_t infos = read<uintptr_t>(types + kWeaponInfo);
+        return infos ? read<uint8_t>(infos + index * 0x102 + 0x1E) : 0;
+    }
 }
 
 HeroProfile::Data HeroProfile::current()
@@ -31,6 +72,14 @@ HeroProfile::Data HeroProfile::current()
     d.level = *reinterpret_cast<const uint16_t*>(st + 0x56);
     d.health = hero->health;
     d.maxHealth = hero->maxHealth;
+    const auto h = reinterpret_cast<uintptr_t>(hero);
+    d.weaponKind = weaponKind(h, 13);
+    if (!d.weaponKind)
+    {
+        d.weaponKind = weaponKind(h, 12);
+    }
+    d.ranged = d.weaponKind == 6 || d.weaponKind == 7 || d.weaponKind == 12 || d.weaponKind == 13 || d.weaponKind == 14;
+    d.mounted = read<uint32_t>(h + 0x1EC) != 0;
     return d;
 }
 
@@ -60,10 +109,12 @@ void HeroProfile::onFrame()
     {
         return;
     }
-    if (d.heroId != g_last.heroId || d.cls != g_last.cls || d.level != g_last.level)
+    if (d.heroId != g_last.heroId || d.cls != g_last.cls || d.level != g_last.level ||
+        d.weaponKind != g_last.weaponKind || d.mounted != g_last.mounted)
     {
-        LOG("HeroProfile: {} (class {}), level {}, health {} of {}", className(d.cls), static_cast<uint32_t>(d.cls),
-            d.level, d.health, d.maxHealth);
+        LOG("HeroProfile: {} (class {}), level {}, health {} of {}, weapon kind {} ({}){}", className(d.cls),
+            static_cast<uint32_t>(d.cls), d.level, d.health, d.maxHealth, d.weaponKind,
+            d.ranged ? "a distancia" : "cuerpo a cuerpo", d.mounted ? ", mounted" : "");
     }
     g_last = d;
 }
@@ -79,4 +130,6 @@ void HeroProfile::drawMenu()
     ImGui::Text("Clase: %s", className(d.cls));
     ImGui::Text("Nivel: %d", d.level);
     ImGui::Text("Vida: %d / %d", d.health, d.maxHealth);
+    ImGui::Text("Arma: tipo %d, %s", d.weaponKind, d.ranged ? "a distancia" : "cuerpo a cuerpo");
+    ImGui::Text("Montado: %s", d.mounted ? "sí" : "no");
 }

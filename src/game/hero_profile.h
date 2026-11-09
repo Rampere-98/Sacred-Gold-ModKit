@@ -26,6 +26,12 @@ namespace HeroProfile
         Class cls = Class::Unknown;
         int level = 0;
         int health = 0, maxHealth = 0;
+        // The weapon in hand (slot 13, else the bow/crossbow slot 12): its weapon-info subclass. 1 one-handed,
+        // 2 two-handed, 3 axe, 4 staff/spear, 5 dagger, 6 throwing, 7 bow, 10 dark elf blades, 12 crossbow,
+        // 13/14 likely the dwarf's guns. 0: none or not read.
+        uint8_t weaponKind = 0;
+        bool ranged = false;    // throwing, bow, crossbow, gun
+        bool mounted = false;   // on a horse (hero +0x1EC, slot 18)
     };
 
     // Read now (presenting thread; the hero's stats block at +0x3A8: class +8 (1-9), level +0x56).
