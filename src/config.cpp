@@ -164,6 +164,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.lootInFight = readBool(ini, L"AutoAttack", L"LootInFight", Config::autoAttack.lootInFight);
     Config::autoAttack.minRarity = std::clamp(readInt(ini, L"AutoAttack", L"MinRarity", Config::autoAttack.minRarity), 0, 3);
     Config::autoAttack.keepSets = readBool(ini, L"AutoAttack", L"KeepSets", Config::autoAttack.keepSets);
+    Config::autoAttack.rarityFromLevel = std::clamp(readInt(ini, L"AutoAttack", L"RarityFromLevel", Config::autoAttack.rarityFromLevel), 1, 200);
     Config::autoAttack.quests = readBool(ini, L"AutoAttack", L"Quests", Config::autoAttack.quests);
     Config::autoAttack.roamStep = readInt(ini, L"AutoAttack", L"RoamStep", Config::autoAttack.roamStep);
     Config::autoAttack.pauseMs = std::clamp(readInt(ini, L"AutoAttack", L"Pause", Config::autoAttack.pauseMs), 0, 10000);

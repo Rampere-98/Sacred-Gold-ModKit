@@ -356,7 +356,12 @@ namespace
         }
         // Equipment below the grade asked for is left lying (the player's wish, 2026-11-09: no junk in the backpack);
         // set pieces as asked; potions, runes, gold and the rest always.
-        if (loot == Loot::Item && (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
+        // Early on (below the level set) every piece is taken: the hero needs the basic gear to put on (the player's
+        // wish, 2026-11-09). The hero's level: u16 at +0x3A8 + 0x56.
+        const cCreature* hero = objects ? objects->hero() : nullptr;
+        const int heroLevel = hero ? *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x3A8 + 0x56) : 0;
+        if (loot == Loot::Item && heroLevel >= Config::autoAttack.rarityFromLevel &&
+            (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
         {
             const int grade = Gear::grade(id);
             const bool keep = grade < 0 || (grade == 4 ? Config::autoAttack.keepSets || Config::autoAttack.minRarity == 0
@@ -3367,6 +3372,8 @@ namespace
                                             "Solo dorado (único)"};
             ImGui::Combo("Equipo que recoge", &c.minRarity, kGrades, 4);
             ImGui::SetItemTooltip("El equipo por debajo de este grado se queda en el suelo; pociones, runas y oro siempre.");
+            ImGui::SliderInt("Filtrar desde el nivel", &c.rarityFromLevel, 1, 100);
+            ImGui::SetItemTooltip("Por debajo de este nivel recoge todo el equipo, para tener con qué equiparse.");
             ImGui::Checkbox("Siempre las piezas de set (verde)", &c.keepSets);
         }
         ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
@@ -3393,6 +3400,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
         ModkitMenu::write(ini, L"AutoAttack", L"MinRarity", c.minRarity);
         ModkitMenu::write(ini, L"AutoAttack", L"KeepSets", c.keepSets);
+        ModkitMenu::write(ini, L"AutoAttack", L"RarityFromLevel", c.rarityFromLevel);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
