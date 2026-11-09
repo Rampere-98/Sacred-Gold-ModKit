@@ -1704,6 +1704,37 @@ namespace
         return it != g_travelBlocked.end() && static_cast<int>(now - it->second) < 0;
     }
 
+    // A walk to a near tile that gets no nearer (seen live: 5 min at 24 tiles from a tile the fill reached but the
+    // game's path finder does not): true once 20 s pass without a tile of progress; that tile is then left 2 min.
+    bool approachStalled(int32_t wx, int32_t wy, double distance, DWORD now)
+    {
+        static uint64_t s_key = 0;
+        static double s_best = 0.0;
+        static DWORD s_since = 0;
+        static std::unordered_map<uint64_t, DWORD> s_left;
+        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx)) << 32) | static_cast<uint32_t>(wy);
+        if (const auto it = s_left.find(key); it != s_left.end() && now - it->second < 120000)
+        {
+            return true;
+        }
+        if (key != s_key || distance < s_best - kTileSize)
+        {
+            s_key = key;
+            s_best = distance;
+            s_since = now;
+            return false;
+        }
+        if (now - s_since > 20000)
+        {
+            LOG("AutoAttack: no nearer to tile {},{} in 20 s ({:.0f} tiles): left 2 min, playing on from here",
+                static_cast<int>(wx / kTileSize), static_cast<int>(wy / kTileSize), distance / kTileSize);
+            s_left[key] = now;
+            s_key = 0;
+            return true;
+        }
+        return false;
+    }
+
     bool talkedLately(uint32_t id, DWORD now)
     {
         const auto it = g_talkedAt.find(id);
@@ -1974,6 +2005,15 @@ namespace
                                 s_triedWayOut[wk] = now;
                                 continue;
                             }
+                            const int32_t ewx = static_cast<int32_t>((ex + 0.5) * kTileSize);
+                            const int32_t ewy = static_cast<int32_t>((ey + 0.5) * kTileSize);
+                            if (approachStalled(ewx, ewy,
+                                                std::hypot(static_cast<double>(ewx - self->x), static_cast<double>(ewy - self->y)),
+                                                now))
+                            {
+                                s_triedWayOut[wk] = now;
+                                continue;
+                            }
                             static uint64_t toldWay = 0;
                             if (wk != toldWay)
                             {
@@ -2004,8 +2044,8 @@ namespace
                         const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize);
                         const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
                         const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
-                        if (!chestNear && std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)) >
-                                              2.0 * kTileSize)
+                        const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
+                        if (!chestNear && wd > 2.0 * kTileSize && !approachStalled(wx, wy, wd, now))
                         {
                             g_questTravel = false;
                             if (!ClickWalk::routing() && now - g_questAskAt > 4000)
@@ -2048,8 +2088,8 @@ namespace
                     g_homeX = wx;
                     g_homeY = wy;
                     const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
-                    if (!chestNear && std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)) >
-                                          2.0 * kTileSize)
+                    const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
+                    if (!chestNear && wd > 2.0 * kTileSize && !approachStalled(wx, wy, wd, now))
                     {
                         static uint64_t toldCentre = 0;
                         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(nx)) << 32) | static_cast<uint32_t>(ny);
