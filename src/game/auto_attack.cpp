@@ -2546,7 +2546,11 @@ namespace
         g_questTravel = false;
         bool questHere = false;
         Whereabouts::update(layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize));
-        if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr, who))
+        // On another layer (a house's floor, a cellar) only a goal near at hand: the journal's tiles are the
+        // overworld's, but seen live (2026-11-09) the Vampiress starts in her house on layer 2 with the main quest 3
+        // tiles off, and left it alone (no quest off layer 0) to roam against the walls for 20 minutes.
+        if (Config::autoAttack.quests && questTarget(self->x, self->y, qx, qy, qr, who) &&
+            (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize))
         {
             questHere = true;
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
