@@ -1956,15 +1956,15 @@ namespace
                             {
                                 continue;
                             }
-                            bool near = false;
-                            for (int dy = -1; dy <= 1 && !near; ++dy)
+                            bool reach = false;
+                            for (int dy = -1; dy <= 1 && !reach; ++dy)
                             {
-                                for (int dx = -1; dx <= 1 && !near; ++dx)
+                                for (int dx = -1; dx <= 1 && !reach; ++dx)
                                 {
-                                    near = Whereabouts::reachable(ex + dx, ey + dy) == 1;
+                                    reach = Whereabouts::reachable(ex + dx, ey + dy) == 1;
                                 }
                             }
-                            if (!near)
+                            if (!reach)
                             {
                                 continue;
                             }
