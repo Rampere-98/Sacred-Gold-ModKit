@@ -1322,8 +1322,25 @@ void Tactics::onFrame(DWORD now)
     case Phase::Casting:
     {
         // Under way while the hero's action says so; its last blow's damage shows a moment after.
-        const bool going = CombatState::casting(heroCreature()) || comboRunning();
+        bool going = CombatState::casting(heroCreature()) || comboRunning();
         const bool combo = g_art >= kFirstCombo && g_art <= kLastCombo;
+        // A combo whose target died: its pieces left would go at the corpse. Not waited for any more; the auto
+        // attack's next order (another enemy, the loot) cuts it.
+        if (combo && going && g_castTarget)
+        {
+            cObjectManager* objects = cObjectManager::instance();
+            cObject* object = objects ? objects->object(g_castTarget) : nullptr;
+            const cCreature* target = object ? object->asCreature() : nullptr;
+            if (!target || target->health <= 0)
+            {
+                if (!g_doneAt)
+                {
+                    LOG("Tactics: combo {:x}'s target {:x} died after {} ms: the rest not waited for", g_art,
+                        g_castTarget, elapsed);
+                }
+                going = false;
+            }
+        }
         if (going && elapsed < static_cast<int>(combo ? kComboMaxMs : kCastMaxMs))
         {
             g_doneAt = 0;
