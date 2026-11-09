@@ -1241,6 +1241,31 @@ namespace
         int64_t sumX = 0, sumY = 0;     // tiles, for where they gather
     };
     std::unordered_map<int, FarmCount> g_farmBuilding;
+
+    // Chests not yet opened anywhere on the surface (the object list holds the whole world; opened: flags +0x14 &
+    // 0x4000), the nearest kept as a place to go: no need to explore blind for them.
+    uint32_t g_chestVtable = 0;
+    uint32_t g_chestId = 0, g_chestBuilding = 0;
+    double g_chestBest = 0.0;
+    int32_t g_chestX = 0, g_chestY = 0;
+    DWORD g_chestSince = 0;            // since when the hero heads for this one
+    uint32_t g_chestHeading = 0;
+
+    bool isChest(const uint8_t* o)
+    {
+        const uint32_t vtable = *reinterpret_cast<const uint32_t*>(o);
+        if (g_chestVtable)
+        {
+            return vtable == g_chestVtable;
+        }
+        const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(vtable)[-1];
+        if (locator && locator->type && std::strcmp(locator->type->name, ".?AVcChest3D@@") == 0)
+        {
+            g_chestVtable = vtable;
+            return true;
+        }
+        return false;
+    }
     bool g_farmKnown = false;
     int32_t g_farmX = 0, g_farmY = 0;   // world: the chosen zone's middle (where its enemies gather)
     int g_farmSector = -1;
@@ -1297,7 +1322,11 @@ namespace
                 fit = 0.25f;
             }
             const double tiles = std::hypot(cx - heroX / kTileSize, cy - heroY / kTileSize);
-            const float score = static_cast<float>(f.count) * fit / static_cast<float>(1.0 + tiles / 150.0);
+            float score = static_cast<float>(f.count) * fit / static_cast<float>(1.0 + tiles / 150.0);
+            if (key == g_farmSector)
+            {
+                score *= 1.5f;      // the zone chosen stays unless another is clearly better
+            }
             if (score > best)
             {
                 best = score;
@@ -1334,6 +1363,8 @@ namespace
         std::vector<MapMemory::QuestMark> marks;
         g_merchants.clear();
         g_farmBuilding.clear();
+        g_chestBuilding = 0;
+        g_chestBest = 0.0;
         const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
         const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
         const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
@@ -1363,6 +1394,21 @@ namespace
                             ++f.count;
                             f.sumX += tx;
                             f.sumY += ty;
+                        }
+                    }
+                    if (o && *reinterpret_cast<const uint32_t*>(o) >= 0x880000 && *reinterpret_cast<const uint32_t*>(o) < 0x8A0000 &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0xC) & 0xFFFF) == static_cast<uint32_t>(it - table) &&
+                        !*(o + 0x24) && isChest(o) && !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x4000))
+                    {
+                        const uint32_t id = *reinterpret_cast<const uint32_t*>(o + 0xC);
+                        const double d = std::hypot(static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x1C) - heroX),
+                                                    static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x20) - heroY));
+                        if (!lootBlocked(id, now) && !g_lootDone.count(lootKey(id)) && (!g_chestBuilding || d < g_chestBest))
+                        {
+                            g_chestBuilding = id;
+                            g_chestBest = d;
+                            g_chestX = *reinterpret_cast<const int32_t*>(o + 0x1C);
+                            g_chestY = *reinterpret_cast<const int32_t*>(o + 0x20);
                         }
                     }
                     if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
@@ -1449,6 +1495,7 @@ namespace
             }
         }
         chooseFarm(manager ? *reinterpret_cast<const uint8_t* const*>(manager) : nullptr, heroLevel, heroX, heroY);
+        g_chestId = g_chestBest < 150.0 * kTileSize ? g_chestBuilding : 0;
         MapMemory::setQuestMarks(std::move(marks));
     }
 
@@ -1650,6 +1697,37 @@ namespace
                     }
                 }
                 MapMemory::setRoute(true, npc->x, npc->y);
+                g_roamAt = 0;
+                return;
+            }
+        }
+        // A chest not yet opened within 150 tiles: there (the collect opens it once it is near). Given up after 90 s
+        // on the way to one (behind a wall, across water).
+        if (Config::autoAttack.pickup && Config::autoAttack.chests && layer == 0 && g_chestId &&
+            (!questHere || g_chestBest < 40.0 * kTileSize))
+        {
+            if (g_chestId != g_chestHeading)
+            {
+                g_chestHeading = g_chestId;
+                g_chestSince = now;
+                LOG("AutoAttack: off to a chest not yet opened ({:x}, {:.0f} tiles)", g_chestId, g_chestBest / kTileSize);
+            }
+            if (now - g_chestSince > 90000)
+            {
+                LOG("AutoAttack: chest {:x} not reached in 90 s, left", g_chestId);
+                lootFailed(g_chestId, now);
+                lootFailed(g_chestId, now);
+                g_chestId = 0;
+                g_chestHeading = 0;
+            }
+            else
+            {
+                if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                {
+                    g_questAskAt = now;
+                    ClickWalk::walkTo(g_chestX, g_chestY, false);
+                }
+                MapMemory::setRoute(true, g_chestX, g_chestY);
                 g_roamAt = 0;
                 return;
             }
@@ -2118,6 +2196,9 @@ namespace
         ImGui::Checkbox("Ir a la misión activa", &c.quests);
         ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
                               "cercana), sin límite de distancia; allí explora alrededor.");
+        ImGui::Checkbox("Ir a por cofres sin abrir", &c.chests);
+        ImGui::SetItemTooltip("Sin misión a la que ir ni enemigos cerca, va al cofre sin abrir más cercano (hasta 150 "
+                              "casillas); si no llega en 90 s, lo deja.");
         ImGui::Checkbox("Ir a zonas de farmeo", &c.farm);
         ImGui::SetItemTooltip("Sin misión que hacer ni enemigos cerca, va a la zona con más enemigos de su nivel (lo más "
                               "cerca posible) y explora allí.");
@@ -2153,6 +2234,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
         ModkitMenu::write(ini, L"AutoAttack", L"Background", c.background);
         ModkitMenu::write(ini, L"AutoAttack", L"Farm", c.farm);
+        ModkitMenu::write(ini, L"AutoAttack", L"Chests", c.chests);
         ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
