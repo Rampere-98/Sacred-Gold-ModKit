@@ -1301,6 +1301,31 @@ namespace
                 marks.push_back({MapMemory::Glyph::Target, goal && wx == gx && wy == gy, 0, wx, wy});
             }
         }
+        // Told when what it knows changes: signs within 60 tiles by kind, and the journal's targets.
+        {
+            int near[3] = {}, yellow = 0, targets = 0;
+            for (const MapMemory::QuestMark& q : marks)
+            {
+                if (q.glyph == MapMemory::Glyph::Target)
+                {
+                    ++targets;
+                }
+                else if (std::hypot(static_cast<double>(q.x - heroX), static_cast<double>(q.y - heroY)) < 60 * kTileSize)
+                {
+                    ++near[static_cast<int>(q.glyph)];
+                    yellow += q.yellow;
+                }
+            }
+            static int told = -1;
+            const int seen = near[0] | near[1] << 8 | near[2] << 16 | yellow << 24 | targets << 28;
+            if (seen != told)
+            {
+                told = seen;
+                LOG("AutoAttack: quest signs within 60 tiles: {} ?!, {} !, {} ? ({} yellow); {} quests under way; {} "
+                    "merchants known",
+                    near[0], near[1], near[2], yellow, targets, g_merchants.size());
+            }
+        }
         MapMemory::setQuestMarks(std::move(marks));
     }
 

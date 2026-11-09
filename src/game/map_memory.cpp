@@ -671,7 +671,7 @@ namespace
         // Quests: the journal's targets as rings (at the rim when off the radar), the givers' and receivers' signs.
         {
             const ImU32 yellow = IM_COL32(255, 215, 30, 255), white = IM_COL32(235, 235, 235, 255);
-            const float fontSize = std::max(14.0f, mark * 2.4f);
+            const float fontSize = std::max(22.0f, mark * 3.0f);
             ImFont* font = ImGui::GetFont();
             for (const MapMemory::QuestMark& q : g_questMarks)
             {
