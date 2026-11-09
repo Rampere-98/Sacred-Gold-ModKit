@@ -378,8 +378,18 @@ namespace
     constexpr size_t kCombos = 0x3A8 + 0x10E;
     constexpr size_t kComboSize = 38;
     constexpr uint32_t kFirstCombo = 0x200, kLastCombo = 0x203;   // four records (the fifth is not one)
+    // A combo under way (cCreature +0x2B4, nonzero ~0.2 s after the order is taken, also while the hero still walks
+    // up to the target; back to 0 when it ends or is cut short by another order; seen live by Manolito, 2026-11-09).
+    constexpr size_t kComboRunning = 0x2B4;
 
     // The hero's entry for the art in a slot; found false when the list cannot be read or does not have the art.
+    // The art being cast is a combo and the game runs it (walking to the target counts: its pieces follow).
+    bool comboRunning()
+    {
+        const cCreature* hero = heroCreature();
+        return hero && g_art >= kFirstCombo && g_art <= kLastCombo && at<uint8_t>(hero, kComboRunning) != 0;
+    }
+
     HeroArt heroArt(uint16_t slotKind, uint32_t art)
     {
         HeroArt r;
@@ -1227,7 +1237,7 @@ void Tactics::onFrame(DWORD now)
     case Phase::Confirming:
     {
         Learned& l = learned(g_art);
-        if (CombatState::casting(heroCreature()))
+        if (CombatState::casting(heroCreature()) || comboRunning())
         {
             l.taken(now);
             l.lastCast = now;
@@ -1306,7 +1316,7 @@ void Tactics::onFrame(DWORD now)
     case Phase::Casting:
     {
         // Under way while the hero's action says so; its last blow's damage shows a moment after.
-        const bool going = CombatState::casting(heroCreature());
+        const bool going = CombatState::casting(heroCreature()) || comboRunning();
         if (going && elapsed < static_cast<int>(kCastMaxMs))
         {
             g_doneAt = 0;
