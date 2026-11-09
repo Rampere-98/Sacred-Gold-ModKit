@@ -1986,6 +1986,42 @@ namespace
             {
             g_homeX = qx;
             g_homeY = qy;
+            // A fixed destination (no creature): the journal's radius is wide (the arena's 22 tiles) but the script
+            // may want the hero much nearer its centre (Manolito, FunkCode op 0x3F: the arena fight starts within 10
+            // tiles of 3786,330, a wall). To the reachable tile nearest the centre, then the rest of the play there.
+            if (who == 0xFFFFFFFFu)
+            {
+                const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
+                int nx = 0, ny = 0;
+                if (Whereabouts::nearestReachable(gtx, gty, nx, ny))
+                {
+                    const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize);
+                    const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
+                    g_homeX = wx;
+                    g_homeY = wy;
+                    const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
+                    if (!chestNear && std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)) >
+                                          2.0 * kTileSize)
+                    {
+                        static uint64_t toldCentre = 0;
+                        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(nx)) << 32) | static_cast<uint32_t>(ny);
+                        if (key != toldCentre)
+                        {
+                            toldCentre = key;
+                            LOG("AutoAttack: in the quest's zone: to {},{}, the reachable tile nearest its centre {},{}",
+                                nx, ny, gtx, gty);
+                        }
+                        if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                        {
+                            g_questAskAt = now;
+                            ClickWalk::walkTo(wx, wy, false);
+                        }
+                        MapMemory::setRoute(true, wx, wy);
+                        g_roamAt = 0;
+                        return;
+                    }
+                }
+            }
             // There: the quest's creature, if one, is spoken to.
             cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
             // The quest's creature far away (the Gladiator's arena fight names one 5000 tiles off, its opponent
