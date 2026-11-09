@@ -3193,6 +3193,13 @@ void AutoAttack::onFrame()
         {
             s_strayOpenAt = now;
         }
+        // The loot's clocks stand still meanwhile (seen live, 2026-11-09: a help page at the start cost the loot
+        // gone for its 6 s, «not reached»).
+        g_lootBestAt = now;
+        if (g_lootAtSince)
+        {
+            g_lootAtSince = now;
+        }
         if (static_cast<int>(now - s_strayOpenAt) > 4000 && static_cast<int>(now - s_strayAnswerAt) > 3000)
         {
             LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
