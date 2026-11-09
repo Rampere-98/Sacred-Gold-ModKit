@@ -523,6 +523,12 @@ namespace
         {
             return false;
         }
+        // A spot far off the loot range is a stale position (a fixed thing's table shifts when the game removes one
+        // of its entries): no walk across the world for it; the stalled pick up leaves it.
+        if (std::abs(x - self->x) > 60 * kTileSize || std::abs(y - self->y) > 60 * kTileSize)
+        {
+            return true;
+        }
         // Once per destination: the walk order goes out again at each nudge (about every 1.2 s) of a long walk.
         static int32_t loggedX = 0, loggedY = 0;
         if (x != loggedX || y != loggedY)

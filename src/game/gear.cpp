@@ -21,7 +21,7 @@ namespace
 {
     struct Settings
     {
-        bool equip = false;
+        bool equip = true;
         bool sell = false;
         bool buy = false;
         int keepGoldPercent = 50;   // buying spends at most the rest
@@ -514,7 +514,7 @@ namespace
             if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
             {
             }
-            else if (shop && g_settings.buy && buyOne(hero, pack))
+            else if (shop && (g_settings.buy || trip) && buyOne(hero, pack))
             {
             }
             else if ((g_calm || shop) && (g_settings.equip || trip) && equipOne(hero, pack))
@@ -581,7 +581,7 @@ namespace
     void install()
     {
         const std::wstring ini = iniPath();
-        g_settings.equip = GetPrivateProfileIntW(L"Gear", L"Equip", 0, ini.c_str()) != 0;
+        g_settings.equip = GetPrivateProfileIntW(L"Gear", L"Equip", 1, ini.c_str()) != 0;
         g_settings.sell = GetPrivateProfileIntW(L"Gear", L"Sell", 0, ini.c_str()) != 0;
         g_settings.buy = GetPrivateProfileIntW(L"Gear", L"Buy", 0, ini.c_str()) != 0;
         g_settings.trips = GetPrivateProfileIntW(L"Gear", L"Trips", 1, ini.c_str()) != 0;
