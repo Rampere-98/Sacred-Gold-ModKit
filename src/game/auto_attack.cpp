@@ -1944,6 +1944,54 @@ namespace
                     if (Whereabouts::reachable(gtx, gty) != 1 && Whereabouts::nearestReachable(gtx, gty, nx, ny))
                     {
                         waitShut = true;
+                        // A way out found before (a portal end, a door or stairs: MapMemory saw the hero jump there)
+                        // within reach: stepped on, each tried once in 2 min; the Gladiator's coliseum is left by
+                        // its teleport tiles (tpstart_g_03/04 -> 3293,2717, Manolito), not by a path.
+                        static std::unordered_map<uint64_t, DWORD> s_triedWayOut;
+                        const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+                        for (const auto& [ex, ey] : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+                        {
+                            const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
+                            if (const auto t = s_triedWayOut.find(wk); t != s_triedWayOut.end() && now - t->second < 120000)
+                            {
+                                continue;
+                            }
+                            bool near = false;
+                            for (int dy = -1; dy <= 1 && !near; ++dy)
+                            {
+                                for (int dx = -1; dx <= 1 && !near; ++dx)
+                                {
+                                    near = Whereabouts::reachable(ex + dx, ey + dy) == 1;
+                                }
+                            }
+                            if (!near)
+                            {
+                                continue;
+                            }
+                            if (std::abs(ex - htx) <= 1 && std::abs(ey - hty) <= 1)
+                            {
+                                LOG("AutoAttack: on the way out at {},{}: no jump yet, left 2 min", ex, ey);
+                                s_triedWayOut[wk] = now;
+                                continue;
+                            }
+                            static uint64_t toldWay = 0;
+                            if (wk != toldWay)
+                            {
+                                toldWay = wk;
+                                LOG("AutoAttack: shut in, the quest outside: trying the way out found at {},{}", ex, ey);
+                            }
+                            g_questTravel = false;
+                            if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                            {
+                                g_questAskAt = now;
+                                ClickWalk::walkTo(static_cast<int32_t>((ex + 0.5) * kTileSize),
+                                                  static_cast<int32_t>((ey + 0.5) * kTileSize), false);
+                            }
+                            MapMemory::setRoute(true, static_cast<int32_t>((ex + 0.5) * kTileSize),
+                                                static_cast<int32_t>((ey + 0.5) * kTileSize));
+                            g_roamAt = 0;
+                            return;
+                        }
                         static uint64_t toldShut = 0;
                         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(gtx)) << 32) | static_cast<uint32_t>(gty);
                         if (key != toldShut)

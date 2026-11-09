@@ -62,6 +62,9 @@ namespace MapMemory
     // (door, stairs, cave: both ends), a portal (a jump on the same layer: both ends).
     enum class Mark : uint8_t { Merchant, Entrance, Portal, Count };
     void mark(Mark kind, int layer, int32_t x, int32_t y);
+    // The ways in or out and portal ends found on `layer` within `radius` tiles of tile (tx, ty), as tiles: the ways
+    // out of a shut-in area (Whereabouts) the agent can try.
+    std::vector<std::pair<int, int>> waysOut(int layer, int tx, int ty, int radius);
     // An enemy of kind `type` (its name) met at world (x, y) on `layer`: the encyclopedia drawn on the map, a symbol per
     // kind and place (places of a kind a few squares apart count once), colored by how hard the kind hits, with
     // filters in the menu.

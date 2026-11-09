@@ -1009,6 +1009,21 @@ void MapMemory::mark(Mark kind, int layer, int32_t x, int32_t y)
     addLandmark(kind, layer, tileOf(x), tileOf(y));
 }
 
+std::vector<std::pair<int, int>> MapMemory::waysOut(int layer, int tx, int ty, int radius)
+{
+    std::vector<std::pair<int, int>> out;
+    const std::lock_guard lock(g_lock);
+    for (const Landmark& l : g_landmarks)
+    {
+        if (l.kind != MapMemory::Mark::Merchant && l.layer == (layer & 0xFF) && std::abs(l.tx - tx) <= radius &&
+            std::abs(l.ty - ty) <= radius)
+        {
+            out.emplace_back(l.tx, l.ty);
+        }
+    }
+    return out;
+}
+
 void MapMemory::setHero(int layer, int32_t x, int32_t y)
 {
     const std::lock_guard lock(g_lock);
