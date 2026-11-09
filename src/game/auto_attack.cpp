@@ -5,6 +5,7 @@
 #include "game/lore.h"
 #include "game/click_walk.h"
 #include "game/map_memory.h"
+#include "game/whereabouts.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
 #include "config/tactics.h"
@@ -1889,6 +1890,7 @@ namespace
         uint32_t who = 0;
         g_questTravel = false;
         bool questHere = false;
+        Whereabouts::update(layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize));
         if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr, who))
         {
             questHere = true;
@@ -1931,7 +1933,47 @@ namespace
                         return;
                     }
                 }
-                if (travel(now, self, qx, qy, g_questAskAt))
+                // Shut in (a closed yard, the arena behind its portcullis) with the target outside: no travel, which
+                // only shuffles; the reachable tile nearest the target (by the gate, where a script may open the
+                // way), and the rest of the agent's play inside (chests, fights) from there.
+                bool waitShut = false;
+                if (const Whereabouts::Area& where = Whereabouts::area(); where.shutIn)
+                {
+                    const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
+                    int nx = 0, ny = 0;
+                    if (Whereabouts::reachable(gtx, gty) != 1 && Whereabouts::nearestReachable(gtx, gty, nx, ny))
+                    {
+                        waitShut = true;
+                        static uint64_t toldShut = 0;
+                        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(gtx)) << 32) | static_cast<uint32_t>(gty);
+                        if (key != toldShut)
+                        {
+                            toldShut = key;
+                            LOG("AutoAttack: shut in ({} tiles) and the quest's target {},{} lies outside: to {},{}, the "
+                                "nearest reachable tile, waiting for the way out",
+                                where.tiles, gtx, gty, nx, ny);
+                        }
+                        const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize);
+                        const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
+                        const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
+                        if (!chestNear && std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)) >
+                                              2.0 * kTileSize)
+                        {
+                            g_questTravel = false;
+                            if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                            {
+                                g_questAskAt = now;
+                                ClickWalk::walkTo(wx, wy, false);
+                            }
+                            MapMemory::setRoute(true, wx, wy);
+                            g_roamAt = 0;
+                            return;
+                        }
+                        g_homeX = wx;       // there: chests and fights inside meanwhile, roaming from here
+                        g_homeY = wy;
+                    }
+                }
+                if (!waitShut && travel(now, self, qx, qy, g_questAskAt))
                 {
                     MapMemory::setRoute(true, qx, qy);
                     g_roamAt = 0;
@@ -2594,6 +2636,7 @@ void AutoAttack::install()
     ModkitMenu::add({"Ataque automático", &drawMenu, &saveMenu});
     ModkitMenu::add({"Lo que lee el agente", &Lore::drawMenu, nullptr});
     ModkitMenu::add({"Misiones del agente", &drawQuestBook, nullptr});
+    ModkitMenu::add({"Dónde está el héroe", &Whereabouts::drawMenu, nullptr});
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
