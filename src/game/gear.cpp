@@ -210,6 +210,35 @@ namespace
         return w;
     }
 
+    int gradeOf(uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* item = objects ? objects->object(id) : nullptr;
+        const uint8_t* info = item && g_getInfo ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr;
+        if (!info)
+        {
+            return -1;
+        }
+        const auto* lo = reinterpret_cast<const uint16_t*>(info + 0x1C);
+        const auto* hi = reinterpret_cast<const uint16_t*>(info + 0x24);
+        const auto* armor = reinterpret_cast<const int16_t*>(info + 0x32);
+        bool gear = false;
+        for (int k = 0; k < 4; ++k)
+        {
+            gear = gear || lo[k] || hi[k] || armor[k] > 0;
+        }
+        if (!gear)
+        {
+            return -1;
+        }
+        if (setOf(*reinterpret_cast<const uint32_t*>(info)) >= 0)
+        {
+            return 4;
+        }
+        const int nibble = info[6] & 0xF;
+        return nibble <= 4 ? 0 : nibble <= 0xB ? 1 : nibble <= 0xE ? 2 : 3;
+    }
+
     // Pieces of each set the hero wears (by set index).
     std::unordered_map<int, int> setsWorn(cCreature* hero)
     {
@@ -719,6 +748,11 @@ void Gear::onFrame(DWORD now, bool calm)
     g_calm = calm;
     g_working = true;
     Inject::call(&work, nullptr);
+}
+
+int Gear::grade(uint32_t id)
+{
+    return g_ready ? gradeOf(id) : -1;
 }
 
 bool Gear::packFull()

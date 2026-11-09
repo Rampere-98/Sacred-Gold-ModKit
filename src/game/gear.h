@@ -22,4 +22,9 @@ namespace Gear
     // The trip's shop has nothing more (once): the agent closes it.
     bool tripDone();
     bool shopOpen();
+
+    // An item's grade as the game colours it (Manolito, AGENT_ADDRESSES «Color = rareza»: the nibble info+0x06 & 0xF,
+    // <=4 white, 5..0xB blue, 0xC..0xE yellow, 0xF gold/unique; a set piece green): 0 white, 1 blue, 2 yellow,
+    // 3 gold, 4 set. -1: no equipment (potions, runes, gold...) or not read.
+    int grade(uint32_t id);
 }

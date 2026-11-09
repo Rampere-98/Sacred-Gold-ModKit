@@ -354,6 +354,18 @@ namespace
         {
             return false;
         }
+        // Equipment below the grade asked for is left lying (the player's wish, 2026-11-09: no junk in the backpack);
+        // set pieces as asked; potions, runes, gold and the rest always.
+        if (loot == Loot::Item && (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
+        {
+            const int grade = Gear::grade(id);
+            const bool keep = grade < 0 || (grade == 4 ? Config::autoAttack.keepSets || Config::autoAttack.minRarity == 0
+                                                       : grade >= Config::autoAttack.minRarity);
+            if (!keep)
+            {
+                return false;
+            }
+        }
         // The backpack full: items are left lying (none fits; seen live, 2026-11-09: each tried again and again on the
         // way to the merchant), but dropped gold (flags +0x14 & 0x00100000), which goes to the purse.
         if (loot == Loot::Item && Gear::packFull() &&
@@ -3243,6 +3255,13 @@ namespace
         ImGui::Checkbox("Recoger antes que luchar (sin peligro de morir)", &c.lootInFight);
         ImGui::SetItemTooltip("Con el 60 % de vida o más, recoge primero y luego lucha; con menos, solo lo que esté más cerca que el enemigo "
                               "(uno, y vuelve a la pelea).");
+        {
+            static const char* kGrades[] = {"Todo (desde blanco)", "Desde azul (mágico)", "Desde amarillo (raro)",
+                                            "Solo dorado (único)"};
+            ImGui::Combo("Equipo que recoge", &c.minRarity, kGrades, 4);
+            ImGui::SetItemTooltip("El equipo por debajo de este grado se queda en el suelo; pociones, runas y oro siempre.");
+            ImGui::Checkbox("Siempre las piezas de set (verde)", &c.keepSets);
+        }
         ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
         ImGui::SetItemTooltip("Apagado: solo recoge tras los combates que hace por ti.");
         ImGui::EndDisabled();
@@ -3265,6 +3284,8 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Farm", c.farm);
         ModkitMenu::write(ini, L"AutoAttack", L"Chests", c.chests);
         ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
+        ModkitMenu::write(ini, L"AutoAttack", L"MinRarity", c.minRarity);
+        ModkitMenu::write(ini, L"AutoAttack", L"KeepSets", c.keepSets);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
