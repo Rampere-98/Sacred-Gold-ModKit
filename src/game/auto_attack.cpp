@@ -305,7 +305,7 @@ namespace
     // and going for it, then for the quest again, the hero went back and forth (seen live, 2026-11-09). Never
     // further than kLootMaxTiles (a fixed thing's place read wrong put one 3000 tiles off).
     bool g_questTravel = false;
-    constexpr double kLootMaxTiles = 60.0, kLootOnTheWayTiles = 18.0;
+    constexpr double kLootMaxTiles = 60.0, kLootOnTheWayTiles = 30.0;
 
     bool lootNear(int32_t x, int32_t y)
     {
