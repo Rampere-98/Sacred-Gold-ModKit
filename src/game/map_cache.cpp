@@ -135,6 +135,14 @@ namespace
 
 void MapCache::install()
 {
+    // recordCache keeps 0x2000 records; full, every miss reads the file and walks the whole tree for the oldest. The
+    // wide sectors (5x5) need more than that, so walking the map evicted on most misses and the frames stalled.
+    // 0x8000 holds them (~3 MB more).
+    if (const uintptr_t full = Addr::recordCache ? Addr::recordCache + 0xC6 : 0;
+        full && Patch::verify(full, {0x3D, 0x00, 0x20, 0x00, 0x00}) && Patch::imm32(full + 1, 0x2000, 0x8000))
+    {
+        LOG("Record caches: the record cache holds 0x8000 records (was 0x2000)");
+    }
     if (!Config::render.recordIndex)
     {
         return;
