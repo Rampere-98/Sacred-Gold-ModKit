@@ -2423,6 +2423,25 @@ void AutoAttack::onFrame()
         }
         return;
     }
+    // Any other NPC dialog left open with the agent on (a quest's next page after the talk seemed over, a creature
+    // clicked on the way): the first answer after 4 s, as the agent would otherwise stand there for good.
+    static DWORD s_strayOpenAt = 0, s_strayAnswerAt = 0;
+    if (g_on && !s_answers && UiNav::npcDialogOpen())
+    {
+        if (!s_strayOpenAt)
+        {
+            s_strayOpenAt = now;
+        }
+        if (static_cast<int>(now - s_strayOpenAt) > 4000 && static_cast<int>(now - s_strayAnswerAt) > 3000)
+        {
+            LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
+            s_strayAnswerAt = now;
+            Inject::key(VK_RETURN, true);
+            Inject::key(VK_RETURN, false);
+        }
+        return;
+    }
+    s_strayOpenAt = 0;
     if (s_answers && !UiNav::npcDialogOpen() && static_cast<int>(now - s_answerAt) > 900)
     {
         if (g_collecting && g_target)
