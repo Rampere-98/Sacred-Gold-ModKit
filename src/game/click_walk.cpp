@@ -396,6 +396,7 @@ namespace
     bool g_ours = false;                        // the order going out is our next leg
     bool g_asking = false;                      // the order going out is one asked for on the agent's map
     std::atomic<bool> g_fromMap{false};         // the far walk is one asked for on the agent's map
+    std::atomic<bool> g_askByPlayer{true};      // a click of the player's on the map (not the agent's own travel)
     int32_t g_goalX = 0, g_goalY = 0;           // where the player clicked
     int32_t g_lastX = 0, g_lastY = 0;           // the hero at the last check
     int32_t g_legX = 0, g_legY = 0;             // the hero when the current leg went out
@@ -651,7 +652,6 @@ namespace
     // Asked with the ModKit menu open, when the game takes no orders: kept until it does (the menu closed).
     std::atomic<int32_t> g_askX{0}, g_askY{0};
     std::atomic<bool> g_askPending{false};
-    std::atomic<bool> g_askByPlayer{true};      // a click of the player's on the map (not the agent's own travel)
 
     void askedWalk(void*)
     {
