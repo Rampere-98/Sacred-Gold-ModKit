@@ -2208,18 +2208,52 @@ namespace
     // Fights and collects (no roam for 3 s) and any jump (a portal, a teleport) start the watch again.
     bool stuckGuard(DWORD now, const cCreature* self)
     {
-        static DWORD s_lastCall = 0, s_anchorAt = 0;
-        static int32_t s_ax = 0, s_ay = 0;
-        static int s_stage = 0;
-        const double moved = std::hypot(static_cast<double>(self->x - s_ax), static_cast<double>(self->y - s_ay));
-        if (!s_lastCall || now - s_lastCall > 3000 || moved > 8.0 * kTileSize)
+        // Where the hero stood every 2 s: stuck while all of the last 60 s (or more) fit in a box of 16 tiles. Seen
+        // live (2026-11-09): back and forth between a chest and the quest, never 8 tiles from one spot for long.
+        struct Spot
         {
-            s_ax = self->x;
-            s_ay = self->y;
+            DWORD at;
+            int32_t x, y;
+        };
+        static std::vector<Spot> s_spots;
+        static DWORD s_lastCall = 0, s_anchorAt = 0, s_sampleAt = 0;
+        static int s_stage = 0;
+        const bool jumped = !s_spots.empty() && std::hypot(static_cast<double>(self->x - s_spots.back().x),
+                                                           static_cast<double>(self->y - s_spots.back().y)) > 40.0 * kTileSize;
+        if (!s_lastCall || now - s_lastCall > 3000 || jumped)
+        {
+            s_spots.clear();
             s_anchorAt = now;
             s_stage = 0;
         }
         s_lastCall = now;
+        if (now - s_sampleAt >= 2000)
+        {
+            s_sampleAt = now;
+            s_spots.push_back({now, self->x, self->y});
+        }
+        int32_t minX = self->x, maxX = self->x, minY = self->y, maxY = self->y;
+        for (const Spot& sp : s_spots)
+        {
+            if (now - sp.at <= 60000)
+            {
+                minX = std::min(minX, sp.x);
+                maxX = std::max(maxX, sp.x);
+                minY = std::min(minY, sp.y);
+                maxY = std::max(maxY, sp.y);
+            }
+        }
+        while (s_spots.size() > 40)
+        {
+            s_spots.erase(s_spots.begin());
+        }
+        if (std::max(maxX - minX, maxY - minY) > 16.0 * kTileSize)
+        {
+            // Getting somewhere: the watch starts over.
+            s_anchorAt = now;
+            s_stage = 0;
+            return false;
+        }
         if (now - s_anchorAt < 60000u + 30000u * static_cast<DWORD>(s_stage))
         {
             return false;
@@ -2227,8 +2261,8 @@ namespace
         ++s_stage;
         if (s_stage == 1)
         {
-            LOG("AutoAttack: stuck guard: 60 s without getting anywhere: the marks «left for now» forgotten");
-            Findings::note("stuck", self->x, self->y, "60 s without getting 8 tiles anywhere out of the fights: marks forgotten");
+            LOG("AutoAttack: stuck guard: 60 s within 16 tiles out of the fights: the marks «left for now» forgotten");
+            Findings::note("stuck", self->x, self->y, "60 s within a box of 16 tiles out of the fights: marks forgotten");
             forgetTalks();
             g_travelBlocked.clear();
             return false;
@@ -2632,15 +2666,30 @@ namespace
         if (Config::autoAttack.pickup && Config::autoAttack.chests && layer == 0 && g_chestId &&
             (!questHere || g_chestBest < 40.0 * kTileSize))
         {
+            // The time on one chest adds up across switches: seen live (2026-11-09), the quest and a chest 35 tiles
+            // off took turns at the 40-tile line for minutes, each turn starting the 90 s again.
+            static std::unordered_map<uint32_t, DWORD> s_chestTime;
+            static DWORD s_chestTick = 0;
             if (g_chestId != g_chestHeading)
             {
                 g_chestHeading = g_chestId;
                 g_chestSince = now;
                 LOG("AutoAttack: off to a chest not yet opened ({:x}, {:.0f} tiles)", g_chestId, g_chestBest / kTileSize);
             }
-            if (now - g_chestSince > 90000)
+            else if (now - s_chestTick < 5000)
+            {
+                s_chestTime[g_chestId] += now - s_chestTick;
+            }
+            s_chestTick = now;
+            if (s_chestTime.size() > 256)
+            {
+                s_chestTime.clear();
+            }
+            if (s_chestTime[g_chestId] > 90000 || now - g_chestSince > 90000)
             {
                 LOG("AutoAttack: chest {:x} not reached in 90 s, left", g_chestId);
+                Findings::note("unreachable", self->x, self->y, "chest {:x} not reached in 90 s of walks to it", g_chestId);
+                s_chestTime.erase(g_chestId);
                 lootFailed(g_chestId, now);
                 lootFailed(g_chestId, now);
                 g_chestId = 0;
