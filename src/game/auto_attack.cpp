@@ -627,7 +627,7 @@ namespace
     constexpr DWORD kReactMinMs = 220, kReactMaxMs = 480;
     constexpr DWORD kReactUrgentMinMs = 90, kReactUrgentMaxMs = 220;
     // Hurt this recently: the hero is under attack.
-    constexpr DWORD kHurtMs = 2500;
+    constexpr DWORD kHurtMs = 4000;
     constexpr int kMaxFoes = 64;
     // Enemies attacking the hero are fought this far away (times Range): archers and casters shoot from afar.
     constexpr float kEngagedReach = 4.0f;
@@ -814,6 +814,8 @@ namespace
     std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
     uint32_t g_lastShooter = 0;                             // the last one taken for the shooter (logged once)
+    int g_unseenHits = 0;                                   // hits in a row with no enemy to answer
+    DWORD g_unseenHitAt = 0;
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
     constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
     constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
@@ -1167,6 +1169,39 @@ namespace
                 enemy = shooter;
                 enemyEngaged = true;
                 threat = true;
+            }
+        }
+        // Hurt again and again with no enemy to answer (none seen, or all out of reach): never stand there. Seen live
+        // (2026-11-09): hit every 3.5 s from somewhere out of reach, the hero went from the loot to the shooter and
+        // back until it died. Off 10 tiles away from the enemies seen (anywhere when none), the agent quiet meanwhile.
+        if (hurt && !inMelee && !enemyEngaged && g_hurtAt == now)
+        {
+            g_unseenHits = static_cast<int>(now - g_unseenHitAt) < 12000 ? g_unseenHits + 1 : 1;
+            g_unseenHitAt = now;
+            if (g_unseenHits >= 2)
+            {
+                double cx = 0.0, cy = 0.0;
+                int seen = 0;
+                for (int i = 0; i < count; ++i)
+                {
+                    if (const cObject* o = objects->object(foes[i].id))
+                    {
+                        cx += o->x;
+                        cy += o->y;
+                        ++seen;
+                    }
+                }
+                double ax = seen ? self->x - cx / seen : std::cos(now * 0.001), ay = seen ? self->y - cy / seen : std::sin(now * 0.001);
+                const double len = std::sqrt(ax * ax + ay * ay);
+                ax = len > 1.0 ? ax / len : 1.0;
+                ay = len > 1.0 ? ay / len : 0.0;
+                g_walkX = static_cast<int32_t>(self->x + ax * 10 * kTileSize);
+                g_walkY = static_cast<int32_t>(self->y + ay * 10 * kTileSize);
+                Inject::call(&walkThere, nullptr);
+                g_quietUntil = now + 4000;
+                g_unseenHits = 0;
+                LOG("AutoAttack: hurt again with no enemy to answer ({} seen): off 10 tiles away", seen);
+                return false;
             }
         }
         // Never off one that strikes for one that does not (the jumping from one to another).
