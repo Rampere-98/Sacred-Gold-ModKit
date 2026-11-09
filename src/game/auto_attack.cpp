@@ -1652,8 +1652,8 @@ namespace
     // flags +0x14 & 0x80000), its icon as npcIconId (ENG 00499E90) picks it: crafts first (creature +0x200: 0x1000
     // smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable; none of them a quest sign), else the dialog record
     // +0x245 (u32 index, seen live 2026-11-09; 0 none) of [0xAACF80 +0x755C .. +0x7560), 0x50 bytes, icon at +0x48:
-    // 0 "?!" (dialogs "auftrag*", quest offered), 1 "!" ("ziel*", report), 4/5 the others ("?"); +10 greyed (not yet
-    // for the hero). Plus the journal's targets under way, the one the agent goes for in yellow.
+    // 0 "?!" (dialogs "auftrag*", quest offered), 1 "!" ("ziel*", report), 4/5 the others ("?"); +10 greyed (taken
+    // first for «not yet for the hero»; by what was seen live, the side quests: to be confirmed by Manolito). Plus the journal's targets under way, the one the agent goes for in yellow.
     DWORD g_questMarksAt = 0;
     // The merchants in the world (creature +0x200 & 0x2000), from the same pass: where a full backpack goes.
     struct Merchant
@@ -2020,8 +2020,10 @@ namespace
                     }
                     marks.push_back({glyph, icon < 10, *(o + 0x24), *reinterpret_cast<const int32_t*>(o + 0x1C),
                                      *reinterpret_cast<const int32_t*>(o + 0x20)});
-                    // Yellow (for the hero now): a quest to take or a report to make.
-                    if (icon < 10 && *(o + 0x24) == heroLayer &&
+                    // A quest to take or a report to make, yellow or grey: the yellow ones are the main quest's (seen live
+                    // 2026-11-09: the only yellow sign was the Vampiress's main quest giver), the grey ones the side quests
+                    // (up to 7 in a town, never spoken to: the player saw no side quest taken).
+                    if (*(o + 0x24) == heroLayer &&
                         (glyph == MapMemory::Glyph::Offer || glyph == MapMemory::Glyph::Report))
                     {
                         g_signs.push_back({glyph == MapMemory::Glyph::Offer ? GoalKind::Offer : GoalKind::Report,
