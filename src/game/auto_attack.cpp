@@ -743,6 +743,38 @@ namespace
                 LOG("AutoAttack: {:x} follows the hero: a hireling", friends[i].id);
             }
         }
+        // The game's own list of companions (Manolito, AGENT_ADDRESSES «Mercenarios y acompañantes»): a std::vector
+        // of 9-byte records at hero+0x39C..+0x3A0, +0 the creature's id, +8 non-zero for a hired mercenary (0: one
+        // the script makes follow, e.g. an escorted man). Known at once, without waiting to see it follow.
+        {
+            const auto* heroBytes = reinterpret_cast<const uint8_t*>(hero);
+            const auto begin = *reinterpret_cast<const uint8_t* const*>(heroBytes + 0x39C);
+            const auto end = *reinterpret_cast<const uint8_t* const*>(heroBytes + 0x3A0);
+            if (begin && end > begin && !((end - begin) % 9) && (end - begin) / 9 <= 8)
+            {
+                for (const uint8_t* r = begin; r < end; r += 9)
+                {
+                    const uint32_t id = *reinterpret_cast<const uint32_t*>(r);
+                    const cCreature* c = objects ? objects->creature(id) : nullptr;
+                    if (!c || c->health <= 0)
+                    {
+                        continue;
+                    }
+                    Follower& f = g_followers[id];
+                    f.seenAt = now;
+                    if (!f.since)
+                    {
+                        f.since = now;
+                    }
+                    if (!f.follows)
+                    {
+                        f.follows = true;
+                        LOG("AutoAttack: {:x} is in the hero's companions ({}): looked after", id,
+                            r[8] ? "a hired mercenary" : "following by script");
+                    }
+                }
+            }
+        }
         g_hirelings.clear();
         for (auto it = g_followers.begin(); it != g_followers.end();)
         {
@@ -1884,8 +1916,73 @@ namespace
         return it != g_talkedAt.end() && now - it->second < kTalkAgainMs;
     }
 
+    // The companions kept with the hero on a long walk (the player's wish, 2026-11-09: the agent looks after its
+    // mercenary): one fallen over 10 tiles behind is waited for, one over 18 tiles off is walked back to; a wait lasts
+    // 20 s at most (a companion stuck behind a wall), then the walk goes on for 30 s before waiting again.
+    // True while it waits: the caller's walk is held, not failed.
+    bool waitForCompanions(DWORD now, const cCreature* self)
+    {
+        static DWORD s_waitSince = 0, s_goOnUntil = 0;
+        if (s_goOnUntil && static_cast<int>(now - s_goOnUntil) < 0)
+        {
+            return false;
+        }
+        cObjectManager* objects = cObjectManager::instance();
+        const cCreature* lag = nullptr;
+        double farthest = 0.0;
+        for (uint32_t id : g_hirelings)
+        {
+            const cCreature* h = objects ? objects->creature(id) : nullptr;
+            if (!h || h->health <= 0)
+            {
+                continue;
+            }
+            const double d = std::hypot(static_cast<double>(h->x - self->x), static_cast<double>(h->y - self->y)) / kTileSize;
+            if (d > 10.0 && d < 80.0 && d > farthest)
+            {
+                farthest = d;
+                lag = h;
+            }
+        }
+        if (!lag)
+        {
+            s_waitSince = 0;
+            return false;
+        }
+        if (!s_waitSince)
+        {
+            s_waitSince = now;
+            LOG("AutoAttack: a companion is {:.0f} tiles behind: waiting for it", farthest);
+        }
+        if (now - s_waitSince > 20000)
+        {
+            LOG("AutoAttack: the companion did not come up in 20 s ({:.0f} tiles): going on", farthest);
+            s_waitSince = 0;
+            s_goOnUntil = now + 30000;
+            return false;
+        }
+        if (farthest > 18.0)
+        {
+            if (!ClickWalk::routing())
+            {
+                ClickWalk::walkTo(lag->x, lag->y, false);
+            }
+        }
+        else
+        {
+            ClickWalk::cancel();
+        }
+        return true;
+    }
+
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
+        if (waitForCompanions(now, self))
+        {
+            g_travel.lastAt = now;
+            g_travel.bestAt = now;      // the wait is no lack of progress
+            return true;
+        }
         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(x / kTileSize)) << 32) |
                              static_cast<uint32_t>(y / kTileSize);
         if (const auto it = g_travelBlocked.find(key); it != g_travelBlocked.end())
