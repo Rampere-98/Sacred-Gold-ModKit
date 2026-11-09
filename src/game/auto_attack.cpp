@@ -746,13 +746,18 @@ namespace
         // The game's own list of companions (Manolito, AGENT_ADDRESSES «Mercenarios y acompañantes»): a std::vector
         // of 9-byte records at hero+0x39C..+0x3A0, +0 the creature's id, +8 non-zero for a hired mercenary (0: one
         // the script makes follow, e.g. an escorted man). Known at once, without waiting to see it follow.
+        // When the list reads well (an empty one too), it alone says who the companions are: the guess from who walks
+        // along took Julius, the arena master, for one (seen live, 2026-11-09).
         {
             const auto* heroBytes = reinterpret_cast<const uint8_t*>(hero);
             const auto begin = *reinterpret_cast<const uint8_t* const*>(heroBytes + 0x39C);
             const auto end = *reinterpret_cast<const uint8_t* const*>(heroBytes + 0x3A0);
-            if (begin && end > begin && !((end - begin) % 9) && (end - begin) / 9 <= 8)
+            const bool listKnown = (!begin && !end) ||
+                                   (begin && end >= begin && !((end - begin) % 9) && (end - begin) / 9 <= 8);
+            if (listKnown)
             {
-                for (const uint8_t* r = begin; r < end; r += 9)
+                std::vector<uint32_t> listed;
+                for (const uint8_t* r = begin; r && r < end; r += 9)
                 {
                     const uint32_t id = *reinterpret_cast<const uint32_t*>(r);
                     const cCreature* c = objects ? objects->creature(id) : nullptr;
@@ -760,19 +765,16 @@ namespace
                     {
                         continue;
                     }
-                    Follower& f = g_followers[id];
-                    f.seenAt = now;
-                    if (!f.since)
+                    listed.push_back(id);
+                    static std::unordered_set<uint32_t> s_told;
+                    if (s_told.insert(id).second)
                     {
-                        f.since = now;
-                    }
-                    if (!f.follows)
-                    {
-                        f.follows = true;
                         LOG("AutoAttack: {:x} is in the hero's companions ({}): looked after", id,
                             r[8] ? "a hired mercenary" : "following by script");
                     }
                 }
+                g_hirelings = std::move(listed);
+                return;
             }
         }
         g_hirelings.clear();
