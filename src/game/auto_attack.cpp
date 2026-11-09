@@ -1351,7 +1351,8 @@ namespace
                     // horses, 7 soldiers are not).
                     if (o && *reinterpret_cast<const uint32_t*>(o) >= 0x880000 && *reinterpret_cast<const uint32_t*>(o) < 0x8A0000 &&
                         (*reinterpret_cast<const uint32_t*>(o + 0xC) & 0xFFFF) == static_cast<uint32_t>(it - table) &&
-                        !*(o + 0x24) && *reinterpret_cast<const int32_t*>(o + 0x4D8) > 0)
+                        !*(o + 0x24) && reinterpret_cast<cObject*>(const_cast<uint8_t*>(o))->asCreature() &&
+                        *reinterpret_cast<const int32_t*>(o + 0x4D8) > 0)
                     {
                         const uint32_t side = *reinterpret_cast<const uint32_t*>(o + 0x1F0);
                         if (side && side <= 64 && side != 1 && side != 3 && side != 4 && side != 7)
