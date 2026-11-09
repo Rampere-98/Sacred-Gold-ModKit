@@ -1349,6 +1349,7 @@ namespace
     constexpr double kSignRange = 150.0;                    // tiles: farther quest signs are not goals
     bool goalBlocked(int32_t x, int32_t y, DWORD now);     // travel gave up on it for now
     bool talkedLately(uint32_t id, DWORD now);              // spoken to a short while ago
+    void forgetTalks();                                     // a quest step done: anyone may be spoken to again
 
     bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius, uint32_t& who)
     {
@@ -1386,6 +1387,14 @@ namespace
                 g.titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
                 g.objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
                 g_questBook.push_back(g);
+            }
+            // A step done or failed (the journal moved on): who was spoken to lately may have the next one at once.
+            // Seen live (2026-11-09): the arena won, Julius' next quest waited out the 2 min of «spoken to lately»
+            // with the hero roaming the yard.
+            if ((done != g_questsDone || failed != g_questsFailed) && (g_questsDone || g_questsFailed || done || failed))
+            {
+                LOG("AutoAttack: the journal moved on ({} done, {} failed): anyone may be spoken to again", done, failed);
+                forgetTalks();
             }
             g_questsDone = done;
             g_questsFailed = failed;
@@ -2008,6 +2017,11 @@ namespace
         return it != g_talkedAt.end() && now - it->second < kTalkAgainMs;
     }
 
+    void forgetTalks()
+    {
+        g_talkedAt.clear();
+    }
+
     // The companions kept with the hero on a long walk (the player's wish, 2026-11-09: the agent looks after its
     // mercenary): one fallen over 10 tiles behind is waited for, one over 18 tiles off is walked back to; a wait lasts
     // 20 s at most (a companion stuck behind a wall), then the walk goes on for 30 s before waiting again.
@@ -2137,6 +2151,56 @@ namespace
         return true;
     }
 
+    // The stuck guard (the player's wish, 2026-11-09: no stall ever): out of the fights, a hero that has not got
+    // 8 tiles away from where it stood for 60 s is stuck, whatever the reason (a talk waited out, a goal unreachable,
+    // a yard with no way on). Step by step, 30 s apart: first all «left for now» marks are forgotten (who was spoken
+    // to, goals travel gave up on), then a walk of 15 tiles each time a new way round (the tile reachable nearest it).
+    // Fights and collects (no roam for 3 s) and any jump (a portal, a teleport) start the watch again.
+    bool stuckGuard(DWORD now, const cCreature* self)
+    {
+        static DWORD s_lastCall = 0, s_anchorAt = 0;
+        static int32_t s_ax = 0, s_ay = 0;
+        static int s_stage = 0;
+        const double moved = std::hypot(static_cast<double>(self->x - s_ax), static_cast<double>(self->y - s_ay));
+        if (!s_lastCall || now - s_lastCall > 3000 || moved > 8.0 * kTileSize)
+        {
+            s_ax = self->x;
+            s_ay = self->y;
+            s_anchorAt = now;
+            s_stage = 0;
+        }
+        s_lastCall = now;
+        if (now - s_anchorAt < 60000u + 30000u * static_cast<DWORD>(s_stage))
+        {
+            return false;
+        }
+        ++s_stage;
+        if (s_stage == 1)
+        {
+            LOG("AutoAttack: stuck guard: 60 s without getting anywhere: the marks «left for now» forgotten");
+            forgetTalks();
+            g_travelBlocked.clear();
+            return false;
+        }
+        const double angle = s_stage * 2.39996;     // the golden angle: each try a new way round
+        const int tx = static_cast<int>((self->x + std::cos(angle) * 15.0 * kTileSize) / kTileSize);
+        const int ty = static_cast<int>((self->y + std::sin(angle) * 15.0 * kTileSize) / kTileSize);
+        int nx = tx, ny = ty;
+        Whereabouts::nearestReachable(tx, ty, nx, ny);
+        const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize), wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
+        LOG("AutoAttack: stuck guard: still nowhere after {} s: a walk to tile {},{} (try {})", (now - s_anchorAt) / 1000,
+            nx, ny, s_stage - 1);
+        ClickWalk::walkTo(wx, wy, false);
+        MapMemory::setRoute(true, wx, wy);
+        g_homeX = wx;
+        g_homeY = wy;
+        g_roamStuck = 0;
+        g_roamAt = now;
+        g_walkX = wx;
+        g_walkY = wy;
+        return true;
+    }
+
     void roam(DWORD now)
     {
         if ((!Config::autoAttack.roam && !Config::autoAttack.quests) || g_retreatUntil)
@@ -2152,6 +2216,10 @@ namespace
         cEngine* engine = FrameHooks::engine();
         cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr;
         cCreature* hero = objects ? objects->hero() : nullptr;
+        if (self && hero && stuckGuard(now, self))
+        {
+            return;
+        }
         if (!self || !hero || now - g_quietSince < kRoamQuietMs || (g_roamAt && now - g_roamAt < kRoamStepMs) ||
             hero->health * 100 < hero->maxHealth * 60)
         {
