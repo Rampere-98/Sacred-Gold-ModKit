@@ -1192,52 +1192,164 @@ namespace
     // The quest journal (seen live, 2026-11-09): a std::vector of 0x174-byte records at [0xAAD3A4]..[0xAAD3A8]
     // (the quest manager 0xAACF80 +0x424): +0 kind (3 main, 4 side), +4 state (1-2 under way, 100 done, 101
     // failed), +0x14 the target object's id (a creature to speak to, or -1), +0x18/+0x1C the target's tile, +0x20
-    // its radius in world units. The quest to go for: the main one under way, else the nearest side one.
+    // its radius in world units, +0x24/+0x28 title and objective text keys.
+    //
+    // The quest book (the player's wish, 2026-11-09: the agent knows the quests under way, those not done, those to
+    // take, and goes for the nearest objective): every quest under way, every creature offering a quest ("?!") or
+    // waiting for a report ("!") the hero can take now, ordered by distance. The agent goes for the nearest it can
+    // reach; one it found no way to is left a while (travel's block) and the next one taken.
+    enum class GoalKind { Journal, Offer, Report };
+    struct QuestGoal
+    {
+        GoalKind kind;
+        bool main = false;
+        int32_t x = 0, y = 0;       // world
+        double radius = 0.0;
+        uint32_t who = 0;           // creature to speak to (or -1)
+        uint32_t titleKey = 0, objectiveKey = 0;
+        double distance = 0.0;
+        bool blocked = false;
+    };
+    std::vector<QuestGoal> g_questBook;     // rebuilt by questTarget, nearest first
+    int g_questsDone = 0, g_questsFailed = 0;
+    // The yellow "?!" / "!" signs of the last pass (creatures the hero can speak to now), on the hero's layer.
+    struct Sign
+    {
+        GoalKind kind;
+        uint32_t id;
+        int32_t x, y;
+    };
+    std::vector<Sign> g_signs;
+
+    bool goalBlocked(int32_t x, int32_t y, DWORD now);     // travel gave up on it for now
+    bool talkedLately(uint32_t id, DWORD now);              // spoken to a short while ago
+
     bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius, uint32_t& who)
     {
+        const DWORD now = GetTickCount();
+        g_questBook.clear();
         const auto begin = *reinterpret_cast<const uint8_t* const*>(0xAAD3A4);
         const auto end = *reinterpret_cast<const uint8_t* const*>(0xAAD3A8);
         constexpr size_t kRecord = 0x174;
-        if (!begin || end <= begin || (end - begin) % kRecord || (end - begin) / kRecord > 512)
+        if (begin && end > begin && !((end - begin) % kRecord) && (end - begin) / kRecord <= 512)
+        {
+            int done = 0, failed = 0;
+            for (const uint8_t* r = begin; r < end; r += kRecord)
+            {
+                const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
+                done += state == 100;
+                failed += state == 101;
+                if (state != 1 && state != 2)
+                {
+                    continue;
+                }
+                const int32_t tx = *reinterpret_cast<const int32_t*>(r + 0x18), ty = *reinterpret_cast<const int32_t*>(r + 0x1C);
+                if (tx <= 0 || ty <= 0)
+                {
+                    continue;
+                }
+                QuestGoal g{GoalKind::Journal};
+                g.main = kind == 3;
+                g.x = static_cast<int32_t>((tx + 0.5) * kTileSize);
+                g.y = static_cast<int32_t>((ty + 0.5) * kTileSize);
+                g.radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
+                g.who = *reinterpret_cast<const uint32_t*>(r + 0x14);
+                g.titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
+                g.objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
+                g_questBook.push_back(g);
+            }
+            g_questsDone = done;
+            g_questsFailed = failed;
+        }
+        for (const Sign& sign : g_signs)
+        {
+            // A creature the journal already leads to is not a goal of its own.
+            const bool known = std::any_of(g_questBook.begin(), g_questBook.end(), [&](const QuestGoal& g) {
+                return g.kind == GoalKind::Journal && g.who == sign.id;
+            });
+            if (known || talkedLately(sign.id, now))
+            {
+                continue;
+            }
+            QuestGoal g{sign.kind};
+            g.x = sign.x;
+            g.y = sign.y;
+            g.radius = 2.0 * kTileSize;
+            g.who = sign.id;
+            g_questBook.push_back(g);
+        }
+        for (QuestGoal& g : g_questBook)
+        {
+            g.distance = std::hypot(static_cast<double>(g.x - heroX), static_cast<double>(g.y - heroY));
+            g.blocked = goalBlocked(g.x, g.y, now);
+        }
+        std::stable_sort(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& a, const QuestGoal& b) {
+            if (a.blocked != b.blocked)
+            {
+                return !a.blocked;
+            }
+            return a.distance < b.distance;
+        });
+        if (g_questBook.empty() || g_questBook.front().blocked)
         {
             return false;
         }
-        bool found = false, main = false;
-        double best = 0.0;
-        uint32_t titleKey = 0, objectiveKey = 0;
-        for (const uint8_t* r = begin; r < end; r += kRecord)
+        const QuestGoal& g = g_questBook.front();
+        x = g.x;
+        y = g.y;
+        radius = g.radius;
+        who = g.who;
+        if (g.kind == GoalKind::Journal)
         {
-            const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
-            if (state != 1 && state != 2)
-            {
-                continue;
-            }
-            const int32_t tx = *reinterpret_cast<const int32_t*>(r + 0x18), ty = *reinterpret_cast<const int32_t*>(r + 0x1C);
-            if (tx <= 0 || ty <= 0)
-            {
-                continue;
-            }
-            const double wx = (tx + 0.5) * kTileSize, wy = (ty + 0.5) * kTileSize;
-            const double d = std::hypot(wx - heroX, wy - heroY);
-            const bool isMain = kind == 3;
-            if (!found || (isMain && !main) || (isMain == main && d < best))
-            {
-                found = true;
-                main = isMain;
-                best = d;
-                x = static_cast<int32_t>(wx);
-                y = static_cast<int32_t>(wy);
-                radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
-                who = *reinterpret_cast<const uint32_t*>(r + 0x14);
-                titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
-                objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
-            }
+            Lore::readQuest(g.titleKey, g.objectiveKey);     // the quest's title and objective read: its kind
         }
-        if (found)
+        static uint32_t told = 0;
+        const uint32_t pick = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
+        if (pick != told)
         {
-            Lore::readQuest(titleKey, objectiveKey);     // the quest's title and objective read: its kind
+            told = pick;
+            LOG("AutoAttack: quest book: {} goals ({} done, {} failed), going for the nearest: {} at {:.0f} tiles",
+                g_questBook.size(), g_questsDone, g_questsFailed,
+                g.kind == GoalKind::Journal ? (g.main ? "main quest" : "side quest")
+                                            : g.kind == GoalKind::Offer ? "a quest offered" : "a report",
+                g.distance / kTileSize);
         }
-        return found;
+        return true;
+    }
+
+    void drawQuestBook()
+    {
+        ImGui::Text("Misiones hechas: %d, fallidas: %d", g_questsDone, g_questsFailed);
+        if (g_questBook.empty())
+        {
+            ImGui::TextDisabled("Ninguna misión en curso ni ofrecida a la vista.");
+            return;
+        }
+        ImGui::TextDisabled("En orden de cercanía; la primera es la que sigue el agente.");
+        int n = 0;
+        for (const QuestGoal& g : g_questBook)
+        {
+            std::string line = std::to_string(++n) + ". ";
+            if (g.kind == GoalKind::Journal)
+            {
+                const std::string title = Lore::textUtf8(g.titleKey), objective = Lore::textUtf8(g.objectiveKey);
+                line += std::string(g.main ? "[principal] " : "[secundaria] ") + (title.empty() ? "?" : title);
+                if (!objective.empty())
+                {
+                    line += ": " + objective;
+                }
+            }
+            else
+            {
+                line += g.kind == GoalKind::Offer ? "[ofrece misión] alguien con ?!" : "[informar] alguien con !";
+            }
+            line += " (" + std::to_string(static_cast<int>(g.distance / kTileSize)) + " casillas)";
+            if (g.blocked)
+            {
+                line += " - sin camino por ahora";
+            }
+            ImGui::TextWrapped("%s", line.c_str());
+        }
     }
 
     // The quest signs for the agent's map, once a second: every creature the game marks with an overhead icon (object
@@ -1378,13 +1490,14 @@ namespace
         }
     }
 
-    void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY, int heroLevel)
+    void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY, int heroLevel, uint8_t heroLayer)
     {
         if (g_questMarksAt && now - g_questMarksAt < 1000)
         {
             return;
         }
         g_questMarksAt = now;
+        g_signs.clear();
         std::vector<MapMemory::QuestMark> marks;
         g_merchants.clear();
         g_farmBuilding.clear();
@@ -1469,6 +1582,14 @@ namespace
                     }
                     marks.push_back({glyph, icon < 10, *(o + 0x24), *reinterpret_cast<const int32_t*>(o + 0x1C),
                                      *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    // Yellow (for the hero now): a quest to take or a report to make.
+                    if (icon < 10 && *(o + 0x24) == heroLayer &&
+                        (glyph == MapMemory::Glyph::Offer || glyph == MapMemory::Glyph::Report))
+                    {
+                        g_signs.push_back({glyph == MapMemory::Glyph::Offer ? GoalKind::Offer : GoalKind::Report,
+                                           *reinterpret_cast<const uint32_t*>(o + 0xC), *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                           *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    }
                 }
             }
         }
@@ -1566,6 +1687,20 @@ namespace
     };
     Travel g_travel;
     std::unordered_map<uint64_t, DWORD> g_travelBlocked;
+
+    bool goalBlocked(int32_t x, int32_t y, DWORD now)
+    {
+        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(x / kTileSize)) << 32) |
+                             static_cast<uint32_t>(y / kTileSize);
+        const auto it = g_travelBlocked.find(key);
+        return it != g_travelBlocked.end() && static_cast<int>(now - it->second) < 0;
+    }
+
+    bool talkedLately(uint32_t id, DWORD now)
+    {
+        const auto it = g_talkedAt.find(id);
+        return it != g_talkedAt.end() && now - it->second < kTalkAgainMs;
+    }
 
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
@@ -2447,6 +2582,7 @@ void AutoAttack::install()
     g_on = Config::autoAttack.enabled;
     ModkitMenu::add({"Ataque automático", &drawMenu, &saveMenu});
     ModkitMenu::add({"Lo que lee el agente", &Lore::drawMenu, nullptr});
+    ModkitMenu::add({"Misiones del agente", &drawQuestBook, nullptr});
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
@@ -2625,7 +2761,8 @@ void AutoAttack::onFrame()
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
             scanQuestMarks(now, self->x, self->y,
-                           *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
+                           *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56),
+                           static_cast<uint8_t>(layer));
             if (float sx, sy; AimAssist::hero(sx, sy))
             {
                 MapMemory::wantGround(layer, self->x, self->y, sx, sy);

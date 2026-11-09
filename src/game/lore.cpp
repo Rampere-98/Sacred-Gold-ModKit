@@ -174,6 +174,11 @@ std::wstring Lore::text(uint32_t key)
     return plain(std::wstring(t[0], t[1]));
 }
 
+std::string Lore::textUtf8(uint32_t key)
+{
+    return utf8(text(key));
+}
+
 Lore::QuestKind Lore::readQuest(uint32_t titleKey, uint32_t objectiveKey)
 {
     const std::lock_guard lock(g_lock);

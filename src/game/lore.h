@@ -20,6 +20,7 @@ namespace Lore
 
     // A text of the game's by its key (a bit-31 key is a global.res id, as the game reads them); "" if none.
     std::wstring text(uint32_t key);
+    std::string textUtf8(uint32_t key);
 
     // The quest the agent goes for: read once per quest (title, objective), its kind told and kept.
     QuestKind readQuest(uint32_t titleKey, uint32_t objectiveKey);
