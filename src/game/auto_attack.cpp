@@ -1471,9 +1471,11 @@ namespace
             g_autoHeroY = hero->y;
             g_autoMovedAt = now;
         }
+        // The hero standing still is the player's play left alone; walking for the agent (roaming, after a fight) it
+        // never stands, and loot it passes is taken on the way.
         if ((g_autoCollectLookAt && static_cast<int>(now - g_autoCollectLookAt) < 0) ||
             (g_quietUntil && static_cast<int>(now - g_quietUntil) < static_cast<int>(kAutoCollectIdleMs)) ||
-            static_cast<int>(now - g_autoMovedAt) < static_cast<int>(kAutoCollectStillMs))
+            (!g_on && static_cast<int>(now - g_autoMovedAt) < static_cast<int>(kAutoCollectStillMs)))
         {
             return;
         }
