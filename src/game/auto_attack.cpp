@@ -1438,6 +1438,148 @@ namespace
         return hi > 0;
     }
 
+    // The region of a tile's sector (Manolito, AGENT_ADDRESSES «Dónde está el héroe»: [sector+0x17C] +0xD7, the
+    // level range beside it at +0xD3/+0xD5), or -1. Regions span many sectors; the game names them by script only.
+    int sectorRegion(const uint8_t* world, int tx, int ty)
+    {
+        if (!world || tx < 0 || ty < 0 || tx >= 128 * 64 || ty >= 128 * 64)
+        {
+            return -1;
+        }
+        const uint16_t id = *reinterpret_cast<const uint16_t*>(world + 0x284 + 2 * ((ty >> 6) * 128 + (tx >> 6)));
+        const auto table = *reinterpret_cast<const uint8_t* const* const*>(world + 0x240);
+        const auto tableEnd = *reinterpret_cast<const uint8_t* const* const*>(world + 0x244);
+        if (!table || id >= tableEnd - table || !table[id])
+        {
+            return -1;
+        }
+        const uint8_t* block = *reinterpret_cast<const uint8_t* const*>(table[id] + 0x17C);
+        return block ? *(block + 0xD7) : -1;
+    }
+
+    // The zone the hero is in (the player's wish, 2026-11-09: the agent knows which zone it is in, what it can do
+    // there, and whether staying is worth it; with nothing to do there it looks for another). A zone is a region of
+    // sectors; what it holds is counted from what the once-a-second scan sees: quest goals (journal and signs),
+    // living enemies of a fitting level, chests not yet opened.
+    struct ZoneBrief
+    {
+        bool valid = false;
+        int region = -1, lo = 0, hi = 0, heroLevel = 0;
+        int quests = 0, enemies = 0, chests = 0;
+        bool worth = false;
+        // With nothing here: the next zone's goal (a quest sign beyond the book's 150 tiles), if one is known.
+        bool next = false;
+        int nextRegion = -1;
+        int32_t nextX = 0, nextY = 0;
+        double nextDistance = 0.0;
+        GoalKind nextKind = GoalKind::Offer;
+    };
+    ZoneBrief g_zone;
+
+    void judgeZone(const uint8_t* world, int heroLevel, int32_t heroX, int32_t heroY, DWORD now)
+    {
+        ZoneBrief z;
+        const int htx = static_cast<int>(heroX / kTileSize), hty = static_cast<int>(heroY / kTileSize);
+        z.region = sectorRegion(world, htx, hty);
+        if (z.region < 0)
+        {
+            g_zone = z;
+            return;
+        }
+        z.valid = true;
+        z.heroLevel = heroLevel;
+        sectorLevels(world, htx, hty, z.lo, z.hi);
+        const auto inZone = [&](int32_t x, int32_t y) {
+            return sectorRegion(world, static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize)) == z.region;
+        };
+        for (const QuestGoal& g : g_questBook)
+        {
+            z.quests += !g.blocked && inZone(g.x, g.y);
+        }
+        for (const auto& [key, f] : g_farmBuilding)
+        {
+            const int n = std::max(f.count, 1);
+            const int cx = static_cast<int>(f.sumX / n), cy = static_cast<int>(f.sumY / n);
+            int lo = 0, hi = 0;
+            if (sectorRegion(world, cx, cy) == z.region && sectorLevels(world, cx, cy, lo, hi) && lo <= heroLevel + 5)
+            {
+                z.enemies += f.count;
+            }
+        }
+        z.chests = g_chestBuilding && inZone(g_chestX, g_chestY) ? 1 : 0;
+        z.worth = z.quests > 0 || z.enemies >= 3 || z.chests > 0;
+        if (!z.worth)
+        {
+            // The nearest quest sign anywhere (the book keeps only those within 150 tiles), not spoken to lately and
+            // not given up on by travel: the next zone to go to.
+            for (const Sign& sign : g_signs)
+            {
+                const double d = std::hypot(static_cast<double>(sign.x - heroX), static_cast<double>(sign.y - heroY));
+                if (talkedLately(sign.id, now) || goalBlocked(sign.x, sign.y, now) || (z.next && d >= z.nextDistance))
+                {
+                    continue;
+                }
+                z.next = true;
+                z.nextX = sign.x;
+                z.nextY = sign.y;
+                z.nextDistance = d;
+                z.nextKind = sign.kind;
+                z.nextRegion = sectorRegion(world, static_cast<int>(sign.x / kTileSize), static_cast<int>(sign.y / kTileSize));
+            }
+        }
+        static int toldRegion = -2, toldWorth = -1, toldNext = -2;
+        if (z.region != toldRegion || static_cast<int>(z.worth) != toldWorth || (!z.worth && z.nextRegion != toldNext))
+        {
+            toldRegion = z.region;
+            toldWorth = z.worth;
+            toldNext = z.nextRegion;
+            if (z.worth)
+            {
+                LOG("Zone: region {} (levels {}-{}, hero {}): {} quest goals, {} enemies of its level, {} chests: worth "
+                    "staying",
+                    z.region, z.lo, z.hi, heroLevel, z.quests, z.enemies, z.chests);
+            }
+            else if (z.next)
+            {
+                LOG("Zone: region {} (levels {}-{}, hero {}): nothing to do here; next: {} in region {} at {:.0f} tiles",
+                    z.region, z.lo, z.hi, heroLevel, z.nextKind == GoalKind::Report ? "a report" : "a quest offered",
+                    z.nextRegion, z.nextDistance / kTileSize);
+            }
+            else
+            {
+                LOG("Zone: region {} (levels {}-{}, hero {}): nothing to do here and no other zone's goal known: "
+                    "farming or exploring",
+                    z.region, z.lo, z.hi, heroLevel);
+            }
+        }
+        g_zone = z;
+    }
+
+    void drawZone()
+    {
+        const ZoneBrief& z = g_zone;
+        if (!z.valid)
+        {
+            ImGui::TextDisabled("Zona aún sin leer.");
+            return;
+        }
+        ImGui::Text("Región %d, niveles %d-%d (héroe %d)", z.region, z.lo, z.hi, z.heroLevel);
+        ImGui::Text("Misiones aquí: %d   Enemigos de su nivel: %d   Cofres sin abrir: %d", z.quests, z.enemies, z.chests);
+        if (z.worth)
+        {
+            ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), "Vale la pena quedarse.");
+        }
+        else if (z.next)
+        {
+            ImGui::TextWrapped("Nada que hacer aquí: siguiente zona, región %d (%s, %.0f casillas).", z.nextRegion,
+                               z.nextKind == GoalKind::Report ? "informar" : "misión ofrecida", z.nextDistance / kTileSize);
+        }
+        else
+        {
+            ImGui::TextWrapped("Nada que hacer aquí ni otra zona con misión conocida: cultivar o explorar.");
+        }
+    }
+
     void chooseFarm(const uint8_t* world, int heroLevel, int32_t heroX, int32_t heroY)
     {
         float best = 0.0f;
@@ -1650,6 +1792,7 @@ namespace
         }
         chooseFarm(manager ? *reinterpret_cast<const uint8_t* const*>(manager) : nullptr, heroLevel, heroX, heroY);
         g_chestId = g_chestBest < 150.0 * kTileSize ? g_chestBuilding : 0;
+        judgeZone(manager ? *reinterpret_cast<const uint8_t* const*>(manager) : nullptr, heroLevel, heroX, heroY, now);
         MapMemory::setQuestMarks(std::move(marks));
     }
 
@@ -2200,6 +2343,25 @@ namespace
                     ClickWalk::walkTo(g_chestX, g_chestY, false);
                 }
                 MapMemory::setRoute(true, g_chestX, g_chestY);
+                g_roamAt = 0;
+                return;
+            }
+        }
+        // Nothing worth doing in this zone and another zone's quest known: off there (the farming zone and the
+        // roaming come after, for a zone with nothing and no other goal known).
+        if (Config::autoAttack.quests && !questHere && layer == 0 && g_zone.valid && !g_zone.worth && g_zone.next)
+        {
+            static int32_t toldX = 0, toldY = 0;
+            if (g_zone.nextX != toldX || g_zone.nextY != toldY)
+            {
+                toldX = g_zone.nextX;
+                toldY = g_zone.nextY;
+                LOG("AutoAttack: nothing to do in region {}: off to region {} ({:.0f} tiles)", g_zone.region,
+                    g_zone.nextRegion, g_zone.nextDistance / kTileSize);
+            }
+            if (travel(now, self, g_zone.nextX, g_zone.nextY, g_questAskAt))
+            {
+                MapMemory::setRoute(true, g_zone.nextX, g_zone.nextY);
                 g_roamAt = 0;
                 return;
             }
@@ -2761,6 +2923,7 @@ void AutoAttack::install()
     ModkitMenu::add({"Lo que lee el agente", &Lore::drawMenu, nullptr});
     ModkitMenu::add({"Misiones del agente", &drawQuestBook, nullptr});
     ModkitMenu::add({"Dónde está el héroe", &Whereabouts::drawMenu, nullptr});
+    ModkitMenu::add({"Zona del agente", &drawZone, nullptr});
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
