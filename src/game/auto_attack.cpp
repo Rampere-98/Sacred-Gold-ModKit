@@ -1079,11 +1079,14 @@ namespace
             if (it != distances.end() &&
                 AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, loot))
             {
+                // No danger of dying (60 % of health or more): loot first, the fights wait (the user: more
+                // efficient). In danger, only loot nearer than the enemy.
                 const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
-                if (lootDistance < it->second)
+                const bool safe = maximum > 0 && health * 10 >= maximum * 6;
+                if (safe || lootDistance < it->second)
                 {
-                    LOG("AutoAttack: loot {:x} nearer ({:.0f} px) than enemy {:x} ({:.0f} px)", loot.id, lootDistance,
-                        enemy, it->second);
+                    LOG("AutoAttack: loot {:x} first ({:.0f} px; enemy {:x} at {:.0f} px; {})", loot.id, lootDistance,
+                        enemy, it->second, safe ? "no danger" : "nearer");
                     g_lootInstead = true;
                     enemy = 0;
                 }
@@ -1304,7 +1307,7 @@ namespace
         }
         // Told when what it knows changes: signs within 60 tiles by kind, and the journal's targets.
         {
-            int near[3] = {}, yellow = 0, targets = 0;
+            int close[3] = {}, yellow = 0, targets = 0;
             for (const MapMemory::QuestMark& q : marks)
             {
                 if (q.glyph == MapMemory::Glyph::Target)
@@ -1313,18 +1316,18 @@ namespace
                 }
                 else if (std::hypot(static_cast<double>(q.x - heroX), static_cast<double>(q.y - heroY)) < 60 * kTileSize)
                 {
-                    ++near[static_cast<int>(q.glyph)];
+                    ++close[static_cast<int>(q.glyph)];
                     yellow += q.yellow;
                 }
             }
             static int told = -1;
-            const int seen = near[0] | near[1] << 8 | near[2] << 16 | yellow << 24 | targets << 28;
+            const int seen = close[0] | close[1] << 8 | close[2] << 16 | yellow << 24 | targets << 28;
             if (seen != told)
             {
                 told = seen;
                 LOG("AutoAttack: quest signs within 60 tiles: {} ?!, {} !, {} ? ({} yellow); {} quests under way; {} "
                     "merchants known",
-                    near[0], near[1], near[2], yellow, targets, g_merchants.size());
+                    close[0], close[1], close[2], yellow, targets, g_merchants.size());
             }
         }
         MapMemory::setQuestMarks(std::move(marks));
@@ -1983,8 +1986,8 @@ namespace
         ImGui::SetItemTooltip("Con su propia recogida (no usa la tecla A, que queda como en el juego): objetos del "
                               "suelo, cofres, escondites y pozos del radio, uno a uno, sin combate cerca.");
         ImGui::BeginDisabled(!c.pickup);
-        ImGui::Checkbox("Recoger también en combate (si está más cerca que el enemigo)", &c.lootInFight);
-        ImGui::SetItemTooltip("Recoger y luchar valen lo mismo: un objeto más cerca que el enemigo se recoge primero "
+        ImGui::Checkbox("Recoger antes que luchar (sin peligro de morir)", &c.lootInFight);
+        ImGui::SetItemTooltip("Con el 60 % de vida o más, recoge primero y luego lucha; con menos, solo lo que esté más cerca que el enemigo "
                               "(uno, y vuelve a la pelea).");
         ImGui::Checkbox("También sin el auto ataque activo", &c.autoCollect);
         ImGui::SetItemTooltip("Apagado: solo recoge tras los combates que hace por ti.");
