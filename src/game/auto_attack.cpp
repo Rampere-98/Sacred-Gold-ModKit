@@ -1221,6 +1221,7 @@ namespace
     };
     std::vector<Sign> g_signs;
 
+    constexpr double kSignRange = 150.0;                    // tiles: farther quest signs are not goals
     bool goalBlocked(int32_t x, int32_t y, DWORD now);     // travel gave up on it for now
     bool talkedLately(uint32_t id, DWORD now);              // spoken to a short while ago
 
@@ -1270,7 +1271,10 @@ namespace
             const bool known = std::any_of(g_questBook.begin(), g_questBook.end(), [&](const QuestGoal& g) {
                 return g.kind == GoalKind::Journal && g.who == sign.id;
             });
-            if (known || talkedLately(sign.id, now))
+            // Only signs near enough to walk to: the scan sees the whole world's creatures, and a sign thousands of
+            // tiles off (seen live: 2474 and 2924 tiles, from inside the closed arena) is no goal for now.
+            const double off = std::hypot(static_cast<double>(sign.x - heroX), static_cast<double>(sign.y - heroY));
+            if (known || talkedLately(sign.id, now) || off > kSignRange * kTileSize)
             {
                 continue;
             }
@@ -1888,7 +1892,11 @@ namespace
         if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr, who))
         {
             questHere = true;
-            if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
+            // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
+            // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.
+            const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
+            const bool zone = qr >= 8.0 * kTileSize;
+            if (qd > (zone ? qr + 10.0 * kTileSize : qr))
             {
                 g_questTravel = true;
                 if (qx != g_questX || qy != g_questY)
