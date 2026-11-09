@@ -116,8 +116,8 @@ namespace
         {
             return K::Escort;
         }
-        if (has(s, {L"mata", L"acaba con", L"destruye", L"elimina", L"derrota", L"vence", L"kill", L"destroy",
-                    L"defeat", L"slay"}))
+        if (has(s, {L"mata", L"acaba con", L"destruye", L"elimina", L"derrota", L"vence", L"lucha", L"combate",
+                    L"pelea", L"kill", L"destroy", L"defeat", L"slay", L"fight", L"battle"}))
         {
             return K::Kill;
         }
