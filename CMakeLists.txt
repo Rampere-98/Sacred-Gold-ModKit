@@ -69,6 +69,7 @@ set(DDRAW_SOURCES
   src/game/skin_check.cpp
   src/game/granny_mesh.cpp
   src/game/gear.cpp
+  src/game/hero_build.cpp
   src/game/gpu_skin.cpp
   src/game/world_passes.cpp
   src/game/aim_assist.cpp

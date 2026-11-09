@@ -1,6 +1,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
+#include "game/hero_build.h"
 #include "game/click_walk.h"
 #include "game/map_memory.h"
 #include "config/auto_attack.h"
@@ -2210,6 +2211,7 @@ void AutoAttack::onFrame()
     if (foreground && !Controller::drives() && heroAlive())
     {
         Gear::onFrame(now, !g_collecting && !g_target && !g_pending && !g_retreatUntil && !Tactics::busy(now));
+        HeroBuild::onFrame(now, !g_target && !g_retreatUntil && !Tactics::busy(now));
     }
     // A walk the player asked for on the agent's map: left be unless the hero is attacked.
     if (!g_on || !foreground || Controller::drives() || !Controller::worldRunning() || !heroAlive() ||
