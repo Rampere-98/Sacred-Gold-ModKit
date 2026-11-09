@@ -259,6 +259,11 @@ namespace
     bool g_keyWasDown = false;
     uint32_t g_target = 0;          // the enemy we attack or the loot we go for, 0 for none
     bool g_looting = false;         // g_target is loot
+    // Loot and fights weigh alike (the user, 2026-11-09): on each look, loot nearer to the hero than the chosen enemy
+    // is taken first, enemies about or not. Loot taken that way is one piece, then
+    // the fight again (g_collectOne), a hit meanwhile not ending it.
+    bool g_lootInstead = false;
+    bool g_collectOne = false;
     DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
     float g_lootBest = 0.0f;        // the nearest the hero got to it, world units
     DWORD g_lootBestAt = 0;         // when it got that near
@@ -1065,6 +1070,24 @@ namespace
         g_farAimLooks = std::move(farAim);
 
         bool chosen = false;
+        g_lootInstead = false;
+        if (enemy && Config::autoAttack.pickup)
+        {
+            AimAssist::Target loot;
+            const auto it = distances.find(enemy);
+            if (it != distances.end() &&
+                AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, loot))
+            {
+                const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
+                if (lootDistance < it->second)
+                {
+                    LOG("AutoAttack: loot {:x} nearer ({:.0f} px) than enemy {:x} ({:.0f} px)", loot.id, lootDistance,
+                        enemy, it->second);
+                    g_lootInstead = true;
+                    enemy = 0;
+                }
+            }
+        }
         if (enemy)
         {
             out = {enemy, threat};
@@ -1189,6 +1212,14 @@ namespace
     // 0 "!" (dialogs "auftrag*", quest offered), 1 "?" ("ziel*", report), 4/5 the others; +10 the same greyed (not yet
     // for the hero). Plus the journal's targets under way, the one the agent goes for in yellow.
     DWORD g_questMarksAt = 0;
+    // The merchants in the world (creature +0x200 & 0x2000), from the same pass: where a full backpack goes.
+    struct Merchant
+    {
+        uint32_t id;
+        uint8_t layer;
+        int32_t x, y;
+    };
+    std::vector<Merchant> g_merchants;
 
     void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY)
     {
@@ -1198,6 +1229,7 @@ namespace
         }
         g_questMarksAt = now;
         std::vector<MapMemory::QuestMark> marks;
+        g_merchants.clear();
         const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
         const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
         const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
@@ -1211,6 +1243,13 @@ namespace
                 for (const uint8_t* const* it = table; it < tableEnd; ++it)
                 {
                     const uint8_t* o = *it;
+                    if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0x200) & 0x2000))
+                    {
+                        g_merchants.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
+                                               *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                               *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    }
                     if (!o || !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) ||
                         (*reinterpret_cast<const uint32_t*>(o + 0x200) & (0x1000 | 0x2000 | 0x4000 | 0x4000000)))
                     {
@@ -1266,6 +1305,12 @@ namespace
     }
 
     DWORD g_questAskAt = 0;
+    // The merchant trip (Gear::wantsShop): the merchant gone to, when the walk and the click were last asked for.
+    uint32_t g_shopId = 0;
+    DWORD g_shopAskAt = 0, g_shopClickAt = 0;
+    int g_shopTries = 0;
+    bool g_shopTold = false;
+    std::unordered_map<uint32_t, DWORD> g_shopFailedAt;     // merchants that would not open: left 5 min
     int32_t g_questX = 0, g_questY = 0;
 
     // Speaking to the quest's creature (the quest giver, or whom to report to): a click on it, as the player's, then
@@ -1335,6 +1380,69 @@ namespace
             g_roamStuck = 0;
             g_roamAngle = jitter(0, 628) / 100.0;
         }
+        // The backpack full: off to the nearest merchant (however far, as to a quest), the shop opened with a click on
+        // him as the player's; Gear sells and puts on the upgrades, then the agent closes it (onFrame).
+        if (Gear::wantsShop() && !Gear::shopOpen())
+        {
+            const Merchant* best = nullptr;
+            double bestDistance = 0.0;
+            for (const Merchant& m : g_merchants)
+            {
+                const auto failed = g_shopFailedAt.find(m.id);
+                if (m.layer != layer || (failed != g_shopFailedAt.end() && now - failed->second < 300000))
+                {
+                    continue;
+                }
+                const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                if (!best || d < bestDistance)
+                {
+                    best = &m;
+                    bestDistance = d;
+                }
+            }
+            if (best)
+            {
+                g_questTravel = true;   // loot only on the way
+                if (best->id != g_shopId)
+                {
+                    LOG("AutoAttack: backpack full, off to merchant {:x} ({:.0f} tiles)", best->id, bestDistance / kTileSize);
+                    g_shopId = best->id;
+                    g_shopTries = 0;
+                    g_shopClickAt = 0;
+                }
+                if (bestDistance > 3.0 * kTileSize)
+                {
+                    if (!ClickWalk::routing() && now - g_shopAskAt > 4000)
+                    {
+                        g_shopAskAt = now;
+                        ClickWalk::walkTo(best->x, best->y, false);
+                    }
+                }
+                else if (!g_shopClickAt || now - g_shopClickAt > 3000)
+                {
+                    if (++g_shopTries > 5)
+                    {
+                        LOG("AutoAttack: merchant {:x} would not trade, left 5 min", best->id);
+                        g_shopFailedAt[best->id] = now;
+                        g_shopId = 0;
+                    }
+                    else
+                    {
+                        LOG("AutoAttack: opening the shop of {:x} (try {})", best->id, g_shopTries);
+                        g_shopClickAt = now;
+                        attack(best->id);
+                    }
+                }
+                MapMemory::setRoute(true, best->x, best->y);
+                g_roamAt = 0;
+                return;
+            }
+            if (!g_shopTold)
+            {
+                g_shopTold = true;
+                LOG("AutoAttack: backpack full and no merchant known on this layer");
+            }
+        }
         // Quests: off to the quest's target (however far: ClickWalk routes it over the map memory), fighting only
         // what attacks on the way; there, the roaming looks around it.
         int32_t qx = 0, qy = 0;
@@ -1346,7 +1454,7 @@ namespace
             if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
             {
                 g_questTravel = true;
-                if (!ClickWalk::walking() && now - g_questAskAt > 4000)
+                if (!ClickWalk::routing() && now - g_questAskAt > 4000)
                 {
                     if (qx != g_questX || qy != g_questY)
                     {
@@ -1357,7 +1465,7 @@ namespace
                         g_questY = qy;
                     }
                     g_questAskAt = now;
-                    ClickWalk::walkTo(qx, qy);
+                    ClickWalk::walkTo(qx, qy, false);
                 }
                 MapMemory::setRoute(true, qx, qy);
                 g_roamAt = 0;
@@ -1546,6 +1654,7 @@ namespace
             g_collectEndedAt = GetTickCount();
         }
         g_collecting = false;
+        g_collectOne = false;
         g_target = 0;
         g_looting = false;
         g_pending = 0;
@@ -1580,7 +1689,7 @@ namespace
             endCollect("no hero or world");
             return;
         }
-        if (static_cast<int>(now - g_collectStart) > static_cast<int>(kCollectMaxMs))
+        if (static_cast<int>(now - g_collectStart) > static_cast<int>(g_collectOne ? 8000u : kCollectMaxMs))
         {
             endCollect("time out");
             return;
@@ -1590,8 +1699,11 @@ namespace
         {
             if (g_collectHealth && health < g_collectHealth)
             {
-                endCollect("hit");
-                return;
+                if (!g_collectOne)
+                {
+                    endCollect("hit");
+                    return;
+                }
             }
             g_collectHealth = health;
         }
@@ -1639,6 +1751,11 @@ namespace
                 lootFailed(g_target, now);
             }
             g_target = 0;
+            if (g_collectOne)
+            {
+                endCollect("one piece, back to the fight");
+                return;
+            }
         }
         uint32_t next = 0;
         if (!findLoot(next))
@@ -2040,6 +2157,21 @@ void AutoAttack::onFrame()
         }
     }
     // Gear: put on what is better when calm, sell and buy at a merchant (its own settings, the auto attack on or off).
+    // The merchant trip: the shop the agent opened is the trip's; once Gear has nothing more there, it is closed.
+    if (g_shopId && Gear::shopOpen() && g_shopTries)
+    {
+        LOG("AutoAttack: shop of {:x} open", g_shopId);
+        Gear::tripOpened();
+        g_shopTries = 0;
+    }
+    if (Gear::tripDone())
+    {
+        LOG("AutoAttack: shop of {:x} closed, back to play", g_shopId);
+        Inject::key(VK_ESCAPE, true);
+        Inject::key(VK_ESCAPE, false);
+        g_shopId = 0;
+        g_shopTold = false;
+    }
     if (foreground && !Controller::drives() && heroAlive())
     {
         Gear::onFrame(now, !g_collecting && !g_target && !g_pending && !g_retreatUntil && !Tactics::busy(now));
@@ -2080,6 +2212,13 @@ void AutoAttack::onFrame()
         {
             g_target = 0;
             g_pending = 0;
+            if (g_lootInstead)
+            {
+                g_lootInstead = false;
+                startCollect(now);
+                g_collectOne = true;
+                return;
+            }
             roam(now);
             return;
         }

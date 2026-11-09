@@ -23,9 +23,12 @@ namespace ClickWalk
 
     // The hero walks to world (x, y), however far (a click on the agent's map): as a click there, routed over the
     // loaded sectors and, beyond them, over the agent's map memory, stretch after stretch.
-    void walkTo(int32_t x, int32_t y);
+    // `byPlayer` false: the agent's own travel (to a quest), which does not hold the agent back as the player's does.
+    void walkTo(int32_t x, int32_t y, bool byPlayer = true);
     // A walk asked for on the agent's map in progress (the auto attack leaves it be unless the hero is attacked).
     bool walking();
+    // Any routed walk under way (the player's or the agent's), or one asked for and not yet sent.
+    bool routing();
 
     // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test: 1 yes, 0 no, -1 not
     // known (the tile outside the loaded sectors, or no tile test in this build).

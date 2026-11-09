@@ -25,6 +25,7 @@ namespace
         bool sell = false;
         bool buy = false;
         int keepGoldPercent = 50;   // buying spends at most the rest
+        bool trips = true;      // to a merchant when the backpack is full
     };
     Settings g_settings;
 
@@ -484,6 +485,21 @@ namespace
     std::atomic<bool> g_working{false};
 
     // On the window's thread, where the game's own windows do the same.
+    // A merchant trip (the backpack full, [Gear] Trips): the agent walks the hero there and opens the shop; meanwhile
+    // selling is on whatever the menu says, and once nothing more is sold or bought the shop is closed.
+    std::atomic<bool> g_full{false};
+    std::atomic<bool> g_tripShop{false};    // the shop open now is the trip's
+    std::atomic<bool> g_tripDone{false};    // the trip's shop has nothing more: to be closed
+    int g_idleWorks = 0;
+    std::atomic<DWORD> g_noTripUntil{0};    // full with nothing to sell: no trip again for a while
+
+    // Full: no room left for a 2x2 piece (a helmet, gloves; armor needs more).
+    bool packFull(uint8_t* pack)
+    {
+        uint16_t free = 0;
+        return !fn<FindFree>(g_findFree)(pack, nullptr, 2, 2, &free, 0);
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -493,15 +509,35 @@ namespace
         if (hero && inv && pack && hero->health > 0)
         {
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
-            if (shop && g_settings.sell && sellOne(hero, pack))
+            const bool trip = shop && g_tripShop;
+            bool acted = true;
+            if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
             {
             }
             else if (shop && g_settings.buy && buyOne(hero, pack))
             {
             }
-            else if ((g_calm || shop) && g_settings.equip)
+            else if ((g_calm || shop) && (g_settings.equip || trip) && equipOne(hero, pack))
             {
-                equipOne(hero, pack);
+            }
+            else
+            {
+                acted = false;
+            }
+            g_full = packFull(pack);
+            g_idleWorks = acted ? 0 : g_idleWorks + 1;
+            if (trip && g_idleWorks >= 2)
+            {
+                LOG("Gear: merchant trip done (backpack {})", g_full ? "still full: nothing more to sell" : "has room");
+                g_tripDone = true;
+                if (g_full)
+                {
+                    g_noTripUntil = GetTickCount() + 600000;
+                }
+            }
+            if (!shop)
+            {
+                g_tripShop = false;
             }
         }
         g_working = false;
@@ -528,6 +564,9 @@ namespace
                               "los que no son equipo (pociones, runas, gemas).");
         ImGui::Checkbox("Comprar mejoras (con un mercader abierto)", &g_settings.buy);
         ImGui::SliderInt("Oro que guarda (%)", &g_settings.keepGoldPercent, 0, 95);
+        ImGui::Checkbox("Ir al mercader con la mochila llena", &g_settings.trips);
+        ImGui::SetItemTooltip("Con el agente activo: va al mercader más cercano que conoce, vende lo que no usará, se "
+                              "equipa lo mejor y cierra la tienda; luego sigue jugando.");
     }
 
     void saveMenu(const std::wstring& ini)
@@ -536,6 +575,7 @@ namespace
         ModkitMenu::write(ini, L"Gear", L"Sell", g_settings.sell);
         ModkitMenu::write(ini, L"Gear", L"Buy", g_settings.buy);
         ModkitMenu::write(ini, L"Gear", L"KeepGoldPercent", g_settings.keepGoldPercent);
+        ModkitMenu::write(ini, L"Gear", L"Trips", g_settings.trips);
     }
 
     void install()
@@ -544,6 +584,7 @@ namespace
         g_settings.equip = GetPrivateProfileIntW(L"Gear", L"Equip", 0, ini.c_str()) != 0;
         g_settings.sell = GetPrivateProfileIntW(L"Gear", L"Sell", 0, ini.c_str()) != 0;
         g_settings.buy = GetPrivateProfileIntW(L"Gear", L"Buy", 0, ini.c_str()) != 0;
+        g_settings.trips = GetPrivateProfileIntW(L"Gear", L"Trips", 1, ini.c_str()) != 0;
         g_settings.keepGoldPercent =
             std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gear", L"KeepGoldPercent", 50, ini.c_str())), 0, 95);
         const size_t missing = Sig::resolve(kSigs);
@@ -576,7 +617,7 @@ void Gear::onFrame(DWORD now, bool calm)
         lastMerchant = merchant;
     }
     static DWORD nextAt = 0;
-    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy) ||
+    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips) ||
         (nextAt && static_cast<int>(now - nextAt) < 0) || g_working)
     {
         return;
@@ -585,4 +626,34 @@ void Gear::onFrame(DWORD now, bool calm)
     g_calm = calm;
     g_working = true;
     Inject::call(&work, nullptr);
+}
+
+bool Gear::wantsShop()
+{
+    const DWORD quiet = g_noTripUntil;
+    return g_ready && g_settings.trips && g_full && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0);
+}
+
+void Gear::tripOpened()
+{
+    g_tripShop = true;
+    g_tripDone = false;
+    g_idleWorks = 0;
+}
+
+bool Gear::tripDone()
+{
+    if (!g_tripDone)
+    {
+        return false;
+    }
+    g_tripDone = false;
+    g_tripShop = false;
+    return true;
+}
+
+bool Gear::shopOpen()
+{
+    void* inv = g_ready ? inventory() : nullptr;
+    return inv && *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
 }

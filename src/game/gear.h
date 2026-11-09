@@ -12,4 +12,12 @@ namespace Gear
 {
     // Every frame of the auto attack, while the game world runs; `calm`: no fight on and nothing being collected.
     void onFrame(DWORD now, bool calm);
+
+    // Merchant trips ([Gear] Trips): the backpack is full, the agent should take the hero to a merchant.
+    bool wantsShop();
+    // The agent opened a shop for the trip: sold to, upgrades put on (whatever the menu says), then done.
+    void tripOpened();
+    // The trip's shop has nothing more (once): the agent closes it.
+    bool tripDone();
+    bool shopOpen();
 }

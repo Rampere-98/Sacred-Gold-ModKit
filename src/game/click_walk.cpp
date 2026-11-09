@@ -449,7 +449,7 @@ namespace
             {
                 // Any other order for the hero (a click, hold-to-walk, an attack, stop) ends a far walk.
                 finish("another order");
-                g_fromMap = g_asking;
+                g_fromMap = g_asking && g_askByPlayer;
             }
             if (order->type == cOrder::move && order->mode == cOrder::walk && !order->follow)
             {
@@ -651,6 +651,7 @@ namespace
     // Asked with the ModKit menu open, when the game takes no orders: kept until it does (the menu closed).
     std::atomic<int32_t> g_askX{0}, g_askY{0};
     std::atomic<bool> g_askPending{false};
+    std::atomic<bool> g_askByPlayer{true};      // a click of the player's on the map (not the agent's own travel)
 
     void askedWalk(void*)
     {
@@ -784,11 +785,17 @@ namespace
     }
 }
 
-void ClickWalk::walkTo(int32_t x, int32_t y)
+void ClickWalk::walkTo(int32_t x, int32_t y, bool byPlayer)
 {
     g_askX = x;
     g_askY = y;
+    g_askByPlayer = byPlayer;
     g_askPending = true;
+}
+
+bool ClickWalk::routing()
+{
+    return g_active || g_askPending;
 }
 
 bool ClickWalk::walking()
