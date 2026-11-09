@@ -2326,6 +2326,12 @@ namespace
         static size_t s_backIdx = 0;
         static int32_t s_backFromX = 0, s_backFromY = 0;
         static DWORD s_backSince = 0, s_backOrderAt = 0;
+        if (g_backing && now - s_lastCall > 3000)
+        {
+            // Roaming left off meanwhile (a fight, a collect): the backing out is stale, the trail noted again.
+            g_backing = false;
+            LOG("AutoAttack: stuck guard: backing out left off (the agent busy with something else)");
+        }
         if (g_backing)
         {
             const double away = std::hypot(static_cast<double>(self->x - s_backFromX), static_cast<double>(self->y - s_backFromY));
