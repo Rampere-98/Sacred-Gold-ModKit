@@ -27,7 +27,7 @@ HeroProfile::Data HeroProfile::current()
     const uint32_t cls = *reinterpret_cast<const uint32_t*>(st + 8);
     d.valid = true;
     d.heroId = hero->id;
-    d.cls = cls <= 8 ? static_cast<Class>(cls) : Class::Unknown;
+    d.cls = cls <= 9 ? static_cast<Class>(cls) : Class::Unknown;
     d.level = *reinterpret_cast<const uint16_t*>(st + 0x56);
     d.health = hero->health;
     d.maxHealth = hero->maxHealth;
@@ -46,6 +46,7 @@ const char* HeroProfile::className(Class cls)
     case Class::Vampiress: return "Vampiresa";
     case Class::VampiressNight: return "Vampiresa (otra forma)";
     case Class::Dwarf: return "Enano";
+    case Class::Daemon: return "Daemon";
     default: return "desconocida";
     }
 }

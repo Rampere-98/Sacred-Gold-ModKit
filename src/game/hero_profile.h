@@ -16,6 +16,7 @@ namespace HeroProfile
         Vampiress = 6,
         VampiressNight = 7,   // the other form
         Dwarf = 8,
+        Daemon = 9,         // Underworld
     };
 
     struct Data
@@ -27,7 +28,7 @@ namespace HeroProfile
         int health = 0, maxHealth = 0;
     };
 
-    // Read now (presenting thread; the hero's stats block at +0x3A8: class +8, level +0x56).
+    // Read now (presenting thread; the hero's stats block at +0x3A8: class +8 (1-9), level +0x56).
     Data current();
     const char* className(Class cls);
 

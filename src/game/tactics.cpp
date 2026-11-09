@@ -652,20 +652,54 @@ namespace
 
     // What the game's own data says an art does (docs: the art records' aiming and names, read by Manolito,
     // 2026-11-09): a cast at a lone enemy cannot tell an area art from a single one, nor a buff that hurt nearby.
+    // What every class's arts do (Manolito's table, docs/AGENT_ADDRESSES.md «Clases del héroe»: the game's aiming
+    // byte and names; ids are unique across classes). Summons count as buffs (cast once a hard fight starts); form
+    // changes and the teleport are left to the player.
     Art knownUse(uint32_t art)
     {
         switch (art)
         {
-        case 0x42D: case 0x421: case 0x3FC:             // multi strike, spinning strike
-        case 0xF:                                       // celestial light
-        case 0xB: case 0x1A: case 0x23:                 // fire spiral, meteor shower, ice ring
+        // Area
+        case 0x42D: case 0x3FC: case 0xF:                               // seraphim: multi-hit, whirling hit, celestial light
+        case 0x421:                                                     // gladiator: multi-hit
+        case 0x17: case 0x1A: case 0xB: case 0x23: case 0x10: case 0x1B: case 0x4:  // battle mage
+        case 0x3ED: case 0x3EC: case 0x27: case 0x29: case 0x26: case 0x425:        // wood elf
+        case 0x429: case 0x419: case 0x41A: case 0x41B: case 0x41C: case 0x41D:     // dark elf: sudden fury, traps
+        case 0x431: case 0x40E:                                         // vampiress: multi-hit (both forms)
+        case 0x40B: case 0x40C: case 0x40D:                             // vampiress: bats
+        case 0x436: case 0x43D: case 0x43E: case 0x43F: case 0x38: case 0x39:      // dwarf
+        case 0x44D: case 0x44E: case 0x44F: case 0x3C: case 0x3E: case 0x41: case 0x40: case 0x42: case 0x43: // daemon
             return Art::Area;
-        case 0x11: case 0x15: case 0x16:                // light blades (aura), strength of faith, shield of light
-        case 0x3F6: case 0x3F7: case 0x3F8:             // fear, heroic valor, dagger gaze
-        case 0x2: case 0x18: case 0x1E:                 // stone skin, flame skin, shield wall
+        // Buffs and summons
+        case 0x11: case 0x14: case 0x15: case 0x16:                     // seraphim
+        case 0x3F6: case 0x3F7: case 0x3F8:                             // gladiator: awe, heroic courage, dagger stare
+        case 0x2: case 0x18: case 0x1C: case 0x1E: case 0x1F: case 0x20:            // battle mage
+        case 0x25: case 0x3:                                            // wood elf: quick as a flash, companion
+        case 0x415: case 0x416: case 0x417: case 0x418:                 // dark elf
+        case 0x402: case 0x403: case 0x404: case 0x405: case 0x40A:     // vampiress: wolves, time control, dead
+        case 0x43A: case 0x441: case 0x3A: case 0x3B:                   // dwarf
+        case 0x3F:                                                      // daemon: infernal power
             return Art::Buff;
-        case 0x7:                                       // spiritual healing
+        // Heals
+        case 0x7:                                                       // battle mage: spiritual healing
+        case 0x2A:                                                      // wood elf: recuperation
             return Art::Heal;
+        // One target
+        case 0x42E: case 0x42F: case 0x430: case 0x3F9: case 0x41E: case 0x3FA: case 0x3FB:
+        case 0xD: case 0x12: case 0x13:                                 // seraphim
+        case 0x423: case 0x422: case 0x424: case 0x3F2: case 0x3F4: case 0x3EB: case 0x3F5:  // gladiator
+        case 0x5: case 0x22: case 0x1D: case 0x21: case 0x19:           // battle mage
+        case 0x3EE: case 0x3F0: case 0x3EF: case 0x28: case 0x426: case 0x427: case 0x428:   // wood elf
+        case 0x42A: case 0x42B: case 0x42C: case 0x412: case 0x413: case 0x414:              // dark elf
+        case 0x400: case 0x401: case 0x406: case 0x407: case 0x408: case 0x409:
+        case 0x432: case 0x433: case 0x434: case 0x40F: case 0x410: case 0x411:              // vampiress
+        case 0x437: case 0x438: case 0x43B: case 0x43C: case 0x37:      // dwarf
+        case 0x443: case 0x444:                                         // daemon
+            return Art::Single;
+        // Form changes, teleport: the player's call
+        case 0x1: case 0x24: case 0x3FE: case 0x3FF:
+        case 0x446: case 0x449: case 0x44A: case 0x44B: case 0x44C:
+            return Art::Off;
         default:
             return Art::Auto;
         }

@@ -167,9 +167,35 @@ namespace
         return std::strstr(skillName(id), part) != nullptr;
     }
 
-    // How much a skill is worth to the agent: trade and riding last, the rest alike.
+    // The skills each class leans on, first the most (Manolito's table, docs/AGENT_ADDRESSES.md «Clases del héroe»;
+    // ids are the game's SKILL_* numbers). 0 ends a list.
+    const uint8_t kSkillPlan[10][7] = {
+        {0},
+        {1, 14, 12, 2, 25, 10, 0},      // seraphim: heavenly magic, magic lore, meditation
+        {2, 25, 10, 11, 9, 0},          // gladiator: weapon lore, concentration, constitution, armour, parry
+        {14, 12, 15, 17, 16, 18, 10},   // battle mage: magic lore, meditation, the four schools
+        {2, 25, 13, 27, 26, 10, 0},     // dark elf: blade combat, traps, ballistics
+        {7, 2, 25, 19, 8, 10, 0},       // wood elf: long range, moon magic, agility
+        {2, 20, 28, 25, 10, 0},         // vampiress: vampirism, blood lust
+        {2, 20, 28, 25, 10, 0},
+        {2, 29, 31, 25, 10, 0},         // dwarf: weapon technique, dwarven lore
+        {32, 14, 12, 2, 25, 10, 0},     // daemon: hell power
+    };
+    uint32_t g_class = 0;   // the hero's, set before the picks below
+
+    // How much a skill is worth to the agent: its class's plan first, trade and riding last, the rest alike.
     float skillWeight(uint8_t id)
     {
+        if (g_class < 10)
+        {
+            for (int i = 0; i < 7 && kSkillPlan[g_class][i]; ++i)
+            {
+                if (kSkillPlan[g_class][i] == id)
+                {
+                    return 3.0f - 0.25f * static_cast<float>(i);
+                }
+            }
+        }
         if (named(id, "Handel") || named(id, "Reiten"))
         {
             return 0.25f;
@@ -183,8 +209,8 @@ namespace
 
     // Attributes by the class (order of the character window: strength, endurance, dexterity, physical regeneration,
     // intelligence, mental regeneration): how much of each, relative. 1 seraphim, 2 gladiator, 3 battle mage, 4 dark
-    // elf, 5 wood elf, 6/7 vampiress, 8 dwarf.
-    const int kAttrPlan[9][6] = {
+    // elf, 5 wood elf, 6/7 vampiress, 8 dwarf, 9 daemon.
+    const int kAttrPlan[10][6] = {
         {2, 3, 2, 1, 1, 1},     // unknown
         {3, 3, 2, 1, 1, 1},     // seraphim
         {4, 3, 2, 1, 0, 0},     // gladiator
@@ -194,6 +220,7 @@ namespace
         {4, 3, 2, 1, 0, 0},     // vampiress
         {4, 3, 2, 1, 0, 0},     // vampiress (other form)
         {3, 3, 2, 1, 0, 1},     // dwarf
+        {2, 3, 1, 1, 3, 1},     // daemon
     };
 
     std::atomic<bool> g_working{false};
@@ -209,11 +236,12 @@ namespace
         }
         uint8_t* st = reinterpret_cast<uint8_t*>(hero) + kStats;
         const uint32_t cls = *reinterpret_cast<const uint32_t*>(st + 8);
+        g_class = cls;
         const int level = *reinterpret_cast<const uint16_t*>(st + 0x56);
         // One point a look, as a player clicking "+".
         if (g_settings.attributes && st[0x23] > 0)
         {
-            const int* plan = kAttrPlan[cls < 9 ? cls : 0];
+            const int* plan = kAttrPlan[cls < 10 ? cls : 0];
             int best = -1;
             float bestShare = 0.0f;
             for (int i = 0; i < 6; ++i)
