@@ -214,7 +214,7 @@ namespace
         return w;
     }
 
-    int gradeOf(uint32_t id)
+    int gradeOf(uint32_t id, bool equipment)
     {
         cObjectManager* objects = cObjectManager::instance();
         cObject* item = objects ? objects->object(id) : nullptr;
@@ -231,7 +231,7 @@ namespace
         {
             gear = gear || lo[k] || hi[k] || armor[k] > 0;
         }
-        if (!gear)
+        if (!gear && !equipment)
         {
             return -1;
         }
@@ -431,14 +431,13 @@ namespace
             {
                 return;
             }
-            // Runes are never sold (the player, 2026-11-09): another class's rune is traded at the rune trader for one
+            // Runes are never sold (the player, 2026-11-09): another class's rune is traded at the combo master for one
             // of the hero's own, worth far more than the 2 gold a merchant gives (seen live: sold 0x1501, 0x1527, 0x1694
-            // for 2 gold, and even one of the hero's own, 0x1601).
+            // for 2 gold). By their class only: the torches 0x1600/0x1601 lie in the runes' type range.
             if (cObjectManager* objects = cObjectManager::instance())
             {
                 const auto* o = reinterpret_cast<const uint8_t*>(objects->object(id));
-                const uint32_t type = o ? *reinterpret_cast<const uint32_t*>(o + kItemType) & 0xFFFF : 0;
-                if (o && (*reinterpret_cast<const uintptr_t*>(o) == kRuneVtable || (type >= 0x14FF && type <= 0x1696)))
+                if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable)
                 {
                     return;
                 }
@@ -549,8 +548,8 @@ namespace
             const auto* o = reinterpret_cast<const uint8_t*>(item);
             const uint32_t type = o ? *reinterpret_cast<const uint32_t*>(o + kItemType) & 0xFFFF : 0;
             const auto tried = g_runesTried.find(id);
-            // By its class or its type: seen live, a rune of the hero's own (0x1601) never read and then sold.
-            if (o && (*reinterpret_cast<const uintptr_t*>(o) == kRuneVtable || (type >= 0x14FF && type <= 0x1696)) &&
+            // By its class (the type range alone holds the torches 0x1600/0x1601 too, cWeapon3D: ITEM_FUNCTIONS).
+            if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && type >= 0x14FF && type <= 0x1696 &&
                 (tried == g_runesTried.end() || tried->second < heroLevel))
             {
                 rune = id;
@@ -819,9 +818,9 @@ void Gear::onFrame(DWORD now, bool calm)
     Inject::call(&work, nullptr);
 }
 
-int Gear::grade(uint32_t id)
+int Gear::grade(uint32_t id, bool equipment)
 {
-    return g_ready ? gradeOf(id) : -1;
+    return g_ready ? gradeOf(id, equipment) : -1;
 }
 
 bool Gear::packFull()

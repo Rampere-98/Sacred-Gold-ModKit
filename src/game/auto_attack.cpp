@@ -222,7 +222,8 @@ namespace
         const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(object->vtable)[-1];
         const char* name = locator && locator->type ? locator->type->name : "";
         return std::strcmp(name, ".?AVcWeapon3D@@") == 0 || std::strcmp(name, ".?AVcArmor3D@@") == 0 ||
-               std::strcmp(name, ".?AVcRing3D@@") == 0 || std::strstr(name, "Amulet") != nullptr;
+               std::strcmp(name, ".?AVcRing3D@@") == 0 || std::strcmp(name, ".?AVcShield3D@@") == 0 ||
+               std::strstr(name, "Amulet") != nullptr;
     }
 
     // Loot the hero failed at: opened containers, items it stood at without picking them up (a full inventory) or
@@ -379,7 +380,7 @@ namespace
         if (loot == Loot::Item && goldEnough && !droppedGold && isEquipment(object) &&
             (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
         {
-            const int grade = Gear::grade(id);
+            const int grade = Gear::grade(id, true);
             const bool keep = grade < 0 || (grade == 4 ? Config::autoAttack.keepSets || Config::autoAttack.minRarity == 0
                                                        : grade >= Config::autoAttack.minRarity);
             if (!keep)
