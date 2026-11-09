@@ -197,6 +197,28 @@ namespace
         return p.substr(0, p.find_last_of(L"\\/") + 1) + L"SacredBild-map.txt";
     }
 
+    // Up to `max` whitespace separated integers (decimal, or hex for the one at `hexAt`); how many were read.
+    int numbers(const char* p, long* out, int max, int hexAt = -1)
+    {
+        int n = 0;
+        while (n < max)
+        {
+            while (*p == ' ' || *p == '	')
+            {
+                ++p;
+            }
+            char* end = nullptr;
+            out[n] = n == hexAt ? static_cast<long>(std::strtoul(p, &end, 16)) : std::strtol(p, &end, 10);
+            if (end == p)
+            {
+                break;
+            }
+            p = end;
+            ++n;
+        }
+        return n;
+    }
+
     // Under g_lock.
     void load()
     {
@@ -209,35 +231,54 @@ namespace
         char line[128];
         while (std::fgets(line, sizeof(line), f))
         {
+            // sscanf took over a second for a large file: the fields read by hand.
             int layer, tx, ty, visits, blocked, kind;
             unsigned type = 0;
-            if (std::sscanf(line, "E %u %d %d %d", &type, &layer, &tx, &ty) == 4)
+            long v[8];
+            if (line[0] == 'E')
             {
-                g_sightings.push_back({type, static_cast<uint8_t>(layer), static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
-                continue;
-            }
-            char name[96];
-            if (std::sscanf(line, "N %u %95s", &type, name) == 2)
-            {
-                g_kindNames[type] = name;
-                continue;
-            }
-            if (std::sscanf(line, "L %d %d %d %d", &kind, &layer, &tx, &ty) == 4)
-            {
-                if (kind >= 0 && kind < static_cast<int>(MapMemory::Mark::Count))
+                if (numbers(line + 1, v, 4) == 4)
                 {
-                    g_landmarks.push_back({static_cast<MapMemory::Mark>(kind), static_cast<uint8_t>(layer),
-                                           static_cast<int16_t>(tx), static_cast<int16_t>(ty)});
+                    type = static_cast<unsigned>(v[0]);
+                    g_sightings.push_back({type, static_cast<uint8_t>(v[1]), static_cast<int16_t>(v[2]), static_cast<int16_t>(v[3])});
                 }
                 continue;
             }
-            unsigned color = 0, samples = 0, scan = 0;
-            const int n = std::sscanf(line, "%d %d %d %d %d %x %u %u", &layer, &tx, &ty, &visits, &blocked, &color,
-                                      &samples, &scan);
+            if (line[0] == 'N')
+            {
+                char name[96];
+                if (std::sscanf(line, "N %u %95s", &type, name) == 2)
+                {
+                    g_kindNames[type] = name;
+                }
+                continue;
+            }
+            if (line[0] == 'L')
+            {
+                if (numbers(line + 1, v, 4) == 4)
+                {
+                    kind = static_cast<int>(v[0]);
+                    if (kind >= 0 && kind < static_cast<int>(MapMemory::Mark::Count))
+                    {
+                        g_landmarks.push_back({static_cast<MapMemory::Mark>(kind), static_cast<uint8_t>(v[1]),
+                                               static_cast<int16_t>(v[2]), static_cast<int16_t>(v[3])});
+                    }
+                }
+                continue;
+            }
+            const int n = numbers(line, v, 8, 5);
             if (n < 5)
             {
                 continue;
             }
+            layer = static_cast<int>(v[0]);
+            tx = static_cast<int>(v[1]);
+            ty = static_cast<int>(v[2]);
+            visits = static_cast<int>(v[3]);
+            blocked = static_cast<int>(v[4]);
+            const unsigned color = n > 5 ? static_cast<unsigned>(v[5]) : 0;
+            const unsigned samples = n > 6 ? static_cast<unsigned>(v[6]) : 0;
+            const unsigned scan = n > 7 ? static_cast<unsigned>(v[7]) : 0;
             change(key(layer, tx, ty), [&](Cell& c) {
                 c.visits = static_cast<uint8_t>(std::clamp(visits, 0, 255));
                 c.blocked = static_cast<uint8_t>(std::clamp(blocked, 0, 255));
@@ -896,9 +937,12 @@ void MapMemory::install()
         }
         ModkitMenu::add({"Mapa explorado", &drawMenu, &saveMenu});
         Overlay::setHud(&drawHud);
-        // The whole map in memory from the start: the agent always has it at hand.
-        const std::lock_guard lock(g_lock);
-        ensureLoaded();
+        // The whole map in memory from the start, read on a thread of its own: a large file held the presenting
+        // thread for over a second when a game began (seen with the hitch watch).
+        std::thread([] {
+            const std::lock_guard lock(g_lock);
+            ensureLoaded();
+        }).detach();
     });
 }
 
