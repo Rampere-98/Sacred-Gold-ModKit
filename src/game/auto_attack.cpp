@@ -215,6 +215,16 @@ namespace
         return loot;
     }
 
+    // Equipment by its class (RTTI): weapons, armour, rings, amulets. Only these get the grade filter: gold, potions,
+    // scrolls, runes and upgrades are always taken (the player, 2026-11-09: «se salta hasta el oro»).
+    bool isEquipment(const cObject* object)
+    {
+        const auto* locator = reinterpret_cast<const CompleteObjectLocator* const*>(object->vtable)[-1];
+        const char* name = locator && locator->type ? locator->type->name : "";
+        return std::strcmp(name, ".?AVcWeapon3D@@") == 0 || std::strcmp(name, ".?AVcArmor3D@@") == 0 ||
+               std::strcmp(name, ".?AVcRing3D@@") == 0 || std::strstr(name, "Amulet") != nullptr;
+    }
+
     // Loot the hero failed at: opened containers, items it stood at without picking them up (a full inventory) or
     // could not reach. Tried again later, a few times, as the hero may have been busy or the way blocked.
     struct LootFailure
@@ -365,7 +375,9 @@ namespace
         const uint32_t heroGold = hero ? *reinterpret_cast<const uint32_t*>(heroBytes + 0x3A8 + 0x46) : 0;
         const bool goldEnough = hero && static_cast<uint64_t>(heroGold) >=
                                             static_cast<uint64_t>(Config::autoAttack.rarityGoldPerLevel) * std::max(heroLevel, 1);
-        if (loot == Loot::Item && goldEnough && (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
+        const bool droppedGold = object && (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + 0x14) & 0x00100000);
+        if (loot == Loot::Item && goldEnough && !droppedGold && isEquipment(object) &&
+            (Config::autoAttack.minRarity > 0 || !Config::autoAttack.keepSets))
         {
             const int grade = Gear::grade(id);
             const bool keep = grade < 0 || (grade == 4 ? Config::autoAttack.keepSets || Config::autoAttack.minRarity == 0
