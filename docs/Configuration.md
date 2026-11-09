@@ -52,6 +52,7 @@ at once; "Guardar en SacredBild.ini" writes them to the ini. Esc or Home closes 
 | Gear | Buy | 0 | With a merchant open, buy what would be clearly better (15 %) than what the hero wears and it can use, within the gold to spend, as the shop's own buy does. |
 | Gear | KeepGoldPercent | 50 | Buying spends at most the rest of the gold. |
 | Gear | Trips | 1 | `1`: with the agent on, a full backpack (no room for a 2x2 piece) sends the hero to the nearest merchant of the world on its layer; it opens the shop with a click on him, sells what it will not wear, buys upgrades within the gold to spend and puts them on (whatever Sell/Buy/Equip say), then closes the shop. Still full with nothing to sell: no trip for 10 min. Menu: "Ir al mercader con la mochila llena". |
+| Gear | Runes | 1 | `1`: out of a fight, reads the runes in the backpack with the game's own use (as a right click): learns the art or raises it a level. One of another class stays and is not tried again. Menu: "Leer las runas de la mochila". |
 | Build | Attributes | 1 | `1`: with the agent on and the hero calm, spends attribute points one by one through the game's "+" (by the class plan). Menu "Progreso del héroe". |
 | Build | Skills | 1 | `1`: spends skill points on the skill furthest behind (trade and riding last), never above the hero's level. |
 | Build | Learn | 1 | `1`: fills a new skill slot (levels 3, 6, 12, 20, 30, 50) with one the class offers. |

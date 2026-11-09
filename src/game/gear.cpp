@@ -13,6 +13,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 
 using namespace Sacred;
 
@@ -26,13 +27,14 @@ namespace
         bool buy = false;
         int keepGoldPercent = 50;   // buying spends at most the rest
         bool trips = true;      // to a merchant when the backpack is full
+        bool runes = true;      // read the runes in the backpack (learn the art, or a level more)
     };
     Settings g_settings;
 
     uintptr_t g_inventoryPtr = 0, g_typeMgrPtr = 0;     // the globals holding cInventory* and the type manager
     uintptr_t g_getEntry = 0, g_findFree = 0, g_putItem = 0, g_removeItem = 0, g_typeSize = 0, g_getInfo = 0,
               g_getValue = 0, g_equip = 0, g_getEquipped = 0, g_canUse = 0, g_slotAccepts = 0, g_price = 0,
-              g_addGoldCall = 0;
+              g_addGoldCall = 0, g_useItem = 0;
     uintptr_t g_addGold = 0;
     const Sig::Entry kSigs[] = {
         {"cInventory", "8B 35 ?? ?? ?? ?? 85 F6 74 1A 8B CE C7 05 ?? ?? ?? ?? 00 00 00 00 E8 ?? ?? ?? ?? 56 E8 ?? ?? ?? ?? 83 C4 04 5E C3 90 90 90 90 90 90 90 90 90 8B 44 24 04 66 3D 20 00", 2,
@@ -55,6 +57,10 @@ namespace
         {"price", "8B 44 24 04 8B 0D ?? ?? ?? ?? 56 57", 0, Sig::Take::Match, &g_price},
         // addGold (ENG 0057FD80) has a twin of the same bytes; it is taken from a call to it (the horse's healing).
         {"addGoldCall", "E8 ?? ?? ?? ?? 8B 56 0C 8B CB 52 E8 ?? ?? ?? ??", 0, Sig::Take::Match, &g_addGoldCall},
+        // cCreature::useItem(id) (ENG 0054AA80): what a right click in the backpack does, also playing alone (it sends
+        // the item the use event; a rune then learns its art or raises it, and goes from the backpack once used).
+        {"useItem", "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 48 53 8B 5C 24 5C", 0,
+            Sig::Take::Match, &g_useItem},
     };
     bool g_ready = false;
 
@@ -71,6 +77,12 @@ namespace
     using SlotAccepts = uint8_t(__fastcall*)(void* typeMgr, void*, int slot, uint32_t type);
     using Price = uint32_t(__fastcall*)(void* inv, void*, uint32_t id, int buy);
     using AddGold = void(__fastcall*)(void* stats, void*, int delta);
+    using UseItem = uint8_t(__fastcall*)(cCreature* c, void*, uint32_t id);
+
+    // Runes: cItemUpgrade (vtable ENG 00891D90), types 0x14FF..0x1696. Each tried once: one of another class, or a
+    // requirement not met, stays in the backpack and is not tried again.
+    constexpr uintptr_t kRuneVtable = 0x891D90;
+    std::unordered_set<uint32_t> g_runesTried;
 
     template <class F>
     F fn(uintptr_t a)
@@ -481,6 +493,30 @@ namespace
         return false;
     }
 
+    bool readRune(cCreature* hero, uint8_t* pack)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        uint32_t rune = 0;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            cObject* item = rune || !objects ? nullptr : objects->object(id);
+            const auto* o = reinterpret_cast<const uint8_t*>(item);
+            const uint32_t type = o ? *reinterpret_cast<const uint32_t*>(o + kItemType) & 0xFFFF : 0;
+            if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && type >= 0x14FF && type <= 0x1696 &&
+                !g_runesTried.count(id))
+            {
+                rune = id;
+            }
+        });
+        if (!rune)
+        {
+            return false;
+        }
+        g_runesTried.insert(rune);
+        const bool used = fn<UseItem>(g_useItem)(hero, nullptr, rune) != 0;
+        LOG("Gear: rune {:x} (type {:x}) read: {}", rune, typeOf(rune), used ? "done" : "refused (class or requirement)");
+        return true;
+    }
+
     bool g_calm = false;
     std::atomic<bool> g_working{false};
 
@@ -518,6 +554,9 @@ namespace
             {
             }
             else if ((g_calm || shop) && (g_settings.equip || trip) && equipOne(hero, pack))
+            {
+            }
+            else if (g_calm && !shop && g_settings.runes && g_useItem && readRune(hero, pack))
             {
             }
             else
@@ -564,6 +603,9 @@ namespace
                               "los que no son equipo (pociones, runas, gemas).");
         ImGui::Checkbox("Comprar mejoras (con un mercader abierto)", &g_settings.buy);
         ImGui::SliderInt("Oro que guarda (%)", &g_settings.keepGoldPercent, 0, 95);
+        ImGui::Checkbox("Leer las runas de la mochila", &g_settings.runes);
+        ImGui::SetItemTooltip("Fuera de combate, como el clic derecho: aprende el arte o le sube un nivel. Las de otra "
+                              "clase se quedan en la mochila.");
         ImGui::Checkbox("Ir al mercader con la mochila llena", &g_settings.trips);
         ImGui::SetItemTooltip("Con el agente activo: va al mercader más cercano que conoce, vende lo que no usará, se "
                               "equipa lo mejor y cierra la tienda; luego sigue jugando.");
@@ -576,6 +618,7 @@ namespace
         ModkitMenu::write(ini, L"Gear", L"Buy", g_settings.buy);
         ModkitMenu::write(ini, L"Gear", L"KeepGoldPercent", g_settings.keepGoldPercent);
         ModkitMenu::write(ini, L"Gear", L"Trips", g_settings.trips);
+        ModkitMenu::write(ini, L"Gear", L"Runes", g_settings.runes);
     }
 
     void install()
@@ -585,6 +628,7 @@ namespace
         g_settings.sell = GetPrivateProfileIntW(L"Gear", L"Sell", 0, ini.c_str()) != 0;
         g_settings.buy = GetPrivateProfileIntW(L"Gear", L"Buy", 0, ini.c_str()) != 0;
         g_settings.trips = GetPrivateProfileIntW(L"Gear", L"Trips", 1, ini.c_str()) != 0;
+        g_settings.runes = GetPrivateProfileIntW(L"Gear", L"Runes", 1, ini.c_str()) != 0;
         g_settings.keepGoldPercent =
             std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gear", L"KeepGoldPercent", 50, ini.c_str())), 0, 95);
         const size_t missing = Sig::resolve(kSigs);
@@ -617,7 +661,7 @@ void Gear::onFrame(DWORD now, bool calm)
         lastMerchant = merchant;
     }
     static DWORD nextAt = 0;
-    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips) ||
+    if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips || g_settings.runes) ||
         (nextAt && static_cast<int>(now - nextAt) < 0) || g_working)
     {
         return;
