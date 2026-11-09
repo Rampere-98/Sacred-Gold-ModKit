@@ -1099,9 +1099,55 @@ namespace
     int g_roamSteps = 0;    // steps since the way was chosen
     constexpr size_t kLayer = 0x24;     // a creature's layer: the surface, a dungeon, an interior
 
+    // The quest journal (seen live, 2026-11-09): a std::vector of 0x174-byte records at [0xAAD3A4]..[0xAAD3A8]
+    // (the quest manager 0xAACF80 +0x424): +0 kind (3 main, 4 side), +4 state (1-2 under way, 100 done, 101
+    // failed), +0x18/+0x1C the target's tile, +0x20 its radius in world units. The quest to go for: the main one
+    // under way, else the nearest side one.
+    bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius)
+    {
+        const auto begin = *reinterpret_cast<const uint8_t* const*>(0xAAD3A4);
+        const auto end = *reinterpret_cast<const uint8_t* const*>(0xAAD3A8);
+        constexpr size_t kRecord = 0x174;
+        if (!begin || end <= begin || (end - begin) % kRecord || (end - begin) / kRecord > 512)
+        {
+            return false;
+        }
+        bool found = false, main = false;
+        double best = 0.0;
+        for (const uint8_t* r = begin; r < end; r += kRecord)
+        {
+            const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
+            if (state != 1 && state != 2)
+            {
+                continue;
+            }
+            const int32_t tx = *reinterpret_cast<const int32_t*>(r + 0x18), ty = *reinterpret_cast<const int32_t*>(r + 0x1C);
+            if (tx <= 0 || ty <= 0)
+            {
+                continue;
+            }
+            const double wx = (tx + 0.5) * kTileSize, wy = (ty + 0.5) * kTileSize;
+            const double d = std::hypot(wx - heroX, wy - heroY);
+            const bool isMain = kind == 3;
+            if (!found || (isMain && !main) || (isMain == main && d < best))
+            {
+                found = true;
+                main = isMain;
+                best = d;
+                x = static_cast<int32_t>(wx);
+                y = static_cast<int32_t>(wy);
+                radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
+            }
+        }
+        return found;
+    }
+
+    DWORD g_questAskAt = 0;
+    int32_t g_questX = 0, g_questY = 0;
+
     void roam(DWORD now)
     {
-        if (!Config::autoAttack.roam || g_retreatUntil)
+        if ((!Config::autoAttack.roam && !Config::autoAttack.quests) || g_retreatUntil)
         {
             g_quietSince = 0;
             return;
@@ -1144,6 +1190,38 @@ namespace
             g_roamAt = 0;
             g_roamStuck = 0;
             g_roamAngle = jitter(0, 628) / 100.0;
+        }
+        // Quests: off to the quest's target (however far: ClickWalk routes it over the map memory), fighting only
+        // what attacks on the way; there, the roaming looks around it.
+        int32_t qx = 0, qy = 0;
+        double qr = 0.0;
+        if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr))
+        {
+            if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
+            {
+                if (!ClickWalk::walking() && now - g_questAskAt > 4000)
+                {
+                    if (qx != g_questX || qy != g_questY)
+                    {
+                        LOG("AutoAttack: off to the quest at tile {},{} ({:.0f} tiles)", static_cast<int>(qx / kTileSize),
+                            static_cast<int>(qy / kTileSize),
+                            std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) / kTileSize);
+                        g_questX = qx;
+                        g_questY = qy;
+                    }
+                    g_questAskAt = now;
+                    ClickWalk::walkTo(qx, qy);
+                }
+                MapMemory::setRoute(true, qx, qy);
+                g_roamAt = 0;
+                return;
+            }
+            g_homeX = qx;
+            g_homeY = qy;
+        }
+        if (!Config::autoAttack.roam)
+        {
+            return;
         }
         MapMemory::visit(layer, self->x, self->y);
         // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
@@ -1570,6 +1648,9 @@ namespace
         c.seek = mode == 1;
         ImGui::Checkbox("Explorar cuando no hay nadie", &c.roam);
         ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
+        ImGui::Checkbox("Ir a la misión activa", &c.quests);
+        ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
+                              "cercana), sin límite de distancia; allí explora alrededor.");
         if (ImGui::IsItemHovered())
         {
             ImGui::SetTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido; "
@@ -1600,6 +1681,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Seek", c.seek);
         ModkitMenu::write(ini, L"AutoAttack", L"Roam", c.roam);
         ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
+        ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
         ModkitMenu::write(ini, L"AutoAttack", L"Range", c.range);
