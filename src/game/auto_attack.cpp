@@ -1192,7 +1192,7 @@ namespace
     // The quest journal (seen live, 2026-11-09): a std::vector of 0x174-byte records at [0xAAD3A4]..[0xAAD3A8]
     // (the quest manager 0xAACF80 +0x424): +0 kind (3 main, 4 side), +4 state (1-2 under way, 100 done, 101
     // failed), +0x14 the target object's id (a creature to speak to, or -1), +0x18/+0x1C the target's tile, +0x20
-    // its radius in world units, +0x24/+0x28 title and objective text keys.
+    // its radius in world units (a zone: inside it the hero is there), +0x24/+0x28 title and objective text keys.
     //
     // The quest book (the player's wish, 2026-11-09: the agent knows the quests under way, those not done, those to
     // take, and goes for the nearest objective): every quest under way, every creature offering a quest ("?!") or
@@ -1253,7 +1253,10 @@ namespace
                 g.x = static_cast<int32_t>((tx + 0.5) * kTileSize);
                 g.y = static_cast<int32_t>((ty + 0.5) * kTileSize);
                 g.radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
-                g.who = *reinterpret_cast<const uint32_t*>(r + 0x14);
+                // +0x10/+0x14: a fixed destination's tile, -1 at +0x10 when +0x14 is the creature to speak to
+                // (Manolito, 2026-11-09: the arena fight's "14a" was the tile's y, 330, not a creature).
+                g.who = *reinterpret_cast<const int32_t*>(r + 0x10) == -1 ? *reinterpret_cast<const uint32_t*>(r + 0x14)
+                                                                         : 0xFFFFFFFFu;
                 g.titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
                 g.objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
                 g_questBook.push_back(g);
