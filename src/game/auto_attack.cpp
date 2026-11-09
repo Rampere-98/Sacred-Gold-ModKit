@@ -271,6 +271,7 @@ namespace
     // is taken first, enemies about or not. Loot taken that way is one piece, then
     // the fight again (g_collectOne), a hit meanwhile not ending it.
     bool g_lootInstead = false;
+    bool g_lootInsteadAll = false;  // ... all of it (nobody attacks), not one piece and back to the fight
     bool g_collectOne = false;
     DWORD g_lootAtSince = 0;        // since when the hero stands at it, 0 while it does not
     bool g_lootStill = false;       // lootDone gave up on it with the hero at it and the thing still there
@@ -1188,15 +1189,19 @@ namespace
             if (it != distances.end() &&
                 AimAssist::findObject(static_cast<float>(Config::autoAttack.lootRange), &acceptLoot, nullptr, loot))
             {
-                // No danger of dying (60 % of health or more): loot first, the fights wait (the user: more
-                // efficient). In danger, only loot nearer than the enemy.
+                // Nobody strikes the hero and nothing hurts it: all the loot about first, the fight sought after it
+                // (the player's wish, 2026-11-09: never a fight picked while loot lies there). Attacked: loot first
+                // with no danger of dying (60 % of health or more, not being hurt), one piece at a time; in danger
+                // only loot nearer than the enemy.
                 const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
+                const bool calm = !enemyEngaged && !hurt;
                 const bool safe = maximum > 0 && health * 10 >= maximum * 6 && !hurt;
-                if (safe || lootDistance < it->second)
+                if (calm || safe || lootDistance < it->second)
                 {
                     LOG("AutoAttack: loot {:x} first ({:.0f} px; enemy {:x} at {:.0f} px; {})", loot.id, lootDistance,
-                        enemy, it->second, safe ? "no danger" : "nearer");
+                        enemy, it->second, calm ? "nobody attacks" : safe ? "no danger" : "nearer");
                     g_lootInstead = true;
+                    g_lootInsteadAll = calm;
                     enemy = 0;
                 }
             }
@@ -3367,7 +3372,7 @@ void AutoAttack::onFrame()
             {
                 g_lootInstead = false;
                 startCollect(now);
-                g_collectOne = true;
+                g_collectOne = !g_lootInsteadAll;
                 return;
             }
             roam(now);
