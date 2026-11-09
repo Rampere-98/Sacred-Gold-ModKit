@@ -20,6 +20,7 @@
 #include "log.h"
 #include "sacred/engine.h"
 #include "sacred/object.h"
+#include "sacred/ui.h"
 
 #include <imgui.h>
 #include <windows.h>
@@ -2626,6 +2627,34 @@ void AutoAttack::onFrame()
     }
     // Gear: put on what is better when calm, sell and buy at a merchant (its own settings, the auto attack on or off).
     // The merchant trip: the shop the agent opened is the trip's; once Gear has nothing more there, it is closed.
+    // The inventory left open (a help window's, the player's earlier): with it open a pick up stays on the cursor
+    // instead of going to the backpack (seen live 2026-11-09). Closed (I, its key) at once while the agent collects,
+    // else after 3 s open with no click of the player's for 8 s; never at a shop.
+    static DWORD s_inventorySince = 0, s_inventoryClosedAt = 0;
+    {
+        cUI_Manager* ui = cUI_Manager::instance();
+        cUI_Window2* inventory = ui && (ui->flags & cUI_Manager::inGame) ? ui->window(cUI_Manager::Window::inventory) : nullptr;
+        if (g_on && foreground && inventory && inventory->visible() && !Gear::shopOpen())
+        {
+            if (!s_inventorySince)
+            {
+                s_inventorySince = now;
+            }
+            const bool playerBusy = g_quietUntil && static_cast<int>(now - g_quietUntil) < 8000;
+            if (now - s_inventoryClosedAt > 1500 &&
+                (g_collecting || (now - s_inventorySince > 3000 && !playerBusy)))
+            {
+                LOG("AutoAttack: the inventory is open{}: closed", g_collecting ? " while collecting" : "");
+                s_inventoryClosedAt = now;
+                Inject::key('I', true);
+                Inject::key('I', false);
+            }
+        }
+        else
+        {
+            s_inventorySince = 0;
+        }
+    }
     if (g_shopId && Gear::shopOpen() && g_shopTries)
     {
         LOG("AutoAttack: shop of {:x} open", g_shopId);
