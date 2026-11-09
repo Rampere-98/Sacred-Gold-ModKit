@@ -60,6 +60,7 @@ set(DDRAW_SOURCES
   src/game/language.cpp
   src/game/hero_profile.cpp
   src/game/whereabouts.cpp
+  src/game/findings.cpp
   src/game/hitch_watch.cpp
   src/game/map_cache.cpp
   src/game/sound_lock.cpp

@@ -6,6 +6,7 @@
 #include "game/click_walk.h"
 #include "game/map_memory.h"
 #include "game/whereabouts.h"
+#include "game/findings.h"
 #include "config/auto_attack.h"
 #include "config/controller.h"
 #include "config/tactics.h"
@@ -478,6 +479,7 @@ namespace
             if (static_cast<int>(now - g_lootBestAt) > static_cast<int>(kLootStuckMs))
             {
                 LOG("AutoAttack: loot {:x} not reached, left", id);
+            Findings::note("loot", hero->x, hero->y, "loot {:x} not reached ({:.1f} tiles left)", id, distance / 53.66563f);
                 return true;
             }
             return false;
@@ -498,6 +500,8 @@ namespace
         if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
         {
             LOG("AutoAttack: loot {:x} still there with the hero at it, again in {} s", id, kLootSoonMs / 1000);
+            Findings::note("loot", hero->x, hero->y, "loot {:x} still there with the hero at it ({:.1f} tiles)", id,
+                           distance / 53.66563f);
             g_lootStill = true;
             return true;
         }
@@ -999,6 +1003,8 @@ namespace
             {
                 LOG("AutoAttack: no nearer to {:x} in {} s ({:.0f} px away): out of reach, left for {} s", g_target,
                     kStuckMs / 1000, currentDistance, kUnreachableMs / 1000);
+                Findings::note("unreachable", self->x, self->y, "enemy {:x} no nearer in {} s at {:.0f} px", g_target,
+                               kStuckMs / 1000, currentDistance);
                 g_unreachable[g_target] = now + kUnreachableMs;
                 g_unreachableAt[g_target] = currentDistance;
                 g_playerTargets.erase(g_target);
@@ -1164,6 +1170,8 @@ namespace
                 if (shooter != g_target && shooter != g_lastShooter)
                 {
                     LOG("AutoAttack: hurt with nobody close: {:x} at {:.0f} px taken for the shooter", shooter, best);
+                    Findings::note("shooter", self->x, self->y, "hurt with nobody close: {:x} at {:.0f} px taken for the shooter",
+                                   shooter, best);
                 }
                 g_lastShooter = shooter;
                 enemy = shooter;
@@ -1201,6 +1209,8 @@ namespace
                 g_quietUntil = now + 4000;
                 g_unseenHits = 0;
                 LOG("AutoAttack: hurt again with no enemy to answer ({} seen): off 10 tiles away", seen);
+                Findings::note("unseen-hit", self->x, self->y, "hurt twice in 12 s with no enemy to answer ({} seen, health {} of {})",
+                               seen, health, maximum);
                 return false;
             }
         }
@@ -1394,6 +1404,7 @@ namespace
             if ((done != g_questsDone || failed != g_questsFailed) && (g_questsDone || g_questsFailed || done || failed))
             {
                 LOG("AutoAttack: the journal moved on ({} done, {} failed): anyone may be spoken to again", done, failed);
+                Findings::note("quest", heroX, heroY, "the journal moved on: {} done, {} failed", done, failed);
                 forgetTalks();
             }
             g_questsDone = done;
@@ -2178,6 +2189,7 @@ namespace
         if (s_stage == 1)
         {
             LOG("AutoAttack: stuck guard: 60 s without getting anywhere: the marks «left for now» forgotten");
+            Findings::note("stuck", self->x, self->y, "60 s without getting 8 tiles anywhere out of the fights: marks forgotten");
             forgetTalks();
             g_travelBlocked.clear();
             return false;
@@ -2190,6 +2202,8 @@ namespace
         const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize), wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
         LOG("AutoAttack: stuck guard: still nowhere after {} s: a walk to tile {},{} (try {})", (now - s_anchorAt) / 1000,
             nx, ny, s_stage - 1);
+        Findings::note("stuck", self->x, self->y, "still nowhere after {} s: walk to tile {},{} (try {})",
+                       (now - s_anchorAt) / 1000, nx, ny, s_stage - 1);
         ClickWalk::walkTo(wx, wy, false);
         MapMemory::setRoute(true, wx, wy);
         g_homeX = wx;
@@ -2557,6 +2571,7 @@ namespace
                     if (++g_talkTries > 6)
                     {
                         LOG("AutoAttack: quest creature {:x} would not speak, left a while", who);
+                        Findings::note("quest", self->x, self->y, "quest creature {:x} would not speak after 6 tries", who);
                         g_talkedAt[who] = now;
                         g_talkId = 0;
                     }
