@@ -13,6 +13,7 @@
 #include "game/granny_async.h"
 #include "game/granny_parallel.h"
 #include "game/hitch_watch.h"
+#include "game/hero_profile.h"
 #include "game/resolution.h"
 #include "game/sacred_addr.h"
 #include "game/ui_canvas.h"
@@ -217,6 +218,7 @@ namespace
         GpuSkin::onFrame();
         Focus::onFrame();
         Controller::onFrame();
+        HeroProfile::onFrame();
         AutoAttack::onFrame();
         ClickWalk::onFrame();
         AutoPotion::onFrame();

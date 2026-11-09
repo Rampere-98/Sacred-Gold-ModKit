@@ -58,6 +58,7 @@ set(DDRAW_SOURCES
   src/game/granny_async.cpp
   src/game/granny_parallel.cpp
   src/game/language.cpp
+  src/game/hero_profile.cpp
   src/game/hitch_watch.cpp
   src/game/map_cache.cpp
   src/game/sound_lock.cpp
