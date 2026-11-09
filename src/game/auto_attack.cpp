@@ -805,6 +805,7 @@ namespace
     DWORD g_targetBestAt = 0;       // ... reached then
     DWORD g_lastLookAt = 0;         // the last look at the situation
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
+    std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
     constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
@@ -943,7 +944,15 @@ namespace
         const int count = AimAssist::enemies(range * kEngagedReach, foes, kMaxFoes);
         for (auto it = g_unreachable.begin(); it != g_unreachable.end();)
         {
-            it = static_cast<int>(now - it->second) >= 0 ? g_unreachable.erase(it) : std::next(it);
+            if (static_cast<int>(now - it->second) >= 0)
+            {
+                g_unreachableAt.erase(it->first);
+                it = g_unreachable.erase(it);
+            }
+            else
+            {
+                ++it;
+            }
         }
 
         // The current target: no nearer in a while without a blow, it is out of reach (across water, up a wall).
@@ -982,6 +991,7 @@ namespace
                 LOG("AutoAttack: no nearer to {:x} in {} s ({:.0f} px away): out of reach, left for {} s", g_target,
                     kStuckMs / 1000, currentDistance, kUnreachableMs / 1000);
                 g_unreachable[g_target] = now + kUnreachableMs;
+                g_unreachableAt[g_target] = currentDistance;
                 g_playerTargets.erase(g_target);
                 g_target = 0;
             }
@@ -1034,8 +1044,10 @@ namespace
                 learnFoes.push_back({f.id, f.health, f.maxHealth, atHero, atHireling,
                                      looks != g_farAimLooks.end() && looks->second >= 3});
             }
-            // Given up on: only if it comes close again.
-            if (g_unreachable.count(f.id) && d > melee)
+            // Given up on: only if it comes clearly nearer than it was then. Seen live (2026-11-09): one 122 px off
+            // behind a graveyard's fence, within the melee look, was taken again at once, for minutes on end.
+            if (const auto gone = g_unreachableAt.find(f.id);
+                g_unreachable.count(f.id) && d > std::min(melee, gone != g_unreachableAt.end() ? gone->second * 0.6f : melee))
             {
                 continue;
             }
@@ -2866,6 +2878,7 @@ namespace
         g_followers.clear();
         g_hirelings.clear();
         g_unreachable.clear();
+        g_unreachableAt.clear();
         g_farAimLooks.clear();
         g_lastWorld.clear();
         g_lastDistance.clear();

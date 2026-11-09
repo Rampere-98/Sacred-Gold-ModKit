@@ -693,10 +693,13 @@ namespace
         case 0x42A: case 0x42B: case 0x42C: case 0x412: case 0x413: case 0x414:              // dark elf
         case 0x400: case 0x401: case 0x406: case 0x407: case 0x408: case 0x409:
         case 0x432: case 0x433: case 0x434: case 0x40F: case 0x410: case 0x411:              // vampiress
-        case 0x437: case 0x438: case 0x43B: case 0x43C: case 0x37:      // dwarf
+        case 0x437: case 0x438: case 0x43B: case 0x43C:                 // dwarf
         case 0x443: case 0x444:                                         // daemon
             return Art::Single;
         // Form changes, teleport: the player's call
+        // Dwarf's Greed (0x37): more gold from the one it is cast on, no harm; cast every 2 s at an enemy behind a
+        // fence, 170 times (seen live, 2026-11-09). Not the agent's.
+        case 0x37:
         case 0x1: case 0x24: case 0x3FE: case 0x3FF:
         case 0x446: case 0x449: case 0x44A: case 0x44B: case 0x44C:
             return Art::Off;
