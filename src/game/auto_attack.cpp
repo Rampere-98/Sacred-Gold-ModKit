@@ -913,6 +913,43 @@ namespace
     constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
     constexpr double kRetreatWay = 8 * kTileSize;
 
+    // The hero's trail (the player's wish, 2026-11-09: the agent knows where it is and how it got there): a point for
+    // each tile walked, so a hero shut in backs out the way it came. Seen live: the Vampiress walked into her start
+    // house after a fixture, the tile test blind in there, and roamed against its walls for 20 minutes.
+    struct Crumb
+    {
+        int32_t x, y;
+        int layer;
+    };
+    std::vector<Crumb> g_trail;
+    bool g_backing = false;     // walking back along the trail (its points are not noted meanwhile)
+
+    void noteTrail(const cCreature* self, int layer)
+    {
+        if (g_backing)
+        {
+            return;
+        }
+        if (!g_trail.empty())
+        {
+            const Crumb& last = g_trail.back();
+            const double d = std::hypot(static_cast<double>(self->x - last.x), static_cast<double>(self->y - last.y));
+            if (last.layer != layer || d > 40.0 * kTileSize)
+            {
+                g_trail.clear();    // a portal, a load: the way back is not this one
+            }
+            else if (d < kTileSize)
+            {
+                return;
+            }
+        }
+        g_trail.push_back({self->x, self->y, layer});
+        if (g_trail.size() > 400)
+        {
+            g_trail.erase(g_trail.begin(), g_trail.begin() + 100);
+        }
+    }
+
     // Low on health, no healing potion left, enemies close: walk away from them (the order a click on the ground
     // gives, to a point 8 tiles off on the far side of the hero), again every second while it lasts. Ends once health
     // is back up, a potion turns up, no enemy is close any more, or after 12 s (then the hero fights again for 8 s).
@@ -1018,6 +1055,7 @@ namespace
         // The map memory: fights count as ground seen too (layer at the creature's +0x24).
         {
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            noteTrail(self, layer);
             MapMemory::visit(layer, self->x, self->y);
             MapMemory::wantGround(layer, self->x, self->y, hx, hy);
             MapMemory::save(now, 60000);
@@ -2262,6 +2300,48 @@ namespace
         static std::vector<Spot> s_spots;
         static DWORD s_lastCall = 0, s_anchorAt = 0, s_sampleAt = 0;
         static int s_stage = 0;
+        // Backing out: leg by leg to the trail's points, a few tiles each, until 20 tiles from where it was stuck.
+        static size_t s_backIdx = 0;
+        static int32_t s_backFromX = 0, s_backFromY = 0;
+        static DWORD s_backSince = 0, s_backOrderAt = 0;
+        if (g_backing)
+        {
+            const double away = std::hypot(static_cast<double>(self->x - s_backFromX), static_cast<double>(self->y - s_backFromY));
+            if (away > 20.0 * kTileSize || now - s_backSince > 60000 || s_backIdx >= g_trail.size())
+            {
+                g_backing = false;
+                LOG("AutoAttack: stuck guard: backed out {:.0f} tiles the way it came ({} s)", away / kTileSize,
+                    (now - s_backSince) / 1000);
+                Findings::note("stuck", self->x, self->y, "backed out {:.0f} tiles along its trail", away / kTileSize);
+                g_trail.resize(std::min(g_trail.size(), s_backIdx + 1));
+                s_spots.clear();
+                s_anchorAt = now;
+                g_homeX = self->x;
+                g_homeY = self->y;
+                g_roamStuck = 0;
+                g_roamAt = 0;
+                return false;
+            }
+            // The leg: the point furthest back along the trail still within 4 tiles of the hero.
+            while (s_backIdx > 0 && std::hypot(static_cast<double>(self->x - g_trail[s_backIdx - 1].x),
+                                               static_cast<double>(self->y - g_trail[s_backIdx - 1].y)) < 4.0 * kTileSize)
+            {
+                --s_backIdx;
+            }
+            const Crumb& c = g_trail[s_backIdx];
+            if (std::hypot(static_cast<double>(self->x - c.x), static_cast<double>(self->y - c.y)) < kTileSize && s_backIdx == 0)
+            {
+                s_backIdx = g_trail.size();     // the trail's start reached: done on the next call
+                return true;
+            }
+            if (now - s_backOrderAt > 700)
+            {
+                s_backOrderAt = now;
+                ClickWalk::walkTo(c.x, c.y, false);
+            }
+            s_lastCall = now;
+            return true;
+        }
         const bool jumped = !s_spots.empty() && std::hypot(static_cast<double>(self->x - s_spots.back().x),
                                                            static_cast<double>(self->y - s_spots.back().y)) > 40.0 * kTileSize;
         if (!s_lastCall || now - s_lastCall > 3000 || jumped)
@@ -2310,6 +2390,19 @@ namespace
             forgetTalks();
             g_travelBlocked.clear();
             return false;
+        }
+        // First the way it came: points of the trail more than 20 tiles back from here, if it has them.
+        if (s_stage == 2 && g_trail.size() > 3)
+        {
+            g_backing = true;
+            s_backIdx = g_trail.size() - 1;
+            s_backFromX = self->x;
+            s_backFromY = self->y;
+            s_backSince = now;
+            s_backOrderAt = 0;
+            LOG("AutoAttack: stuck guard: backing out the way it came ({} points of trail)", g_trail.size());
+            Findings::note("stuck", self->x, self->y, "backing out along its trail ({} points)", g_trail.size());
+            return true;
         }
         const double angle = s_stage * 2.39996;     // the golden angle: each try a new way round
         const int tx = static_cast<int>((self->x + std::cos(angle) * 15.0 * kTileSize) / kTileSize);

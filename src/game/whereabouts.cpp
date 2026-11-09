@@ -69,11 +69,18 @@ namespace
         }
         // The hero's own tile not walkable by the test (standing on an object's edge): no verdict.
         a.shutIn = !open && a.tiles > 1;
-        const bool changed = a.shutIn != g_area.shutIn || !g_area.valid || a.layer != g_area.layer;
+        const bool changed = a.shutIn != g_area.shutIn || !g_area.valid || a.layer != g_area.layer ||
+                             (a.tiles <= 1) != (g_area.tiles <= 1);
         g_area = a;
         if (changed)
         {
-            if (a.shutIn)
+            if (a.tiles <= 1)
+            {
+                // Seen live (2026-11-09): inside the Vampiress's start house the test says no to the hero's own tile.
+                LOG("Whereabouts: the tile test does not know the ground at tile {},{} (layer {}): no verdict", hx, hy,
+                    layer);
+            }
+            else if (a.shutIn)
             {
                 LOG("Whereabouts: shut in, {} tiles reachable (tiles {}..{} x {}..{}, layer {})", a.tiles, a.minX, a.maxX,
                     a.minY, a.maxY, a.layer);
@@ -118,7 +125,8 @@ int Whereabouts::reachable(int x, int y)
 
 bool Whereabouts::nearestReachable(int x, int y, int& outX, int& outY)
 {
-    if (!g_area.valid)
+    // Only the hero's own tile (the test blind here): no answer, not «go where you stand».
+    if (!g_area.valid || g_area.tiles <= 1)
     {
         return false;
     }
