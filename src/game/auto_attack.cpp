@@ -2067,12 +2067,17 @@ void AutoAttack::onFrame()
     {
         notePlayerTarget();
     }
-    // The quest creature's dialog: the first answer (Enter) until it closes; then it is done for a while.
-    static DWORD s_talkAnswerAt = 0;
+    // The quest creature's dialog: the first answer (Enter) until it closes; then it is done for a while. Read at a
+    // player's pace (each page a few seconds on screen), so it shows that the agent speaks.
+    static DWORD s_talkAnswerAt = 0, s_talkOpenAt = 0;
     static int s_talkAnswers = 0;
     if (g_talkId && UiNav::npcDialogOpen())
     {
-        if (static_cast<int>(now - s_talkAnswerAt) > 900)
+        if (!s_talkOpenAt)
+        {
+            s_talkOpenAt = now;
+        }
+        if (static_cast<int>(now - s_talkOpenAt) > 2500 && static_cast<int>(now - s_talkAnswerAt) > 3000)
         {
             if (++s_talkAnswers > 12)
             {
@@ -2089,6 +2094,7 @@ void AutoAttack::onFrame()
         }
         return;
     }
+    s_talkOpenAt = 0;
     if (g_talkId && s_talkAnswers && static_cast<int>(now - s_talkAnswerAt) > 1500)
     {
         LOG("AutoAttack: spoke to {:x} ({} answers)", g_talkId, s_talkAnswers);
