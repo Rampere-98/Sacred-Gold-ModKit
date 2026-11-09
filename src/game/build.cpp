@@ -14,6 +14,7 @@
 #include "game/options_screen.h"
 #include "game/gpu_skin.h"
 #include "game/granny_async.h"
+#include "game/hitch_watch.h"
 #include "game/granny_parallel.h"
 #include "game/ground_mesh.h"
 #include "game/ground_quads.h"
@@ -92,6 +93,7 @@ void Sacred::installHooks()
     D3DStats::setTiming(Config::debug.d3dStats);
     FileCache::install();
     GrannyAsync::install();
+    HitchWatch::install();
     GroundMesh::install();     // its own transaction first: its renderTileRow hook runs inside Resolution's
     FastMath::install();
     Patch::begin();
