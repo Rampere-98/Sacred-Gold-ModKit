@@ -1662,18 +1662,15 @@ namespace
         ImGui::RadioButton("Buscar combate (cualquier enemigo en el radio)", &mode, 1);
         c.seek = mode == 1;
         ImGui::Checkbox("Explorar cuando no hay nadie", &c.roam);
+        ImGui::SetItemTooltip("Paso a paso hacia lo que aún no ha visto (el mapa del agente), con la vida por encima del 60 %%.");
         ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
+        ImGui::SetItemTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido; "
+                              "el buscador de caminos rodea lo que no se puede pisar.");
         ImGui::Checkbox("Ir a la misión activa", &c.quests);
-        ImGui::Checkbox("Seguir jugando en segundo plano", &c.background);
-        ImGui::SetItemTooltip("El agente sigue con la ventana del juego sin foco (no usa tu ratón ni tu teclado).");
         ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
                               "cercana), sin límite de distancia; allí explora alrededor.");
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido; "
-                              "el buscador de caminos rodea lo que no se puede pisar.");
-        }
-        ImGui::SetItemTooltip("Paso a paso hacia lo que aún no ha visto (el mapa del agente), con la vida por encima del 60 %%.");
+        ImGui::Checkbox("Seguir jugando en segundo plano", &c.background);
+        ImGui::SetItemTooltip("El agente sigue con la ventana del juego sin foco (no usa tu ratón ni tu teclado).");
         // The same switches as in the tactics section, here with the fight.
         ImGui::Checkbox("Usar habilidades (artes de combate)##fight", &Config::tactics.arts);
         ImGui::Checkbox("Usar consumibles##fight", &Config::tactics.consumables);
