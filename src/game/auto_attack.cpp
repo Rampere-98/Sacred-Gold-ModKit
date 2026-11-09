@@ -363,6 +363,16 @@ namespace
                                                        : grade >= Config::autoAttack.minRarity);
             if (!keep)
             {
+                static std::unordered_set<uint32_t> s_told;
+                if (s_told.size() > 512)
+                {
+                    s_told.clear();
+                }
+                if (s_told.insert(id).second)
+                {
+                    static const char* kNames[] = {"white", "blue", "yellow", "gold", "set"};
+                    LOG("AutoAttack: item {:x} ({}) below the grade asked for, left lying", id, kNames[grade]);
+                }
                 return false;
             }
         }
