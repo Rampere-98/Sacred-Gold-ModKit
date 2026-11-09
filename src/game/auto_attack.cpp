@@ -1678,6 +1678,23 @@ namespace
             g_homeY = qy;
             // There: the quest's creature, if one, is spoken to.
             cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
+            // A kill quest: the target a living enemy of the hero's, gone for even beyond the fight range.
+            if (cCreature* foe = npc ? npc->asCreature() : nullptr; foe && foe->health > 0 && hero->isEnemy(foe))
+            {
+                if (now - g_questAskAt > 2000)
+                {
+                    if (who != g_talkId)
+                    {
+                        g_talkId = who;
+                        LOG("AutoAttack: quest target {:x} is an enemy: attacking it", who);
+                    }
+                    g_questAskAt = now;
+                    attack(who);
+                }
+                MapMemory::setRoute(true, foe->x, foe->y);
+                g_roamAt = 0;
+                return;
+            }
             const auto talked = g_talkedAt.find(who);
             if (talkable(npc) && (talked == g_talkedAt.end() || now - talked->second > kTalkAgainMs))
             {
