@@ -12,6 +12,7 @@ namespace Config
         int roamStep = 6;       // tiles a roaming step goes (shorter where that tile cannot be stood on)
         bool roam = false;      // nothing around: walk off a step at a time toward ground not seen yet (the agent map)
         bool quests = false;    // nothing around: off to the quest under way's target (main first), roaming there
+        bool farm = true;       // nothing around and no quest to go to: off to the zone with the most enemies of the hero's level
         bool background = true; // the agent plays on with the game's window in the background
         int pauseMs = 700;      // no auto attack for this long after the player's own mouse click
         bool pickup = true;     // the agent's own collect (never the game's A): items, chests and containers, the hand-cursor fixed things (hiding places, wells)

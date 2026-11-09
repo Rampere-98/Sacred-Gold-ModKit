@@ -1231,7 +1231,100 @@ namespace
     };
     std::vector<Merchant> g_merchants;
 
-    void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY)
+    // Farming zones, from the same pass (the object list holds the whole world): living hostile creatures on the
+    // surface counted per sector (64x64 tiles), the sector's level range from its block ([sector +0x17C] +0xD3 min,
+    // +0xD5 max; sector id u16 at world +0x284 + 2 * ((ty >> 6) * 128 + (tx >> 6)), sector [world +0x240][id]; seen
+    // live 2026-11-09). The best: many enemies, of the hero's level, not too far.
+    struct FarmCount
+    {
+        int count = 0;
+        int64_t sumX = 0, sumY = 0;     // tiles, for where they gather
+    };
+    std::unordered_map<int, FarmCount> g_farmBuilding;
+    bool g_farmKnown = false;
+    int32_t g_farmX = 0, g_farmY = 0;   // world: the chosen zone's middle (where its enemies gather)
+    int g_farmSector = -1;
+
+    bool sectorLevels(const uint8_t* world, int tx, int ty, int& lo, int& hi)
+    {
+        if (!world || tx < 0 || ty < 0 || tx >= 128 * 64 || ty >= 128 * 64)
+        {
+            return false;
+        }
+        const uint16_t id = *reinterpret_cast<const uint16_t*>(world + 0x284 + 2 * ((ty >> 6) * 128 + (tx >> 6)));
+        const auto table = *reinterpret_cast<const uint8_t* const* const*>(world + 0x240);
+        const auto tableEnd = *reinterpret_cast<const uint8_t* const* const*>(world + 0x244);
+        if (!table || id >= tableEnd - table || !table[id])
+        {
+            return false;
+        }
+        const uint8_t* block = *reinterpret_cast<const uint8_t* const*>(table[id] + 0x17C);
+        if (!block)
+        {
+            return false;
+        }
+        lo = *reinterpret_cast<const uint16_t*>(block + 0xD3);
+        hi = *reinterpret_cast<const uint16_t*>(block + 0xD5);
+        return hi > 0;
+    }
+
+    void chooseFarm(const uint8_t* world, int heroLevel, int32_t heroX, int32_t heroY)
+    {
+        float best = 0.0f;
+        int bestKey = -1;
+        int32_t bestX = 0, bestY = 0;
+        int bestLo = 0, bestHi = 0, bestCount = 0;
+        for (const auto& [key, f] : g_farmBuilding)
+        {
+            if (f.count < 3)
+            {
+                continue;
+            }
+            const int cx = static_cast<int>(f.sumX / f.count), cy = static_cast<int>(f.sumY / f.count);
+            int lo = 0, hi = 0;
+            if (!sectorLevels(world, cx, cy, lo, hi))
+            {
+                continue;
+            }
+            // Of its level: full worth; below it less and less (little experience); well above it, risky.
+            float fit = 1.0f;
+            if (heroLevel > hi)
+            {
+                fit = std::max(0.15f, static_cast<float>(hi) / static_cast<float>(heroLevel));
+            }
+            else if (lo > heroLevel + 5)
+            {
+                fit = 0.25f;
+            }
+            const double tiles = std::hypot(cx - heroX / kTileSize, cy - heroY / kTileSize);
+            const float score = static_cast<float>(f.count) * fit / static_cast<float>(1.0 + tiles / 150.0);
+            if (score > best)
+            {
+                best = score;
+                bestKey = key;
+                bestX = static_cast<int32_t>((cx + 0.5) * kTileSize);
+                bestY = static_cast<int32_t>((cy + 0.5) * kTileSize);
+                bestLo = lo;
+                bestHi = hi;
+                bestCount = f.count;
+            }
+        }
+        g_farmKnown = bestKey >= 0;
+        if (g_farmKnown)
+        {
+            if (bestKey != g_farmSector)
+            {
+                LOG("AutoAttack: farming zone at tile {},{}: {} enemies, levels {}-{} (hero {}), {:.0f} tiles away",
+                    static_cast<int>(bestX / kTileSize), static_cast<int>(bestY / kTileSize), bestCount, bestLo, bestHi,
+                    heroLevel, std::hypot(static_cast<double>(bestX - heroX), static_cast<double>(bestY - heroY)) / kTileSize);
+                g_farmSector = bestKey;
+            }
+            g_farmX = bestX;
+            g_farmY = bestY;
+        }
+    }
+
+    void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY, int heroLevel)
     {
         if (g_questMarksAt && now - g_questMarksAt < 1000)
         {
@@ -1240,6 +1333,7 @@ namespace
         g_questMarksAt = now;
         std::vector<MapMemory::QuestMark> marks;
         g_merchants.clear();
+        g_farmBuilding.clear();
         const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
         const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
         const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
@@ -1253,6 +1347,23 @@ namespace
                 for (const uint8_t* const* it = table; it < tableEnd; ++it)
                 {
                     const uint8_t* o = *it;
+                    // A living hostile creature on the surface, for the farming zones (sides 1 hero, 3 civilians, 4
+                    // horses, 7 soldiers are not).
+                    if (o && *reinterpret_cast<const uint32_t*>(o) >= 0x880000 && *reinterpret_cast<const uint32_t*>(o) < 0x8A0000 &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0xC) & 0xFFFF) == static_cast<uint32_t>(it - table) &&
+                        !*(o + 0x24) && *reinterpret_cast<const int32_t*>(o + 0x4D8) > 0)
+                    {
+                        const uint32_t side = *reinterpret_cast<const uint32_t*>(o + 0x1F0);
+                        if (side && side <= 64 && side != 1 && side != 3 && side != 4 && side != 7)
+                        {
+                            const int tx = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x1C) / kTileSize);
+                            const int ty = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x20) / kTileSize);
+                            FarmCount& f = g_farmBuilding[(tx >> 6) * 1024 + (ty >> 6)];
+                            ++f.count;
+                            f.sumX += tx;
+                            f.sumY += ty;
+                        }
+                    }
                     if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
                         (*reinterpret_cast<const uint32_t*>(o + 0x200) & 0x2000))
                     {
@@ -1336,6 +1447,7 @@ namespace
                     close[0], close[1], close[2], yellow, targets, g_merchants.size());
             }
         }
+        chooseFarm(manager ? *reinterpret_cast<const uint8_t* const*>(manager) : nullptr, heroLevel, heroX, heroY);
         MapMemory::setQuestMarks(std::move(marks));
     }
 
@@ -1484,8 +1596,10 @@ namespace
         double qr = 0.0;
         uint32_t who = 0;
         g_questTravel = false;
+        bool questHere = false;
         if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr, who))
         {
+            questHere = true;
             if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
             {
                 g_questTravel = true;
@@ -1538,6 +1652,25 @@ namespace
                 g_roamAt = 0;
                 return;
             }
+        }
+        // No quest to see to: off to the farming zone (many enemies of the hero's level), roaming there.
+        if (Config::autoAttack.farm && !questHere && layer == 0 && g_farmKnown)
+        {
+            const double away = std::hypot(static_cast<double>(g_farmX - self->x), static_cast<double>(g_farmY - self->y));
+            if (away > 20.0 * kTileSize)
+            {
+                g_questTravel = true;   // loot only on the way
+                if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                {
+                    g_questAskAt = now;
+                    ClickWalk::walkTo(g_farmX, g_farmY, false);
+                }
+                MapMemory::setRoute(true, g_farmX, g_farmY);
+                g_roamAt = 0;
+                return;
+            }
+            g_homeX = g_farmX;
+            g_homeY = g_farmY;
         }
         if (!Config::autoAttack.roam)
         {
@@ -1984,6 +2117,9 @@ namespace
         ImGui::Checkbox("Ir a la misión activa", &c.quests);
         ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
                               "cercana), sin límite de distancia; allí explora alrededor.");
+        ImGui::Checkbox("Ir a zonas de farmeo", &c.farm);
+        ImGui::SetItemTooltip("Sin misión que hacer ni enemigos cerca, va a la zona con más enemigos de su nivel (lo más "
+                              "cerca posible) y explora allí.");
         ImGui::Checkbox("Seguir jugando en segundo plano", &c.background);
         ImGui::SetItemTooltip("El agente sigue con la ventana del juego sin foco (no usa tu ratón ni tu teclado).");
         // The same switches as in the tactics section, here with the fight.
@@ -2015,6 +2151,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
         ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
         ModkitMenu::write(ini, L"AutoAttack", L"Background", c.background);
+        ModkitMenu::write(ini, L"AutoAttack", L"Farm", c.farm);
         ModkitMenu::write(ini, L"AutoAttack", L"LootInFight", c.lootInFight);
         ModkitMenu::write(ini, L"AutoAttack", L"Pickup", c.pickup);
         ModkitMenu::write(ini, L"AutoAttack", L"AutoCollect", c.autoCollect);
@@ -2188,7 +2325,8 @@ void AutoAttack::onFrame()
         {
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
-            scanQuestMarks(now, self->x, self->y);
+            scanQuestMarks(now, self->x, self->y,
+                           *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             if (float sx, sy; AimAssist::hero(sx, sy))
             {
                 MapMemory::wantGround(layer, self->x, self->y, sx, sy);
