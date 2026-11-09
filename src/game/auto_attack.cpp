@@ -511,6 +511,17 @@ namespace
             LOG("AutoAttack: container {:x} opened", id);
             return true;
         }
+        // A well stays where it is once used (it heals, or nothing with full health): done once the hero stood at it
+        // after the use order (seen live, 2026-11-09: the abbey's well «still there» again and again).
+        if (!loot && static_cast<int>(now - g_lootAtSince) > 1500 && static_cast<int>(g_sentAt - g_lootAtSince) >= 0)
+        {
+            const uint8_t* record = fixedRecord(id);
+            if (record && std::memcmp(record + kFixedName, "BRUNNEN", 7) == 0)
+            {
+                LOG("AutoAttack: well {:x} used", id);
+                return true;
+            }
+        }
         if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
         {
             LOG("AutoAttack: loot {:x} still there with the hero at it, again in {} s", id, kLootSoonMs / 1000);
