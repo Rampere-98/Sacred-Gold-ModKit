@@ -94,6 +94,8 @@ namespace UiNav
     bool npcDialogOpen();
     // The portal box (surface or underworld list) is open: the game stands still in its modal loop meanwhile.
     bool portalBoxOpen();
+    // The open NPC dialog's (or help window's) text, with the game's markup; "" if none is open.
+    std::wstring npcDialogText();
     // The screen point of the open NPC dialog's answer `index` (0..3), to click it; false if it has none there.
     bool npcAnswer(int index, float& outX, float& outY);
     bool npcAnswerRect(int index, Rect& out);

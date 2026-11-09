@@ -1095,6 +1095,23 @@ bool UiNav::npcDialogOpen()
     return npcDialog() != nullptr;
 }
 
+std::wstring UiNav::npcDialogText()
+{
+    // The popup's text (std::wstring of the old library: begin at +0x115C, end at +0x1160; seen live 2026-11-09).
+    const auto* popup = reinterpret_cast<const uint8_t*>(npcDialog());
+    if (!popup)
+    {
+        return {};
+    }
+    const auto* begin = *reinterpret_cast<const wchar_t* const*>(popup + 0x115C);
+    const auto* end = *reinterpret_cast<const wchar_t* const*>(popup + 0x1160);
+    if (!begin || end <= begin || end - begin > 20000)
+    {
+        return {};
+    }
+    return std::wstring(begin, end);
+}
+
 bool UiNav::portalBoxOpen()
 {
     auto* box = static_cast<cUI_BusyDlg*>(messageBox());

@@ -2,6 +2,7 @@
 #include "game/combat_learn.h"
 #include "game/gear.h"
 #include "game/hero_build.h"
+#include "game/lore.h"
 #include "game/click_walk.h"
 #include "game/map_memory.h"
 #include "config/auto_attack.h"
@@ -1202,6 +1203,7 @@ namespace
         }
         bool found = false, main = false;
         double best = 0.0;
+        uint32_t titleKey = 0, objectiveKey = 0;
         for (const uint8_t* r = begin; r < end; r += kRecord)
         {
             const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
@@ -1226,7 +1228,13 @@ namespace
                 y = static_cast<int32_t>(wy);
                 radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
                 who = *reinterpret_cast<const uint32_t*>(r + 0x14);
+                titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
+                objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
             }
+        }
+        if (found)
+        {
+            Lore::readQuest(titleKey, objectiveKey);     // the quest's title and objective read: its kind
         }
         return found;
     }
@@ -1751,6 +1759,30 @@ namespace
                         std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) / kTileSize);
                     g_questX = qx;
                     g_questY = qy;
+                }
+                // An escort (read from the quest's objective): the one escorted walks slower; the hero goes in
+                // stretches of 5 s and waits 2.5 s for them.
+                static DWORD s_escortWalkSince = 0, s_escortWaitUntil = 0;
+                if (Lore::questKind() == Lore::QuestKind::Escort)
+                {
+                    if (s_escortWaitUntil && static_cast<int>(now - s_escortWaitUntil) < 0)
+                    {
+                        MapMemory::setRoute(true, qx, qy);
+                        g_roamAt = 0;
+                        return;
+                    }
+                    s_escortWaitUntil = 0;
+                    if (!s_escortWalkSince || now - s_escortWalkSince > 15000)
+                    {
+                        s_escortWalkSince = now;
+                    }
+                    else if (now - s_escortWalkSince > 5000)
+                    {
+                        ClickWalk::cancel();
+                        s_escortWaitUntil = now + 2500;
+                        s_escortWalkSince = 0;
+                        return;
+                    }
                 }
                 if (travel(now, self, qx, qy, g_questAskAt))
                 {
@@ -2399,6 +2431,7 @@ void AutoAttack::install()
     }
     g_on = Config::autoAttack.enabled;
     ModkitMenu::add({"Ataque automático", &drawMenu, &saveMenu});
+    ModkitMenu::add({"Lo que lee el agente", &Lore::drawMenu, nullptr});
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
@@ -2445,6 +2478,10 @@ void AutoAttack::onFrame()
     }
     // The quest creature's dialog: the first answer (Enter) until it closes; then it is done for a while. Read at a
     // player's pace (each page a few seconds on screen), so it shows that the agent speaks.
+    if (g_on && UiNav::npcDialogOpen())
+    {
+        Lore::readDialog(UiNav::npcDialogText());    // what it is told, read before it answers
+    }
     static DWORD s_talkAnswerAt = 0, s_talkOpenAt = 0;
     static int s_talkAnswers = 0;
     if (g_talkId && UiNav::npcDialogOpen())

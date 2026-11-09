@@ -16,6 +16,8 @@
 #include <cstdlib>
 #include <cstdio>
 #include <mutex>
+#include <thread>
+#include <atomic>
 #include <string>
 #include <deque>
 #include <memory>
@@ -1270,39 +1272,99 @@ void MapMemory::afterWorld()
     });
 }
 
+namespace
+{
+    // What a save writes, copied under g_lock (a few MB of chunks: milliseconds) and written by a thread of its own:
+    // formatting and writing the whole file (13 MB after a few hours) on the presenting thread froze the game and the
+    // map for a moment each minute (seen live 2026-11-09).
+    struct SaveCopy
+    {
+        std::vector<std::pair<uint64_t, Chunk>> chunks;
+        std::vector<Landmark> landmarks;
+        std::vector<std::pair<uint32_t, std::string>> names;
+        std::vector<Sighting> sightings;
+    };
+    std::atomic<bool> g_saving{false};
+
+    void writeSave(const SaveCopy& copy)
+    {
+        const std::wstring p = path(), temp = p + L".tmp";
+        FILE* f = _wfopen(temp.c_str(), L"w");
+        if (!f)
+        {
+            return;
+        }
+        std::vector<char> buffer(1 << 20);
+        std::setvbuf(f, buffer.data(), _IOFBF, buffer.size());
+        for (const auto& [ck, chunk] : copy.chunks)
+        {
+            const int layer = layerOfKey(ck), cx = txOfKey(ck), cy = tyOfKey(ck);
+            for (int i = 0; i < kChunkSide * kChunkSide; ++i)
+            {
+                const Cell& c = chunk.cells[i];
+                if (c.known())
+                {
+                    std::fprintf(f, "%d %d %d %u %u %06x %u %u
+", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
+                                 cy * kChunkSide + (i >> kChunkShift), c.visits, c.blocked, (c.r << 16) | (c.g << 8) | c.b,
+                                 c.samples, c.scan);
+                }
+            }
+        }
+        for (const Landmark& l : copy.landmarks)
+        {
+            std::fprintf(f, "L %d %d %d %d
+", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
+        }
+        for (const auto& [type, name] : copy.names)
+        {
+            std::fprintf(f, "N %u %s
+", type, name.c_str());
+        }
+        for (const Sighting& s : copy.sightings)
+        {
+            std::fprintf(f, "E %u %d %d %d
+", s.type, s.layer, s.tx, s.ty);
+        }
+        std::fclose(f);
+        MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);
+    }
+}
+
 void MapMemory::save(uint32_t now, uint32_t minMs)
 {
-    const std::lock_guard lock(g_lock);
-    if (!g_dirty || (g_savedAt && now - g_savedAt < minMs))
+    if (g_saving)
     {
         return;
     }
-    const std::wstring p = path(), temp = p + L".tmp";
-    FILE* f = _wfopen(temp.c_str(), L"w");
-    if (!f)
+    auto copy = std::make_shared<SaveCopy>();
     {
+        const std::lock_guard lock(g_lock);
+        if (!g_dirty || (g_savedAt && now - g_savedAt < minMs))
+        {
+            return;
+        }
+        copy->chunks.reserve(g_chunks.size());
+        for (const auto& [ck, chunk] : g_chunks)
+        {
+            copy->chunks.emplace_back(ck, *chunk);
+        }
+        copy->landmarks = g_landmarks;
+        copy->names.assign(g_kindNames.begin(), g_kindNames.end());
+        copy->sightings.assign(g_sightings.begin(), g_sightings.end());
+        g_dirty = false;
+        g_savedAt = now;
+    }
+    if (minMs == 0)
+    {
+        writeSave(*copy);   // asked now (leaving): written before returning
         return;
     }
-    forEach([f](uint64_t k, const Cell& c) {
-        std::fprintf(f, "%d %d %d %u %u %06x %u %u\n", layerOfKey(k), txOfKey(k), tyOfKey(k), c.visits, c.blocked,
-                     (c.r << 16) | (c.g << 8) | c.b, c.samples, c.scan);
-    });
-    for (const Landmark& l : g_landmarks)
-    {
-        std::fprintf(f, "L %d %d %d %d\n", static_cast<int>(l.kind), l.layer, l.tx, l.ty);
-    }
-    for (const auto& [type, name] : g_kindNames)
-    {
-        std::fprintf(f, "N %u %s\n", type, name.c_str());
-    }
-    for (const Sighting& s : g_sightings)
-    {
-        std::fprintf(f, "E %u %d %d %d\n", s.type, s.layer, s.tx, s.ty);
-    }
-    std::fclose(f);
-    MoveFileExW(temp.c_str(), p.c_str(), MOVEFILE_REPLACE_EXISTING);
-    g_dirty = false;
-    g_savedAt = now;
+    g_saving = true;
+    std::thread([copy] {
+        writeSave(*copy);
+        g_saving = false;
+    }).detach();
 }
 
 void MapMemory::beginRadar()

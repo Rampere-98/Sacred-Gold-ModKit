@@ -74,6 +74,7 @@ set(DDRAW_SOURCES
   src/game/world_passes.cpp
   src/game/aim_assist.cpp
   src/game/auto_attack.cpp
+  src/game/lore.cpp
   src/game/wide_sectors.cpp
   src/game/auto_potion.cpp
   src/game/tactics.cpp
