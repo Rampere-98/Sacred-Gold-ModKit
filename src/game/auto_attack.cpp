@@ -1140,9 +1140,9 @@ namespace
 
     // The quest journal (seen live, 2026-11-09): a std::vector of 0x174-byte records at [0xAAD3A4]..[0xAAD3A8]
     // (the quest manager 0xAACF80 +0x424): +0 kind (3 main, 4 side), +4 state (1-2 under way, 100 done, 101
-    // failed), +0x18/+0x1C the target's tile, +0x20 its radius in world units. The quest to go for: the main one
-    // under way, else the nearest side one.
-    bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius)
+    // failed), +0x14 the target object's id (a creature to speak to, or -1), +0x18/+0x1C the target's tile, +0x20
+    // its radius in world units. The quest to go for: the main one under way, else the nearest side one.
+    bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius, uint32_t& who)
     {
         const auto begin = *reinterpret_cast<const uint8_t* const*>(0xAAD3A4);
         const auto end = *reinterpret_cast<const uint8_t* const*>(0xAAD3A8);
@@ -1176,6 +1176,7 @@ namespace
                 x = static_cast<int32_t>(wx);
                 y = static_cast<int32_t>(wy);
                 radius = std::max(2.0 * kTileSize, static_cast<double>(*reinterpret_cast<const int32_t*>(r + 0x20)));
+                who = *reinterpret_cast<const uint32_t*>(r + 0x14);
             }
         }
         return found;
@@ -1183,6 +1184,27 @@ namespace
 
     DWORD g_questAskAt = 0;
     int32_t g_questX = 0, g_questY = 0;
+
+    // Speaking to the quest's creature (the quest giver, or whom to report to): a click on it, as the player's, then
+    // its dialog answered with the first answer (Enter: accept, go on, report) until it closes. Not again for a
+    // while after (the journal moves on to the next target once the script took it).
+    // A creature's side (+0x1F0, seen live 2026-11-09): 1 hero, 3 civilians, 4 horses, 7 soldiers are spoken to.
+    constexpr size_t kSide = 0x1F0;
+    constexpr DWORD kTalkAgainMs = 120000;
+    uint32_t g_talkId = 0;
+    DWORD g_talkAt = 0;
+    int g_talkTries = 0;
+    std::unordered_map<uint32_t, DWORD> g_talkedAt;
+
+    bool talkable(cObject* object)
+    {
+        if (!object || !object->asCreature())
+        {
+            return false;
+        }
+        const uint32_t side = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) + kSide);
+        return side == 1 || side == 3 || side == 4 || side == 7;
+    }
 
     void roam(DWORD now)
     {
@@ -1234,8 +1256,9 @@ namespace
         // what attacks on the way; there, the roaming looks around it.
         int32_t qx = 0, qy = 0;
         double qr = 0.0;
+        uint32_t who = 0;
         g_questTravel = false;
-        if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr))
+        if (Config::autoAttack.quests && layer == 0 && questTarget(self->x, self->y, qx, qy, qr, who))
         {
             if (std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) > qr)
             {
@@ -1259,6 +1282,36 @@ namespace
             }
             g_homeX = qx;
             g_homeY = qy;
+            // There: the quest's creature, if one, is spoken to.
+            cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
+            const auto talked = g_talkedAt.find(who);
+            if (talkable(npc) && (talked == g_talkedAt.end() || now - talked->second > kTalkAgainMs))
+            {
+                if (who != g_talkId)
+                {
+                    g_talkId = who;
+                    g_talkTries = 0;
+                    g_talkAt = 0;
+                }
+                if (!g_talkAt || now - g_talkAt > 4000)
+                {
+                    if (++g_talkTries > 6)
+                    {
+                        LOG("AutoAttack: quest creature {:x} would not speak, left a while", who);
+                        g_talkedAt[who] = now;
+                        g_talkId = 0;
+                    }
+                    else
+                    {
+                        LOG("AutoAttack: speaking to the quest creature {:x} (try {})", who, g_talkTries);
+                        g_talkAt = now;
+                        attack(who);
+                    }
+                }
+                MapMemory::setRoute(true, npc->x, npc->y);
+                g_roamAt = 0;
+                return;
+            }
         }
         if (!Config::autoAttack.roam)
         {
@@ -1784,6 +1837,35 @@ void AutoAttack::onFrame()
     if (g_quietUntil && static_cast<int>(now - g_quietUntil) < 1500)
     {
         notePlayerTarget();
+    }
+    // The quest creature's dialog: the first answer (Enter) until it closes; then it is done for a while.
+    static DWORD s_talkAnswerAt = 0;
+    static int s_talkAnswers = 0;
+    if (g_talkId && UiNav::npcDialogOpen())
+    {
+        if (static_cast<int>(now - s_talkAnswerAt) > 900)
+        {
+            if (++s_talkAnswers > 12)
+            {
+                LOG("AutoAttack: quest dialog of {:x} goes on and on, left to the player", g_talkId);
+                g_talkedAt[g_talkId] = now;
+                g_talkId = 0;
+                s_talkAnswers = 0;
+                return;
+            }
+            LOG("AutoAttack: quest dialog of {:x}, answer 1 (Enter)", g_talkId);
+            s_talkAnswerAt = now;
+            Inject::key(VK_RETURN, true);
+            Inject::key(VK_RETURN, false);
+        }
+        return;
+    }
+    if (g_talkId && s_talkAnswers && static_cast<int>(now - s_talkAnswerAt) > 1500)
+    {
+        LOG("AutoAttack: spoke to {:x} ({} answers)", g_talkId, s_talkAnswers);
+        g_talkedAt[g_talkId] = now;
+        g_talkId = 0;
+        s_talkAnswers = 0;
     }
     // A stone's dialogs (a gravestone: "Abrir", then the outcome's "Aceptar"): the first answer each time, as Enter
     // picks it; once none is open any more, the stone is done (enemies it raised are the fight's).
