@@ -215,11 +215,11 @@ namespace
         if (nearEdge(goal.x, goal.y))
         {
             partial = true;
-            std::vector<std::pair<int, int>> far;
+            std::vector<std::pair<int, int>> wide;
             Cell stop = start;
-            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, far))
+            if (MapMemory::route(g_grid.layer, start.x, start.y, goal.x, goal.y, wide))
             {
-                for (const auto& [x, y] : far)
+                for (const auto& [x, y] : wide)
                 {
                     if (nearEdge(x, y))
                     {
