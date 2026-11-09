@@ -793,6 +793,20 @@ void ClickWalk::walkTo(int32_t x, int32_t y, bool byPlayer)
     g_askPending = true;
 }
 
+void ClickWalk::cancel()
+{
+    g_askPending = false;
+    if (g_active && !g_fromMap)
+    {
+        Inject::call([](void*) {
+            if (!g_fromMap)
+            {
+                finish("left for the agent's own order");
+            }
+        }, nullptr);
+    }
+}
+
 bool ClickWalk::routing()
 {
     return g_active || g_askPending;

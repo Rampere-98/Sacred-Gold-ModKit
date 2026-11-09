@@ -1691,6 +1691,7 @@ namespace
 
     void startCollect(DWORD now)
     {
+        ClickWalk::cancel();    // the travel's next stretch would cut the stooping short
         g_collecting = true;
         g_collectStart = now;
         g_target = 0;
@@ -2295,6 +2296,10 @@ void AutoAttack::onFrame()
         {
             return;
         }
+    }
+    if (id != g_target)
+    {
+        ClickWalk::cancel();
     }
     if (attack(id))
     {

@@ -27,6 +27,9 @@ namespace ClickWalk
     void walkTo(int32_t x, int32_t y, bool byPlayer = true);
     // A walk asked for on the agent's map in progress (the auto attack leaves it be unless the hero is attacked).
     bool walking();
+    // The agent's own travel stopped (it picks up or fights now; its next look sends it on again). A walk the player
+    // asked for is left be.
+    void cancel();
     // Any routed walk under way (the player's or the agent's), or one asked for and not yet sent.
     bool routing();
 
