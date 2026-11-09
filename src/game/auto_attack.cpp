@@ -478,7 +478,18 @@ namespace
                 return true;
             }
         }
-        const int32_t lx = loot ? loot->x : g_fixedX, ly = loot ? loot->y : g_fixedY;
+        // Any dialog open (a quest talk on the way, a stone's text): the loot's clocks stand still (the review of the
+        // findings: «not reached» after 12 s of a quest talk, the hero standing).
+        if (UiNav::npcDialogOpen())
+        {
+            g_lootBestAt = now;
+            if (g_lootAtSince)
+            {
+                g_lootAtSince = now;
+            }
+            return false;
+        }
+                const int32_t lx = loot ? loot->x : g_fixedX, ly = loot ? loot->y : g_fixedY;
         const float dx = static_cast<float>(lx - hero->x), dy = static_cast<float>(ly - hero->y);
         const float distance = std::sqrt(dx * dx + dy * dy);
         // Progress: half a tile nearer than ever before.
@@ -1221,7 +1232,9 @@ namespace
         // Hurt again and again with no enemy to answer (none seen, or all out of reach): never stand there. Seen live
         // (2026-11-09): hit every 3.5 s from somewhere out of reach, the hero went from the loot to the shooter and
         // back until it died. Off 10 tiles away from the enemies seen (anywhere when none), the agent quiet meanwhile.
-        if (hurt && !inMelee && !enemyEngaged && g_hurtAt == now)
+        // Only with enemies seen (all out of reach): hurt with none at all is a script's or the ground's (the Daemon's
+        // start), and walking off helps nothing (the review of the findings).
+        if (hurt && !inMelee && !enemyEngaged && g_hurtAt == now && count > 0)
         {
             g_unseenHits = static_cast<int>(now - g_unseenHitAt) < 12000 ? g_unseenHits + 1 : 1;
             g_unseenHitAt = now;
