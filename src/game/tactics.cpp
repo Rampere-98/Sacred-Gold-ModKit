@@ -164,12 +164,19 @@ namespace
         }
         // The slot's id to the art's own, as the order handler does (Manolito, U4: ENG 00552370 thiscall(creature,
         // id, 0), ret 8; its first bytes checked, ENG only so far), then either table may allow it.
-        static const bool s_known = std::memcmp(reinterpret_cast<const void*>(0x552370),
-                                                "ìAT$ø	", 13) == 0 &&
-                                    std::memcmp(reinterpret_cast<const void*>(0x54A2A0),
-                                                "VWùÔ  Àt=", 14) == 0;
+        static constexpr uint8_t kResolveSig[] = {0x83, 0xEC, 0x08, 0x8B, 0x41, 0x10, 0x8B, 0x54, 0x24, 0x0C, 0x83, 0xF8, 0x09};
+        static constexpr uint8_t kHasBowSig[] = {0x56, 0x57, 0x8B, 0xF9, 0x8B, 0x87, 0xD4, 0x01, 0x00, 0x00, 0x85, 0xC0, 0x74, 0x3D};
+        static const bool s_known =
+            std::memcmp(reinterpret_cast<const void*>(0x552370), kResolveSig, sizeof(kResolveSig)) == 0 &&
+            std::memcmp(reinterpret_cast<const void*>(0x54A2A0), kHasBowSig, sizeof(kHasBowSig)) == 0;
         if (!s_known)
         {
+            static bool s_told = false;
+            if (!s_told)
+            {
+                s_told = true;
+                LOG("Tactics: the mounted art check's exe functions are not where expected: no arts on horseback");
+            }
             return false;
         }
         using Resolve = uint32_t(__fastcall*)(const void* creature, void*, uint32_t id, uint8_t zero);
