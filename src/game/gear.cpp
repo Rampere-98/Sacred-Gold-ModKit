@@ -864,12 +864,21 @@ namespace
         return total;
     }
 
+    // What each weapon really did on the panel, plain (no resistances), learned while it was the active one and the
+    // panel had settled (the analyst, 2026-11-10 17:46: with a ratio to the estimate the idle slot still came out
+    // 1.5-2 times itself active, every slot switched at each enemy). Every slot is judged from it, the active one too:
+    // the panel's plain damage times what gets through this target's resistances (by the estimate's kinds); one never
+    // held yet by its estimate times the mean ratio of those known (it is tried once, then known).
+    std::unordered_map<uint32_t, float> g_panelPlain;
+
     float slotDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
     {
         const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
         const bool active = slot == *reinterpret_cast<const uint16_t*>(entry + kActiveSlot);
         const uint32_t weapon = slotItem(entry, slot, 0);
-        const float estimate = estimateDamage(hero, entry, slot, target);
+        const float plainEstimate = estimateDamage(hero, entry, slot, nullptr);
+        const float estimate = target ? estimateDamage(hero, entry, slot, target) : plainEstimate;
+        const float through = plainEstimate > 0.5f ? std::clamp(estimate / plainEstimate, 0.0f, 1.0f) : 1.0f;
         if (active)
         {
             // The hero's own weapon damage (st+0x86 min, st+0x76 max, the panel's «Arma»), its multipliers in it.
@@ -878,38 +887,32 @@ namespace
             {
                 const float lo = *reinterpret_cast<const float*>(st + 0x86 + 4 * k);
                 const float hi = *reinterpret_cast<const float*>(st + 0x76 + 4 * k);
-                const float dealt = lo >= 0.0f && hi >= 0.0f && hi < 100000.0f ? (lo + hi) * 0.5f : 0.0f;
-                const float r = target ? resistanceOf(target, k) : 0.0f;
-                panel += dealt > 0.0f ? dealt * dealt / (dealt + r) : 0.0f;
+                panel += lo >= 0.0f && hi >= 0.0f && hi < 100000.0f ? (lo + hi) * 0.5f : 0.0f;
             }
-            if (weapon && estimate > 1.0f && panel > 0.0f && GetTickCount() - g_slotSwitchAt > 3000)
+            if (weapon && panel > 0.0f && GetTickCount() - g_slotSwitchAt > 3000)
             {
-                const float ratio = std::clamp(panel / estimate, 0.1f, 10.0f);
-                auto [it, fresh] = g_panelRatio.try_emplace(weapon, ratio);
+                auto [it, fresh] = g_panelPlain.try_emplace(weapon, panel);
                 if (!fresh)
                 {
-                    it->second = it->second * 0.8f + ratio * 0.2f;
+                    it->second = it->second * 0.8f + panel * 0.2f;
+                }
+                if (plainEstimate > 1.0f)
+                {
+                    g_panelRatio[weapon] = std::clamp(panel / plainEstimate, 0.1f, 10.0f);
                 }
             }
-            if (!weapon || !g_panelRatio.count(weapon))
-            {
-                return panel;
-            }
+        }
+        if (const auto it = g_panelPlain.find(weapon); it != g_panelPlain.end())
+        {
+            return it->second * through;
         }
         float ratio = 0.0f;
-        if (const auto it = g_panelRatio.find(weapon); it != g_panelRatio.end())
+        for (const auto& [id, r] : g_panelRatio)
         {
-            ratio = it->second;
+            ratio += r;
         }
-        else if (!g_panelRatio.empty())
-        {
-            for (const auto& [id, r] : g_panelRatio)
-            {
-                ratio += r;
-            }
-            ratio /= static_cast<float>(g_panelRatio.size());
-        }
-        return estimate * (ratio > 0.0f ? ratio : 1.0f);
+        ratio = g_panelRatio.empty() ? 1.0f : ratio / static_cast<float>(g_panelRatio.size());
+        return estimate * ratio;
     }
 
     // Out of a fight: an empty open slot (not the active one) gets a weapon from the backpack, one of a kind the slots
