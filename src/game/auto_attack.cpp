@@ -3951,6 +3951,7 @@ namespace
                                "teletransporta; usa solo las entradas, escaleras y portales del juego.");
             return;
         }
+        ImGui::TextWrapped("En el mapa (tecla M): Alt + clic izquierdo lleva al héroe a ese punto.");
         if (ImGui::Button("Aquí##tp"))
         {
             s_x = hx;
@@ -4124,6 +4125,7 @@ void AutoAttack::install()
     ModkitMenu::add({"Dónde está el héroe", &Whereabouts::drawMenu, nullptr});
     ModkitMenu::add({"Zona del agente", &drawZone, nullptr});
     ModkitMenu::add({"Teletransporte (solo jugador)", &drawTeleport, nullptr});
+    Teleports::install();
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);

@@ -33,4 +33,8 @@ namespace Teleports
     // teleporte sin recursos proporcionados del propio juego, pero me gustaría tener teleport como opción cuando yo
     // vaya a jugar»). Writes the hero's position and layer.
     bool playerTeleport(int tx, int ty, int layer);
+
+    // The player's Alt+click on the world map (M): the hero to the tile clicked (layer 0), never with the agent on.
+    // Call inside a Patch transaction.
+    void install();
 }

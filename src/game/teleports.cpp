@@ -1,8 +1,13 @@
 #include "game/teleports.h"
+#include "game/auto_attack.h"
+#include "game/sacred_addr.h"
 #include "log.h"
+#include "patch.h"
+#include "sacred/ui.h"
 
 #include <windows.h>
 #include <cstdio>
+#include <cmath>
 #include <cstdlib>
 #include <cstring>
 #include <map>
@@ -198,4 +203,45 @@ bool Teleports::playerTeleport(int tx, int ty, int layer)
     *reinterpret_cast<uint8_t*>(hero + 0x24) = static_cast<uint8_t>(layer);
     LOG("Teleports: the player teleported the hero from {},{} (layer {}) to {},{} (layer {})", x, y, l, tx, ty, layer);
     return true;
+}
+
+namespace
+{
+    using namespace Sacred;
+
+    // cUI_Megamap::receiveEvent (the M key's map, UI window 5; vtable 0x896724's entry), thiscall(event) -> bool used.
+    using MegamapEventFn = uint32_t(__fastcall*)(void* self, void* edx, cEvent* event);
+    MegamapEventFn g_origMegamapEvent = nullptr;
+
+    // The player's Alt+click on the map: the game has its own behind a debug flag ([0x182EE38] & 0x2000000, off);
+    // this one writes the hero's position (Manolito, block O: the map's screen to tile, as the game's 0x6C834F).
+    uint32_t __fastcall hookMegamapEvent(void* self, void* edx, cEvent* event)
+    {
+        const auto* map = static_cast<const uint8_t*>(self);
+        if (event && event->vtable == Addr::cEventMouseDown_vtable && !AutoAttack::on() &&
+            *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(event) + 4) == 0 &&
+            (GetAsyncKeyState(VK_MENU) & 0x8000) && (*reinterpret_cast<const uint32_t*>(map + 0x10) & 5) == 5)
+        {
+            const auto* mouse = static_cast<const cEventMouse*>(event);
+            const double scrollX = *reinterpret_cast<const int32_t*>(map + 0xC016C);
+            const double scrollY = *reinterpret_cast<const int32_t*>(map + 0xC0170);
+            const double X = (mouse->x + scrollX - 1018.75) / 0.007446;
+            const double Y = (mouse->y + scrollY + 186.947) / 0.014914;
+            const double wx = (X / 0.894427 + Y / 0.447214) / 2.0;
+            const double wy = (Y / 0.447214 - X / 0.894427) / 2.0;
+            const int tx = static_cast<int>(std::floor(wx / Teleports::kWorldPerTile));
+            const int ty = static_cast<int>(std::floor(wy / Teleports::kWorldPerTile));
+            if (!Teleports::playerTeleport(tx, ty, 0))
+            {
+                LOG("Teleports: Alt+click on the map at {},{} (tile {},{}): refused", mouse->x, mouse->y, tx, ty);
+            }
+            return 1;   // used: the map does not take the click too
+        }
+        return g_origMegamapEvent(self, edx, event);
+    }
+}
+
+void Teleports::install()
+{
+    Patch::hook(g_origMegamapEvent, static_cast<uintptr_t>(0x6C8140), &hookMegamapEvent, "cUI_Megamap::receiveEvent");
 }
