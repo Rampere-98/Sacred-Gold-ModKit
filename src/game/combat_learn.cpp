@@ -109,7 +109,27 @@ namespace
         float predicted = 0.0f;
         bool learned = false;
         float hit = -1.0f;              // the hero's expected blow against it
+        bool summoner = false;          // brings others in while alive (raises, conjures, heals)
     };
+
+    // Kinds that bring others into a fight while alive, by their type names (the web researcher, WEB_RESEARCH §18:
+    // goblin shamans breed goblins, Sakkara priests and mages conjure, liches raise servants, druids call wisps; the
+    // priests seen live heal their side). Matched on the names the game gives (GOBLIN_MAGIC, PRIEST...).
+    bool summonerName(const std::string& name)
+    {
+        static const char* const kParts[] = {"GOBLIN_MAGIC", "SHAMAN", "PRIEST", "BLACK_MAGICIAN", "LICH", "NECRO",
+                                             "DRUID", "SAKKARA", "WITCH"};
+        for (const char* part : kParts)
+        {
+            if (name.find(part) != std::string::npos)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    // How much more a summoner weighs in the forecast: what it brings over the fight (a guess until measured).
+    constexpr float kSummonerWeight = 2.5f;
     std::unordered_map<uint32_t, Seen> g_seen;
     std::unordered_map<uint32_t, float> g_relative;
 
@@ -383,7 +403,8 @@ namespace
             }
             const float dps = s.hit > 0.0f ? s.hit * g_blowsPerSecond : 0.0f;
             const float seconds = dps > 0.0f ? std::min(600.0f, f.health / dps) : 600.0f;
-            items.push_back({f.id, std::max(s.predicted, kFloor), seconds});
+            // A summoner: its own blows and those of what it brings while it lives, so killed first by Smith's rule.
+            items.push_back({f.id, std::max(s.predicted, kFloor) * (s.summoner ? kSummonerWeight : 1.0f), seconds});
         }
         std::sort(items.begin(), items.end(),
                   [](const Item& a, const Item& b) { return a.rate * b.seconds > b.rate * a.seconds; });
@@ -565,6 +586,7 @@ void CombatLearn::observe(const Look& look)
                 {
                     s.type = field<uint32_t>(o, kTypeId);
                     s.level = field<uint16_t>(o, kLevel);
+                    s.summoner = summonerName(typeName(s.type));
                     sightings.push_back({s.type, o->x, o->y});
                 }
             }

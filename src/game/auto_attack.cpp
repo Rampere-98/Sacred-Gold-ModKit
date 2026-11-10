@@ -1281,6 +1281,12 @@ namespace
             {
                 cost /= std::clamp(std::sqrt(hardness), 0.7f, 1.6f);   // the harder it hits, the sooner it goes down
             }
+            // The forecast's kill order (the least health lost: the highest blows per second needed to kill it, a
+            // summoner weighed with what it brings): its first one pulled ahead among several.
+            if (CombatLearn::forecast().foes > 1 && CombatLearn::killRank(f.id) == 0)
+            {
+                cost *= 0.6f;
+            }
             if (current)
             {
                 // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least

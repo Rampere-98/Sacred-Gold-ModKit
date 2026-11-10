@@ -34,6 +34,7 @@ namespace Gear
     // the enemy's resistances), switched to as the keys 1-5 do when it beats the active one by 15 %. True if switched.
     // Call with the hero at rest (no art under way).
     bool chooseWeaponFor(uint32_t targetId);
-    // The active weapon slot's expected blow against creature `targetId` (its resistances counted); -1 if unknown.
+    // The active weapon slot's expected blow against creature `targetId` (its resistances and the chance to hit it
+    // counted); -1 if unknown.
     float expectedHit(uint32_t targetId);
 }

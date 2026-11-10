@@ -1107,7 +1107,17 @@ float Gear::expectedHit(uint32_t targetId)
         return -1.0f;
     }
     const float d = slotDamage(hero, pack, active, target);
-    return d > 0.0f ? d : -1.0f;
+    if (!(d > 0.0f))
+    {
+        return -1.0f;
+    }
+    // The chance to hit: attack / (attack + defence) (SacredWiki «Chance to Hit», archived, via the web researcher;
+    // 842 against 158 hits 84.2 %), the attack st+0x5A and the defence st+0x5E (f32, the panel's).
+    const float attack = *reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(hero) + kStats + 0x5A);
+    const float defence = *reinterpret_cast<const float*>(reinterpret_cast<const uint8_t*>(target) + kStats + 0x5E);
+    const float chance = attack > 0.0f && attack < 1e7f && defence >= 0.0f && defence < 1e7f
+                             ? attack / (attack + defence) : 1.0f;
+    return d * chance;
 }
 
 bool Gear::chooseWeaponFor(uint32_t targetId)
