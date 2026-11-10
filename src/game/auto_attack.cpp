@@ -3553,7 +3553,10 @@ namespace
                         }
                     }
                 }
-                s_leftAt = now;
+                // A minute's pause only: each want backs off by itself once tried (Gear), and a 30 min bar here
+                // kept the next craftsman away (the live verifier, 2026-11-10: the stable's visit barred the combo
+                // master's).
+                s_leftAt = now - 1800000 + 60000;
                 s_masterId = 0;
             }
             const bool toMaster = Gear::wantsRuneSwap() || Gear::wantsCombo();
@@ -3598,7 +3601,7 @@ namespace
                                                                : "runes of other classes: to a combo master to swap them");
                     if (best->id != s_masterId)
                     {
-                        LOG("AutoAttack: {} runes of other classes, off to combo master {:x} ({:.0f} tiles)",
+                        LOG("AutoAttack: {} runes of other classes; off to the craftsman {:x} ({:.0f} tiles)",
                             Gear::foreignRunes(), best->id, bestDistance / kTileSize);
                         s_masterId = best->id;
                         s_tries = 0;
@@ -3608,7 +3611,7 @@ namespace
                     {
                         if (!travel(now, self, best->x, best->y, s_askAt))
                         {
-                            LOG("AutoAttack: combo master {:x} out of reach: left 30 min", best->id);
+                            LOG("AutoAttack: craftsman {:x} out of reach: left 30 min", best->id);
                             s_leftAt = now;
                             s_masterId = 0;
                         }
@@ -3617,13 +3620,13 @@ namespace
                     {
                         if (++s_tries > 10)
                         {
-                            LOG("AutoAttack: combo master {:x} would not open his window: left 30 min", best->id);
+                            LOG("AutoAttack: craftsman {:x} would not open his window: left 30 min", best->id);
                             s_leftAt = now;
                             s_masterId = 0;
                         }
                         else
                         {
-                            LOG("AutoAttack: speaking to combo master {:x} (try {})", best->id, s_tries);
+                            LOG("AutoAttack: speaking to the craftsman {:x} (try {})", best->id, s_tries);
                             s_clickAt = now;
                             attack(best->id);
                         }

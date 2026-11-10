@@ -1544,6 +1544,15 @@ namespace
         {
             return false;
         }
+        // The offer is filled a moment after the window opens (the live verifier, 2026-11-10: «no horse offered»
+        // on the first frame): up to 3 s for it.
+        static DWORD s_openAt = 0, s_lastSeen = 0;
+        const DWORD tick = GetTickCount();
+        if (!s_openAt || tick - s_lastSeen > 1000)
+        {
+            s_openAt = tick;
+        }
+        s_lastSeen = tick;
         const uint32_t horseId = *reinterpret_cast<const uint32_t*>(w + 0x154);
         const uint32_t price = *reinterpret_cast<const uint32_t*>(w + 0x15C);
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
@@ -1551,6 +1560,10 @@ namespace
         cCreature* horse = objects && horseId ? objects->creature(horseId) : nullptr;
         if (!horse)
         {
+            if (tick - s_openAt < 3000)
+            {
+                return true;
+            }
             return close("no horse offered");
         }
         // At most half the gold (potions come first).
@@ -1582,7 +1595,8 @@ namespace
                 uint32_t ids[4];
                 uint16_t levels[4];
                 const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
-                const bool want = comboCount(st) == 0 && comboArts(st, ids, levels) && gold >= 3000 &&
+                const bool want = comboCount(st) == 0 && comboArts(st, ids, levels) &&
+                                  gold >= (g_wantCombo ? 2000u : 3000u) &&
                                   (!g_comboTriedAt || GetTickCount() - g_comboTriedAt > 1800000);
                 if (want != g_wantCombo.exchange(want) && want)
                 {
