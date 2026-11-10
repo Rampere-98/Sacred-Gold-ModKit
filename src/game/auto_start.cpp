@@ -30,6 +30,7 @@ namespace
     constexpr Spot kStart = {"start", 606, 714};
 
     bool g_enabled = true;
+    bool g_rotate = true;       // [AutoStart] Rotate=0: always the same class (one agent per class, each its own copy)
     int g_nextClass = 0;
     DWORD g_menuSince = 0;      // in the start menu since then (0: not in it)
     int g_step = -1;            // the sequence's step (-1: none under way)
@@ -64,6 +65,7 @@ namespace
         const std::wstring ini = iniPath();
         g_enabled = GetPrivateProfileIntW(L"AutoStart", L"Enabled", 1, ini.c_str()) != 0;
         g_nextClass = static_cast<int>(GetPrivateProfileIntW(L"AutoStart", L"NextClass", 0, ini.c_str())) % kClassCount;
+        g_rotate = GetPrivateProfileIntW(L"AutoStart", L"Rotate", 1, ini.c_str()) != 0;
         LOG("AutoStart: {} (next class {})", g_enabled ? "on" : "off", kClasses[g_nextClass].name);
     }
 }
@@ -89,6 +91,13 @@ void AutoStart::onFrame()
     if (g_step >= 0 && (inGame || loading))
     {
         LOG("AutoStart: the game began ({})", kClasses[g_nextClass].name);
+        if (!g_rotate)
+        {
+            g_step = -1;
+            g_tries = 0;
+            g_menuSince = 0;
+            return;
+        }
         g_nextClass = (g_nextClass + 1) % kClassCount;
         WritePrivateProfileStringW(L"AutoStart", L"NextClass", std::to_wstring(g_nextClass).c_str(), iniPath().c_str());
         g_step = -1;

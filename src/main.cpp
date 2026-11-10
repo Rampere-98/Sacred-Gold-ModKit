@@ -28,6 +28,51 @@ namespace
         }
     }
 
+    // Several agents side by side (the player, 2026-11-10: one window per class on the ultrawide): the game refuses
+    // a second copy («Sacred is already running!»). With [Instance] Multi=1 its single-instance mutex gets this
+    // process's own name and FindWindowA only finds this process's windows, so each copy (its own folder, its own
+    // settings, saves and learning) starts as if it were alone.
+    using CreateMutexAFn = HANDLE(WINAPI*)(LPSECURITY_ATTRIBUTES, BOOL, LPCSTR);
+    using FindWindowAFn = HWND(WINAPI*)(LPCSTR, LPCSTR);
+    CreateMutexAFn g_createMutexA = nullptr;
+    FindWindowAFn g_findWindowA = nullptr;
+
+    HANDLE WINAPI hookCreateMutexA(LPSECURITY_ATTRIBUTES attributes, BOOL owner, LPCSTR name)
+    {
+        if (!name)
+        {
+            return g_createMutexA(attributes, owner, name);
+        }
+        const std::string own = std::string(name) + "-" + std::to_string(GetCurrentProcessId());
+        LOG("Instance: the mutex «{}» made this process's own", name);
+        return g_createMutexA(attributes, owner, own.c_str());
+    }
+
+    HWND WINAPI hookFindWindowA(LPCSTR cls, LPCSTR title)
+    {
+        HWND found = g_findWindowA(cls, title);
+        DWORD pid = 0;
+        if (found && GetWindowThreadProcessId(found, &pid) && pid != GetCurrentProcessId())
+        {
+            LOG("Instance: FindWindowA found another copy's window: not seen");
+            return nullptr;
+        }
+        return found;
+    }
+
+    void allowSeveralCopies(const std::wstring& gameDir)
+    {
+        if (!GetPrivateProfileIntW(L"Instance", L"Multi", 0, (gameDir + L"\\SacredBild.ini").c_str()))
+        {
+            return;
+        }
+        g_createMutexA = reinterpret_cast<CreateMutexAFn>(
+            Patch::iat("kernel32.dll", "CreateMutexA", reinterpret_cast<void*>(&hookCreateMutexA)));
+        g_findWindowA = reinterpret_cast<FindWindowAFn>(
+            Patch::iat("USER32.dll", "FindWindowA", reinterpret_cast<void*>(&hookFindWindowA)));
+        LOG("Instance: several copies allowed (mutex {}, FindWindowA {})", g_createMutexA != nullptr, g_findWindowA != nullptr);
+    }
+
     std::wstring exeDirectory()
     {
         wchar_t path[MAX_PATH] = {};
@@ -161,6 +206,7 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID reserved)
         ConfigFile::load(gameDir);
         CrashDump::install(gameDir, L"SacredBild-crash");
         enableDpiAwareness();
+        allowSeveralCopies(gameDir);
 
         // `reserved` is null when the game loads ddraw.dll with LoadLibrary, after its entry point.
         const bool wrapped = reserved && wrappedExe();
