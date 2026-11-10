@@ -500,6 +500,41 @@ namespace
         {
             return;
         }
+        // Punished for dying (the player, 2026-11-10: «castiga al agente por morir»; on Bronze it never should): the
+        // forecast grows much more careful (the error counted as at least a doubled loss, three times over, so later
+        // fights like this one read as lost sooner and the retreat comes earlier), and the kinds that struck it are
+        // learned as hitting half again as hard.
+        if (g_fight.died)
+        {
+            const float actual = std::max(g_fight.lostTotal / g_fight.heroMax, 1.0f);
+            const float error = g_fight.forecast.loss > 0.01f
+                                    ? std::clamp(std::log(actual) - std::log(g_fight.forecast.loss), 0.7f, 4.0f) : 1.0f;
+            const float before = g_lossBias;
+            for (int i = 0; i < 3; ++i)
+            {
+                g_lossSamples = std::min(g_lossSamples + 1, 100);
+                g_lossBias += (error - g_lossBias) / static_cast<float>(g_lossSamples + 8);
+            }
+            int kinds = 0;
+            {
+                const std::lock_guard lock(g_lock);
+                for (const auto& [id, foe] : g_fight.foes)
+                {
+                    if (foe.strikeSeconds > 0.0f)
+                    {
+                        if (const auto k = g_kinds.find(foe.type); k != g_kinds.end())
+                        {
+                            k->second.logRate += std::log(1.5f);
+                            ++kinds;
+                        }
+                    }
+                }
+            }
+            g_dirty = true;
+            LOG("CombatLearn: the hero died: punished (forecast bias {:.2f} -> {:.2f}, {} enemy kinds learned as harder)",
+                before, g_lossBias, kinds);
+            return;
+        }
         if (g_fight.forecast.loss > 0.01f && seconds >= 3.0f)
         {
             const float actual = std::max(g_fight.lostTotal / g_fight.heroMax, 0.005f);
@@ -778,7 +813,12 @@ void CombatLearn::observe(const Look& look)
     {
         g_fight.heroMin = std::min(g_fight.heroMin, heroHealth);
         g_fight.heroMax = heroMax;
-        g_fight.died = g_fight.died || heroHealth <= 0 || CombatState::action(hero) == CombatState::Dead;
+        // Dead and back (seen live 2026-11-10, the Daemon: 7 -> 139 health in one look, no potion): the death the
+        // game never shows as health 0 to the looks.
+        static int s_prevHealth = 0;
+        const bool respawned = s_prevHealth > 0 && s_prevHealth * 100 <= heroMax * 15 && heroHealth * 100 >= heroMax * 90;
+        s_prevHealth = heroHealth;
+        g_fight.died = g_fight.died || respawned || heroHealth <= 0 || CombatState::action(hero) == CombatState::Dead;
         if (mounted)
         {
             g_fight.mounted = true;

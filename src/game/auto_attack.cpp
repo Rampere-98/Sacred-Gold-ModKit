@@ -1082,6 +1082,8 @@ namespace
     int g_unseenHits = 0;                                   // hits in a row with no enemy to answer
     DWORD g_meleeAt = 0;                                    // the last look with an enemy in the melee
     DWORD g_unseenHitAt = 0;
+    int32_t g_unseenSpotX = 0, g_unseenSpotY = 0;   // where the hero last walked off such hits ...
+    DWORD g_unseenSpotAt = 0;                       // ... and when
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
     constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
     constexpr DWORD kUnreachableMs = 20000;
@@ -1354,10 +1356,33 @@ namespace
             MapMemory::visit(layer, self->x, self->y);
             MapMemory::wantGround(layer, self->x, self->y, hx, hy);
             MapMemory::save(now, 60000);
+            // The reach known in the fights too (at a new game the first fight came before any fill).
+            Whereabouts::update(layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize));
         }
 
         const float range = static_cast<float>(Config::autoAttack.range);
         const float melee = range * 0.45f;
+        // Shut in (a yard behind its fence): an enemy on no tile the hero can walk to is out of reach, whatever its
+        // aggro. Seen live (2026-11-10): the Dark Elf and the Wood Elf at their start chased the enemies beyond the
+        // fence by turns, 4 s each, for up to 3 minutes; their aggro made them strike, so the focus kept switching.
+        const auto walledOff = [&](const cObject* o, float d) {
+            if (!o || d < melee || !Whereabouts::area().shutIn)
+            {
+                return false;
+            }
+            const int tx = static_cast<int>(o->x / kTileSize), ty = static_cast<int>(o->y / kTileSize);
+            for (int dy = -1; dy <= 1; ++dy)
+            {
+                for (int dx = -1; dx <= 1; ++dx)
+                {
+                    if (Whereabouts::reachable(tx + dx, ty + dy) != 0)
+                    {
+                        return false;   // reached, or unknown: kept
+                    }
+                }
+            }
+            return true;
+        };
         noteHirelings(now, heroObject, range * 2.0f);
         AimAssist::Foe foes[kMaxFoes];
         const int count = AimAssist::enemies(range * kEngagedReach, foes, kMaxFoes);
@@ -1507,6 +1532,10 @@ namespace
             {
                 continue;
             }
+            if (walledOff(foeObject, d))
+            {
+                continue;
+            }
             // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
             // too. Seeking fights, any other enemy within Range as well. The current one while it is engaged or
             // within 1.5 Range.
@@ -1621,7 +1650,8 @@ namespace
             for (int i = 0; i < count; ++i)
             {
                 const auto d = distances.find(foes[i].id);
-                if (d == distances.end() || d->second > range * 2.0f || (g_unreachable.count(foes[i].id) && d->second > melee))
+                if (d == distances.end() || d->second > range * 2.0f || (g_unreachable.count(foes[i].id) && d->second > melee) ||
+                    walledOff(objects->object(foes[i].id), d->second))
                 {
                     continue;
                 }
@@ -1648,9 +1678,9 @@ namespace
         // Hurt again and again with no enemy to answer (none seen, or all out of reach): never stand there. Seen live
         // (2026-11-09): hit every 3.5 s from somewhere out of reach, the hero went from the loot to the shooter and
         // back until it died. Off 10 tiles away from the enemies seen (anywhere when none), the agent quiet meanwhile.
-        // Only with enemies seen (all out of reach): hurt with none at all is a script's or the ground's (the Daemon's
-        // start), and walking off helps nothing (the review of the findings).
-        if (hurt && !inMelee && !enemyEngaged && g_hurtAt == now && count > 0)
+        // With no enemy seen too (seen live, 2026-11-10, three Daemon starts): drained to death by the chest at her
+        // arrival, by something the look does not list. A lone hit (her arrival's) is not enough: two within 12 s.
+        if (hurt && !inMelee && !enemyEngaged && g_hurtAt == now)
         {
             g_unseenHits = static_cast<int>(now - g_unseenHitAt) < 12000 ? g_unseenHits + 1 : 1;
             g_unseenHitAt = now;
@@ -1682,6 +1712,9 @@ namespace
                 s_spotX = self->x;
                 s_spotY = self->y;
                 s_spotAt = now;
+                g_unseenSpotX = self->x;
+                g_unseenSpotY = self->y;
+                g_unseenSpotAt = now;
                 const int tiles = s_spotTimes >= 3 ? 40 : s_spotTimes == 2 ? 25 : 10;
                 g_walkX = static_cast<int32_t>(self->x + ax * tiles * kTileSize);
                 g_walkY = static_cast<int32_t>(self->y + ay * tiles * kTileSize);
@@ -3286,7 +3319,7 @@ namespace
             !(Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
         {
             questHere = true;
-            setIntent(Intent::Quest, who ? "a quest creature to speak to" : "a quest's goal");
+            setIntent(Intent::Quest, who && who != 0xFFFFFFFFu ? "a quest creature to speak to" : "a quest's goal");
             // A goal inside a house or cave: its interior lies far off on the map (HQ_HE_3_3_1's at 5859..5863,
             // 3851..3886, its doors 3433,2697 and 3436,2735; Manolito): the hero outside goes to the door whose inside
             // landing is nearest the goal, and steps on it (the game's own jump), not to the goal's tile.
@@ -3525,7 +3558,59 @@ namespace
                     g_homeY = wy;
                     const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
                     const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
-                    if (!chestNear && wd > 0.6 * kTileSize && !approachStalled(wx, wy, wd, now))
+                    // Shut in, the nearest tile reached and nothing happening: the script may wait on a trigger
+                    // elsewhere in the yard (the arena's barriers open only after the «Equipo» tutorial, fired by the
+                    // corner at 3803,345; seen live 2026-11-10: 3 min on the steps at 3794,333, «no way on» every 4.5 s).
+                    // After 10 s there, 60 s across the shut-in ground: to its middle, then roaming from it; a new
+                    // nearest tile (a barrier opened) ends it.
+                    static uint64_t s_pinKey = 0;
+                    static DWORD s_pinSince = 0, s_yardUntil = 0;
+                    const uint64_t pinKey = (static_cast<uint64_t>(static_cast<uint32_t>(nx)) << 32) | static_cast<uint32_t>(ny);
+                    const Whereabouts::Area& where = Whereabouts::area();
+                    bool yard = false;
+                    if (pinKey != s_pinKey || !where.shutIn)
+                    {
+                        s_pinKey = pinKey;
+                        s_pinSince = s_yardUntil = 0;
+                    }
+                    else if (s_yardUntil && static_cast<int>(now - s_yardUntil) < 0)
+                    {
+                        yard = true;
+                    }
+                    else if (s_yardUntil)
+                    {
+                        s_yardUntil = s_pinSince = 0;       // over: back to the tile, the yard again in 10 s
+                    }
+                    else if (!s_pinSince && wd <= 1.5 * kTileSize)
+                    {
+                        s_pinSince = now;
+                    }
+                    else if (s_pinSince && now - s_pinSince > 10000)
+                    {
+                        LOG("AutoAttack: at {},{} by the quest's centre and nothing: 60 s across the shut-in ground", nx, ny);
+                        s_yardUntil = now + 60000;
+                        yard = true;
+                    }
+                    int mx = 0, my = 0;
+                    if (yard && Whereabouts::nearestReachable((where.minX + where.maxX) / 2, (where.minY + where.maxY) / 2, mx, my))
+                    {
+                        const int32_t yx = static_cast<int32_t>((mx + 0.5) * kTileSize), yy = static_cast<int32_t>((my + 0.5) * kTileSize);
+                        g_homeX = yx;
+                        g_homeY = yy;
+                        if (static_cast<int>(s_yardUntil - now) > 40000 &&
+                            std::hypot(static_cast<double>(yx - self->x), static_cast<double>(yy - self->y)) > 1.5 * kTileSize)
+                        {
+                            if (!ClickWalk::routing() && now - g_questAskAt > 4000)
+                            {
+                                g_questAskAt = now;
+                                ClickWalk::walkTo(yx, yy, false);
+                            }
+                            MapMemory::setRoute(true, yx, yy);
+                            g_roamAt = 0;
+                            return;
+                        }
+                    }
+                    if (!yard && !chestNear && wd > 0.6 * kTileSize && !approachStalled(wx, wy, wd, now))
                     {
                         static uint64_t toldCentre = 0;
                         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(nx)) << 32) | static_cast<uint32_t>(ny);
@@ -3640,7 +3725,18 @@ namespace
             {
                 s_chestTime.clear();
             }
-            if (s_chestTime[g_chestId] > 90000 || now - g_chestSince > 90000)
+            // A chest where the hero was just hurt with no enemy to answer: left like an unreachable one, else its
+            // walk takes the hero straight back into the hits (the review of the findings, case 34).
+            if (g_unseenSpotAt && now - g_unseenSpotAt < 120000 && std::abs(g_chestX - g_unseenSpotX) < 6 * kTileSize &&
+                std::abs(g_chestY - g_unseenSpotY) < 6 * kTileSize)
+            {
+                LOG("AutoAttack: chest {:x} where the hero is hurt with no enemy seen, left", g_chestId);
+                lootFailed(g_chestId, now);
+                lootFailed(g_chestId, now);
+                g_chestId = 0;
+                g_chestHeading = 0;
+            }
+            else if (s_chestTime[g_chestId] > 90000 || now - g_chestSince > 90000)
             {
                 LOG("AutoAttack: chest {:x} not reached in 90 s, left", g_chestId);
                 Findings::note("unreachable", self->x, self->y, "chest {:x} not reached in 90 s of walks to it", g_chestId);
