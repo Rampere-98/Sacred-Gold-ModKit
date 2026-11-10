@@ -4482,9 +4482,14 @@ namespace
             // A kill quest: the target a living enemy of the hero's, gone for even beyond the fight range.
             // Not one left as too strong for now, nor any with no healing potion left (the live verifier, 2026-11-11:
             // the Dark Elf marked 5dd too strong, went for it as the quest's target 33 s on with no potion and died).
+            // With no potion only one not clearly weaker is left (the reviewer: a foe far below the hero would hold
+            // the quest forever when there is no gold for potions either).
             cCreature* questFoe = npc ? npc->asCreature() : nullptr;
+            const auto levelOf = [](const cCreature* c)
+            { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(c) + 0x3FE)); };
             if (questFoe && questFoe->health > 0 && hero->isEnemy(questFoe) &&
-                (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) || Gear::healingLeft() == 0))
+                (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) ||
+                 (Gear::healingLeft() == 0 && levelOf(questFoe) + 3 > levelOf(hero))))
             {
                 static uint32_t s_toldFoe = 0;
                 if (s_toldFoe != who)
