@@ -1780,12 +1780,100 @@ namespace
     // from the world's (world = (dx + dy, dy - dx)), about 16 tiles a second. One whose line passes within a tile of
     // the hero, ahead of it within 15 tiles, is side-stepped: 2.5 tiles across its line, the side away from it first,
     // on walkable ground; once per arrow, at most every 1.2 s.
+    // Punished when an arrow hits (the player, 2026-11-11: «castiga al agente cuando sea acertado por un proyectil»):
+    // each arrow on its way at the hero is followed; one gone from the air within 5 tiles of it (16 tiles a second, a look every 0.2-0.3 s) while its health fell
+    // is a hit, and each hit makes the dodge keener for the rest of the session: seen farther off, a wider line taken
+    // for one coming at it, a longer step aside, a shorter wait between two.
+    struct DodgeLearn
+    {
+        double reach = 15.0, line = 1.0, step = 2.5;    // tiles
+        DWORD wait = 1200;                              // ms between two side-steps
+        int hits = 0, dodged = 0;
+    };
+    DodgeLearn g_dodge;
+
+    void noteArrowHits(DWORD now, const cCreature* self, const uint8_t* const* table, size_t entries)
+    {
+        struct Seen
+        {
+            double t;   // tiles ahead along its line, last look
+            DWORD at;
+        };
+        static std::unordered_map<uint32_t, Seen> s_coming;
+        static int s_health = 0;
+        int health = 0, maximum = 0;
+        AimAssist::heroHealth(health, maximum);
+        const bool fell = s_health && health < s_health;
+        s_health = health;
+        for (auto it = s_coming.begin(); it != s_coming.end();)
+        {
+            const uint8_t* o = it->first < entries ? table[it->first] : nullptr;
+            const bool flying = o && *reinterpret_cast<const uint32_t*>(o) == 0x891AB4 &&
+                                (*reinterpret_cast<const uint32_t*>(o + 0x1E4) & 1);
+            if (flying && now - it->second.at < 3000)
+            {
+                ++it;
+                continue;
+            }
+            if (!flying && fell && it->second.t < 5.0 && now - it->second.at < 600)   // 16 tiles a second: up to 5 between two looks
+            {
+                ++g_dodge.hits;
+                g_dodge.reach = std::min(25.0, g_dodge.reach + 1.5);
+                g_dodge.line = std::min(1.8, g_dodge.line + 0.1);
+                g_dodge.step = std::min(4.0, g_dodge.step + 0.2);
+                g_dodge.wait = std::max<DWORD>(500, g_dodge.wait - 100);
+                LOG("AutoAttack: hit by arrow {:x} (hit {}, {} dodged): the dodge keener now (seen at {:.1f} tiles, line "
+                    "{:.1f}, step {:.1f}, every {} ms)",
+                    it->first, g_dodge.hits, g_dodge.dodged, g_dodge.reach, g_dodge.line, g_dodge.step, g_dodge.wait);
+                Findings::note("arrow", self->x, self->y, "hit by an arrow (hit {})", g_dodge.hits);
+            }
+            it = s_coming.erase(it);
+        }
+        // The arrows on their way at the hero now.
+        for (size_t i = 1; i < entries; ++i)
+        {
+            const uint8_t* o = table[i];
+            if (!o || *reinterpret_cast<const uint32_t*>(o) != 0x891AB4 || !(*reinterpret_cast<const uint32_t*>(o + 0x1E4) & 1))
+            {
+                continue;
+            }
+            const float gx = *reinterpret_cast<const float*>(o + 0x1F4), gy = *reinterpret_cast<const float*>(o + 0x1F8);
+            double dx = gx + gy, dy = gy - gx;
+            const double len = std::hypot(dx, dy);
+            if (len < 0.1)
+            {
+                continue;
+            }
+            dx /= len;
+            dy /= len;
+            const double wx = self->x - *reinterpret_cast<const int32_t*>(o + 0x1C);
+            const double wy = self->y - *reinterpret_cast<const int32_t*>(o + 0x20);
+            const double t = wx * dx + wy * dy;
+            if (t > -1.0 * kTileSize && t < 25.0 * kTileSize && std::hypot(wx - t * dx, wy - t * dy) < 1.5 * kTileSize)
+            {
+                s_coming[static_cast<uint32_t>(i)] = {std::abs(t) / kTileSize, now};
+            }
+        }
+    }
+
     bool dodgeArrow(DWORD now, const cCreature* self, uint32_t heroId)
     {
         static DWORD s_at = 0;
         static uint32_t s_lastArrow = 0;
-        static int s_dodges = 0;
-        if (now - s_at < 1200 || g_retreatUntil)
+        if (g_retreatUntil)
+        {
+            return false;
+        }
+        if (const auto m = *reinterpret_cast<const uint8_t* const*>(0xAD5C40))
+        {
+            const auto tb = *reinterpret_cast<const uint8_t* const* const*>(m + 4);
+            const auto te = *reinterpret_cast<const uint8_t* const* const*>(m + 8);
+            if (tb && te > tb && te - tb < 0x40000)
+            {
+                noteArrowHits(now, self, tb, static_cast<size_t>(te - tb));
+            }
+        }
+        if (now - s_at < g_dodge.wait)
         {
             return false;
         }
@@ -1835,12 +1923,12 @@ namespace
             const double wx = self->x - *reinterpret_cast<const int32_t*>(o + 0x1C);
             const double wy = self->y - *reinterpret_cast<const int32_t*>(o + 0x20);
             const double t = wx * dx + wy * dy;     // how far ahead along its line the hero stands
-            if (t <= 0.0 || t > 15.0 * kTileSize)
+            if (t <= 0.0 || t > g_dodge.reach * kTileSize)
             {
                 continue;
             }
             const double ox = wx - t * dx, oy = wy - t * dy;
-            if (std::hypot(ox, oy) < 1.0 * kTileSize && t < bestT)
+            if (std::hypot(ox, oy) < g_dodge.line * kTileSize && t < bestT)
             {
                 bestT = t;
                 offX = ox;
@@ -1864,17 +1952,17 @@ namespace
         }
         for (const double sign : {1.0, -1.0})
         {
-            const int32_t px = static_cast<int32_t>(self->x + sign * nx * 2.5 * kTileSize);
-            const int32_t py = static_cast<int32_t>(self->y + sign * ny * 2.5 * kTileSize);
+            const int32_t px = static_cast<int32_t>(self->x + sign * nx * g_dodge.step * kTileSize);
+            const int32_t py = static_cast<int32_t>(self->y + sign * ny * g_dodge.step * kTileSize);
             if (ClickWalk::walkable(layer, static_cast<int>(px / kTileSize), static_cast<int>(py / kTileSize)) == 0)
             {
                 continue;
             }
             s_at = now;
             s_lastArrow = arrow;
-            ++s_dodges;
-            LOG("AutoAttack: arrow {:x} coming ({:.1f} tiles off), side-stepping {} ({} dodged)", arrow, bestT / kTileSize,
-                sign > 0 ? "away from its line" : "the other way", s_dodges);
+            ++g_dodge.dodged;
+            LOG("AutoAttack: arrow {:x} coming ({:.1f} tiles off), side-stepping {} ({} dodged, {} hits)", arrow,
+                bestT / kTileSize, sign > 0 ? "away from its line" : "the other way", g_dodge.dodged, g_dodge.hits);
             g_walkX = px;
             g_walkY = py;
             Inject::call(&walkThere, nullptr);
