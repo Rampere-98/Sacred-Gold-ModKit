@@ -901,6 +901,23 @@ namespace
     constexpr size_t kAimId = 0x104, kAimX = 0x108, kAimY = 0x10C;
     constexpr int32_t kAimSlack = 400;     // world units, about 7 tiles
 
+    // A creature with aggro on the hero (Manolito, block N): its AI target +0x251 the hero (or what it rides), an enemy
+    // fixed (+0x1F4 bit 4), and no master (bit 0x100: then +0x251 is the master). Set from 11.2 tiles on, before the
+    // first blow; dropped beyond 28 tiles (the pursuit's end). The player, 2026-11-10: «saber cuando un enemigo le
+    // tiene aggro, para saber a quién atacar o de quién huir».
+    bool aggroOnHero(const cObject* creature, uint32_t heroId, uint32_t selfId)
+    {
+        if (!creature)
+        {
+            return false;
+        }
+        const auto* base = reinterpret_cast<const uint8_t*>(creature);
+        const int32_t target = *reinterpret_cast<const int32_t*>(base + 0x251);
+        const uint32_t ai = *reinterpret_cast<const uint32_t*>(base + 0x1F4);
+        return target > 0 && (ai & 4) && !(ai & 0x100) &&
+               (static_cast<uint32_t>(target) == heroId || static_cast<uint32_t>(target) == selfId);
+    }
+
     uint32_t aimOf(cObjectManager* objects, cObject* creature)
     {
         const auto* base = reinterpret_cast<const uint8_t*>(creature);
@@ -1130,11 +1147,24 @@ namespace
         double cx = 0.0, cy = 0.0;
         int close = 0;
         bool anyNear = false;   // within Range: a retreat ends only once all are further (no back and forth)
+        // Those with aggro on the hero are the ones that follow (Manolito, block N): away from them, and over once none
+        // is near; those without, standing by, are left out (the old way, all of them, when none has aggro).
+        const cCreature* heroCreature = objects->hero();
+        const uint32_t heroId = heroCreature ? heroCreature->id : self->id;
+        bool anyAggro = false;
+        for (int i = 0; i < count; ++i)
+        {
+            anyAggro = anyAggro || aggroOnHero(objects->object(foes[i].id), heroId, self->id);
+        }
         for (int i = 0; i < count; ++i)
         {
             const float dx = foes[i].x - hx, dy = foes[i].y - hy;
-            anyNear = anyNear || dx * dx + dy * dy < range * range;
             cObject* o = objects->object(foes[i].id);
+            if (anyAggro && !aggroOnHero(o, heroId, self->id))
+            {
+                continue;
+            }
+            anyNear = anyNear || dx * dx + dy * dy < range * range;
             if (o && dx * dx + dy * dy < (range * 0.45f) * (range * 0.45f))
             {
                 cx += o->x;
@@ -1337,6 +1367,24 @@ namespace
                 typical = maxima[maxima.size() / 2];
             }
         }
+        // How many have aggro on the hero, logged when it changes (after the loop, as it leaves this scope).
+        int aggroCount = 0;
+        struct AggroTell
+        {
+            const int& n;
+            ~AggroTell()
+            {
+                static int s_told = 0;
+                if (n != s_told)
+                {
+                    if (n > s_told)
+                    {
+                        LOG("AutoAttack: {} enemies with aggro on the hero", n);
+                    }
+                    s_told = n;
+                }
+            }
+        } aggroTell{aggroCount};
         for (int i = 0; i < count; ++i)
         {
             const AimAssist::Foe& f = foes[i];
@@ -1349,7 +1397,10 @@ namespace
                 world[f.id] = {foeObject->x, foeObject->y};
             }
             const uint32_t aim = foeObject ? aimOf(objects, foeObject) : 0;
-            const bool atHero = aim && (aim == heroId || aim == selfId);
+            // Striking or aiming at the hero, or with aggro on it (coming, a blow or two off): a threat either way.
+            const bool aggro = aggroOnHero(foeObject, heroId, selfId);
+            const bool atHero = (aim && (aim == heroId || aim == selfId)) || aggro;
+            aggroCount += aggro ? 1 : 0;
             const bool atHireling = aim && !atHero && isHireling(aim);
             const bool engagedFoe = g_playerTargets.count(f.id) || atHero || atHireling;
             const bool current = f.id == g_target;
