@@ -777,6 +777,18 @@ namespace
         {
             return;
         }
+        // Mounted by the horse's place (the player, 2026-11-10: «usa habilidades bloqueadas a caballo saltándose el
+        // bloqueo»: the slot keys go past the game's check, 0x592C50, and the controlled creature stays the hero). The
+        // horse (hero +0x570) stands exactly where its rider does (seen live).
+        {
+            const uint32_t horseId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
+            cObjectManager* objects = cObjectManager::instance();
+            const cCreature* horse = horseId && objects ? objects->creature(horseId) : nullptr;
+            if (horse && horse->x == hero->x && horse->y == hero->y)
+            {
+                return;
+            }
+        }
         const Config::Tactics& c = Config::tactics;
         const AimAssist::Foe* target = nullptr;
         int close = 0;
