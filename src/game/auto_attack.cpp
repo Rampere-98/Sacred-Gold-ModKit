@@ -2431,15 +2431,18 @@ namespace
                 for (const uint8_t* const* it = table; it < tableEnd; ++it)
                 {
                     const uint8_t* o = *it;
-                    // A living hostile creature on the surface, for the farming zones (sides 1 hero, 3 civilians, 4
-                    // horses, 7 soldiers are not).
+                    // A living hostile creature on the surface, for the farming zones and the aggro rings: hostile
+                    // to the hero's side (1) by the game's own live side matrix (Manolito, 2026-11-10: u8
+                    // [0x8EB548 + a*16 + b], 0 hostile; by default 0, 3 civilians, 4 horses, 6 animals such as
+                    // rabbits and 7 soldiers are not).
                     if (o && *reinterpret_cast<const uint32_t*>(o) >= 0x880000 && *reinterpret_cast<const uint32_t*>(o) < 0x8A0000 &&
                         (*reinterpret_cast<const uint32_t*>(o + 0xC) & 0xFFFF) == static_cast<uint32_t>(it - table) &&
                         !*(o + 0x24) && reinterpret_cast<cObject*>(const_cast<uint8_t*>(o))->asCreature() &&
                         *reinterpret_cast<const int32_t*>(o + 0x4D8) > 0)
                     {
                         const uint32_t side = *reinterpret_cast<const uint32_t*>(o + 0x1F0);
-                        if (side && side <= 64 && side != 1 && side != 3 && side != 4 && side != 7)
+                        const auto* sides = reinterpret_cast<const uint8_t*>(0x8EB548);
+                        if (side < 16 && side != 1 && sides[16 + side] == 0)
                         {
                             const int tx = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x1C) / kTileSize);
                             const int ty = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x20) / kTileSize);
