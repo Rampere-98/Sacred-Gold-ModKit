@@ -16,6 +16,7 @@
 #include <imgui.h>
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -157,22 +158,41 @@ namespace
     // imposibles montado»). Most spells, Hard Hit's variants, the buffs and the bow arts pass; the melee moves do not.
     bool castMounted(uint16_t slotKind, uint32_t art, const cCreature* hero)
     {
-        const uintptr_t info = slotKind == 2 ? g_spellInfo : slotKind == 3 ? g_moveInfo : 0;
-        const uint8_t* entry = info && art < 0x10000 ? reinterpret_cast<ArtInfo>(info)(art) : nullptr;
-        if (!entry)
+        if ((slotKind != 2 && slotKind != 3) || !g_spellInfo || !g_moveInfo)
+        {
+            return false;   // combos never; the tables unknown: not cast mounted
+        }
+        // The slot's id to the art's own, as the order handler does (Manolito, U4: ENG 00552370 thiscall(creature,
+        // id, 0), ret 8; its first bytes checked, ENG only so far), then either table may allow it.
+        static const bool s_known = std::memcmp(reinterpret_cast<const void*>(0x552370),
+                                                "ìAT$ø	", 13) == 0 &&
+                                    std::memcmp(reinterpret_cast<const void*>(0x54A2A0),
+                                                "VWùÔ  Àt=", 14) == 0;
+        if (!s_known)
         {
             return false;
         }
-        const uint8_t flags = entry[slotKind == 2 ? 0x90 : 0x74];
-        if (flags & 2)
+        using Resolve = uint32_t(__fastcall*)(const void* creature, void*, uint32_t id, uint8_t zero);
+        const uint32_t id = reinterpret_cast<Resolve>(0x552370)(hero, nullptr, art, 0);
+        if (id >= 0x10000)
         {
-            using HasBow = uint8_t(__fastcall*)(const void* creature, void*);
-            if (!reinterpret_cast<HasBow>(0x54A2A0)(hero, nullptr))
+            return false;
+        }
+        using HasBow = uint8_t(__fastcall*)(const void* creature, void*);
+        const auto allowed = [&](const uint8_t* entry, size_t at) {
+            if (!entry)
             {
                 return false;
             }
-        }
-        return !(flags & 1);
+            const uint8_t flags = entry[at];
+            if ((flags & 2) && !reinterpret_cast<HasBow>(0x54A2A0)(hero, nullptr))
+            {
+                return false;
+            }
+            return !(flags & 1);
+        };
+        return allowed(reinterpret_cast<ArtInfo>(g_moveInfo)(id), 0x74) ||
+               allowed(reinterpret_cast<ArtInfo>(g_spellInfo)(id), 0x90);
     }
 
     int slotKey(int slot)
