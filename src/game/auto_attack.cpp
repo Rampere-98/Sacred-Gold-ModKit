@@ -379,6 +379,22 @@ namespace
         }
     }
 
+    // The agent's last decisions, for its mind map (the player, 2026-11-10: «cómo el agente está pensando»).
+    std::vector<std::string> g_decisions;
+
+    void remember(const std::string& what)
+    {
+        SYSTEMTIME t;
+        GetLocalTime(&t);
+        char at[16];
+        std::snprintf(at, sizeof at, "%02d:%02d:%02d ", t.wHour, t.wMinute, t.wSecond);
+        g_decisions.push_back(at + what);
+        if (g_decisions.size() > 8)
+        {
+            g_decisions.erase(g_decisions.begin());
+        }
+    }
+
     void setIntent(Intent i, const std::string& why)
     {
         if (i == g_intent && why == g_intentWhy)
@@ -396,6 +412,7 @@ namespace
         {
             s_toldAt = tick;
             LOG("Intent: {} ({})", intentName(i), why);
+            remember(std::string("intención ") + intentName(i) + ": " + why);
         }
         g_intent = i;
         g_intentWhy = why;
@@ -3629,6 +3646,7 @@ namespace
                 s_aggroToldAt = now;
                 LOG("AutoAttack: {} hostile near, not after the hero yet: exploring around them (the way taken {:.1f} "
                     "of aggro, the worst {:.1f})", g_aggroFoes.size(), aggroCost[bestK], worst);
+                remember(std::format("rodea {} enemigos que aún no le atacan", g_aggroFoes.size()));
             }
         }
         MapMemory::save(now, 60000);
@@ -4263,6 +4281,126 @@ static void publishOverlay(DWORD now, cCreature* self, float sx, float sy)
     AgentOverlay::end(now);
 }
 
+// The agent's mind map: a note for Obsidian (Mermaid mindmap) rewritten every 3 s, the agent on or off ([Mind] Path,
+// default SacredBild-mente.md next to the game). Off, it shows what it would do if switched on.
+static std::string mindSafe(std::string text)
+{
+    for (char& c : text)
+    {
+        if (c == '(' || c == ')' || c == '[' || c == ']' || c == '{' || c == '}' || c == '"' || c == '`')
+        {
+            c = ' ';
+        }
+    }
+    return text;
+}
+
+static void writeMind(DWORD now, cCreature* self, int layer, int heroLevel)
+{
+    static DWORD s_at = 0;
+    static std::wstring s_path;
+    if (s_at && now - s_at < 3000)
+    {
+        return;
+    }
+    s_at = now;
+    if (s_path.empty())
+    {
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        std::wstring dir = exe;
+        dir = dir.substr(0, dir.find_last_of(L"\\/") + 1);
+        wchar_t path[MAX_PATH] = {};
+        GetPrivateProfileStringW(L"Mind", L"Path", L"", path, MAX_PATH, (dir + L"SacredBild.ini").c_str());
+        s_path = path[0] ? path : dir + L"SacredBild-mente.md";
+        char narrow[MAX_PATH * 2] = {};
+        WideCharToMultiByte(CP_UTF8, 0, s_path.c_str(), -1, narrow, sizeof narrow, nullptr, nullptr);
+        LOG("AutoAttack: the agent's mind map to {}", narrow);
+    }
+    std::string m;
+    const auto node = [&](int depth, const std::string& text) {
+        m += std::string(2 * depth, ' ') + mindSafe(text) + "\n";
+    };
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    char at[16];
+    std::snprintf(at, sizeof at, "%02d:%02d:%02d", t.wHour, t.wMinute, t.wSecond);
+    m += std::string("---\nactualizado: ") + at + "\n---\n# Mente del agente\n\n";
+    m += g_on ? "Activo (F11). Lo que piensa y por qué.\n\n"
+              : "Inactivo (F11 lo enciende). Lo que haría si lo encendieras.\n\n";
+    m += "```mermaid\nmindmap\n";
+    m += std::format("  root((Héroe nivel {} · {}))\n", heroLevel, g_on ? "activo" : "inactivo");
+    // Intent: the one it follows, or the one it would take.
+    int32_t qx = 0, qy = 0;
+    double qr = 0.0;
+    uint32_t who = 0;
+    const bool quest = questTarget(self->x, self->y, qx, qy, qr, who);
+    const double questTiles = quest ? std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) / kTileSize : 0.0;
+    node(2, g_on ? "Intención" : "Haría");
+    if (g_on)
+    {
+        node(3, intentSpanish());
+        node(3, std::format("desde hace {} s", (now - g_intentSince) / 1000));
+    }
+    else
+    {
+        node(3, Gear::wantsShop() ? "Tienda: mochila llena o sin pociones"
+                : quest           ? std::format("Misión a {:.0f} casillas", questTiles)
+                : g_farmKnown     ? "Farmear donde los enemigos son de su nivel"
+                                  : "Explorar lo que no ha visto");
+    }
+    node(2, "Opciones");
+    node(3, quest ? std::format("Misión: a {:.0f} casillas{}", questTiles, who ? ", hablar con alguien" : "")
+                  : "Misión: ninguna a la vista");
+    node(3, g_farmKnown ? std::format("Farmear: zona a {:.0f} casillas",
+                                      std::hypot(static_cast<double>(g_farmX - self->x), static_cast<double>(g_farmY - self->y)) / kTileSize)
+                        : "Farmear: zona aún sin elegir");
+    node(3, std::format("Tienda: {}, {} pociones", Gear::wantsShop() ? "hace falta" : "no hace falta",
+                        std::max(0, Gear::healingLeft())));
+    node(3, std::format("Explorar: {} celdas vistas en esta capa", MapMemory::cellsOn(layer)));
+    node(2, "Combate");
+    if (const CombatLearn::Forecast& fc = CombatLearn::forecast(); fc.foes > 0)
+    {
+        node(3, std::format("{} enemigos, ganar {:.0f} %", fc.foes, fc.win * 100.0f));
+        node(3, std::format("perdería {:.0f} % de vida en {:.0f} s", fc.loss * 100.0f, fc.seconds));
+    }
+    else
+    {
+        node(3, "nadie con quien pelear");
+    }
+    int after = 0;
+    for (const AggroFoe& f : g_aggroFoes)
+    {
+        after += f.onHero ? 1 : 0;
+    }
+    node(3, std::format("aggro: {} cerca, {} a por él", g_aggroFoes.size(), after));
+    node(2, "Mundo");
+    if (g_zone.valid)
+    {
+        node(3, std::format("zona región {}, niveles {}-{}", g_zone.region, g_zone.lo, g_zone.hi));
+        node(3, std::format("{} misiones, {} enemigos, {} cofres", g_zone.quests, g_zone.enemies, g_zone.chests));
+    }
+    node(3, std::format("capa {}, casilla {},{}", layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize)));
+    node(2, "Recuerda");
+    for (auto it = g_decisions.rbegin(); it != g_decisions.rend() && it - g_decisions.rbegin() < 4; ++it)
+    {
+        node(3, *it);
+    }
+    m += "```\n\n## Últimas decisiones\n\n";
+    for (auto it = g_decisions.rbegin(); it != g_decisions.rend(); ++it)
+    {
+        m += "- " + *it + "\n";
+    }
+    // Written whole and swapped in, so Obsidian never reads half a note.
+    const std::wstring tmp = s_path + L".tmp";
+    if (FILE* f = _wfopen(tmp.c_str(), L"wb"))
+    {
+        std::fwrite(m.data(), 1, m.size(), f);
+        std::fclose(f);
+        MoveFileExW(tmp.c_str(), s_path.c_str(), MOVEFILE_REPLACE_EXISTING);
+    }
+}
+
 bool AutoAttack::on()
 {
     return g_on;
@@ -4461,6 +4599,8 @@ void AutoAttack::onFrame()
         {
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
+            writeMind(now, self, layer,
+                      *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,
                            *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56),
                            static_cast<uint8_t>(layer));
