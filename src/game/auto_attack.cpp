@@ -1219,8 +1219,8 @@ namespace
         using Handle = void(__fastcall*)(void* self, void*, void* ev);
         const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
         reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
-        using Destroy = void(__fastcall*)(void* ev, void*);
-        reinterpret_cast<Destroy>(0x416B30)(ev, nullptr);
+        // Not destroyed with 0x416B30: its return is not documented (the code reviewer), and the zeroed event on the
+        // stack holds nothing to free.
     }
 
     void ride(DWORD now, const cCreature* self)
@@ -1416,7 +1416,10 @@ namespace
                 nearest = std::min(nearest, d);
                 chased = chased || f.onHero;
             }
-            if (!chased && nearest > 700.0 && g_retreatWalkAt && now - g_retreatWalkAt > 1500)
+            // Only on the surface: g_aggroFoes is filled there alone, so below ground it would always read as got away
+            // (the code reviewer, 2026-11-10).
+            if (!*(reinterpret_cast<const uint8_t*>(self) + 0x24) && !chased && nearest > 700.0 && g_retreatWalkAt &&
+                now - g_retreatWalkAt > 1500)
             {
                 LOG("AutoAttack: got away: no enemy after the hero any more ({:.0f} tiles from the nearest), resting at "
                     "{} of {} health", nearest < 1e8 ? nearest / kTileSize : 99.0, health, maximum);
@@ -1584,7 +1587,7 @@ namespace
                 continue;
             }
             const uint32_t target = *reinterpret_cast<const uint32_t*>(o + 0x204);
-            const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208);
+            const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208) & 0xFFFF;
             bool hostile = target == heroId || target == self->id;
             if (!hostile && shooter && shooter < entries && table[shooter])
             {

@@ -1272,15 +1272,15 @@ namespace
         {
             return giveUp("no combos' page in the master's window");
         }
+        if (++s_steps > 4)
+        {
+            return giveUp("not learned after 4 steps");
+        }
         if (*reinterpret_cast<const uint16_t*>(tab + 0x84) != 0)
         {
             LOG("Gear: combo master's window open: to the combos' page");
             fn<SetActivePage>(kSetActivePage)(tab, nullptr, 0);
             return true;
-        }
-        if (++s_steps > 3)
-        {
-            return giveUp("not learned after 3 tries");
         }
         uint32_t ids[4];
         uint16_t levels[4];
@@ -1429,6 +1429,19 @@ namespace
         }
         const auto done = [&](const char* why) {
             LOG("Gear: socketing: {}", why);
+            // The base left on the smith's table back into the backpack (the code reviewer: an early end left it).
+            if (s_base)
+            {
+                int bw = 0, bh = 0;
+                uint16_t cell = 0;
+                uint8_t* table = *reinterpret_cast<uint8_t* const*>(bs + 0x154);
+                if (table && sizeOf(s_base, bw, bh) && fn<FindFree>(g_findFree)(pack, nullptr, bw, bh, &cell, 0))
+                {
+                    fn<RemoveItem>(g_removeItem)(table, nullptr, s_base, 1);
+                    fn<PutItem>(g_putItem)(pack, nullptr, cell, s_base, bw, bh, 1);
+                }
+                s_base = 0;
+            }
             g_wantSocket = false;
             g_socketTriedAt = GetTickCount();
             return true;
