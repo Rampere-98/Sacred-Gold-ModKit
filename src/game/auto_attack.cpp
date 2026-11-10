@@ -1,3 +1,4 @@
+#include "hero_profile.h"
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
@@ -1264,7 +1265,9 @@ namespace
         // Walking up to the horse: since when (0: not), and when last told to walk.
         static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
         const uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
-        if (!horse || *(reinterpret_cast<const uint8_t*>(self) + 0x24))
+        // The Dwarf does not ride (Builds.md; the player, 2026-11-10: «el enano no tiene animación montado»).
+        if (!horse || *(reinterpret_cast<const uint8_t*>(self) + 0x24) ||
+            HeroProfile::current().cls == HeroProfile::Class::Dwarf)
         {
             s_approachSince = 0;
             return;

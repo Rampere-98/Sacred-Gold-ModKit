@@ -1,3 +1,4 @@
+#include "hero_profile.h"
 #include "game/gear.h"
 #include "game/map_memory.h"
 #include "game/modkit_menu.h"
@@ -1660,7 +1661,9 @@ namespace
                     LOG("Gear: a combo to learn (none known, {} gold): off to a combo master", gold);
                 }
                 // A horse wanted: none yet, gold enough to spare half on it.
-                const bool horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 &&
+                // Never for the Dwarf: he does not ride (Builds.md; the player, 2026-11-10: no riding animation).
+                const bool horse = HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
+                                   *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 &&
                                    gold >= 2000 && (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
                 if (horse != g_wantHorse.exchange(horse) && horse)
                 {
