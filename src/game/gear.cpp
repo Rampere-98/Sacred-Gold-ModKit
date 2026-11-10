@@ -516,6 +516,21 @@ namespace
             return false;
         }
         bool done = false;
+        // The cheapest healing potion on sale first (more of them for the gold; the analyst, 2026-11-10: 3-5 a visit
+        // at 585 each did not last the melee classes).
+        uint32_t cheapest = 0xFFFFFFFFu;
+        for (int page = 0; page < kStockPages; ++page)
+        {
+            if (uint8_t* stock = entryOf(kFirstStockPage + page))
+            {
+                eachItem(stock, [&](uint32_t id, int, int, int) {
+                    if (healingType(typeOf(id)))
+                    {
+                        cheapest = std::min(cheapest, fn<Price>(g_price)(inv, nullptr, id, 1));
+                    }
+                });
+            }
+        }
         for (int page = 0; page < kStockPages && !done; ++page)
         {
             uint8_t* stock = entryOf(kFirstStockPage + page);
@@ -531,7 +546,8 @@ namespace
                 const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
                 uint16_t free = 0;
                 // Potions before the gold kept back: at most a quarter of the visit's gold on one, 40 % of it kept.
-                if (price > s_visitGold / 4 || gold - price < s_visitGold * 2 / 5 || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                if (price > cheapest || price > s_visitGold / 4 || gold - price < s_visitGold * 2 / 5 ||
+                    !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
                 {
                     return;
                 }

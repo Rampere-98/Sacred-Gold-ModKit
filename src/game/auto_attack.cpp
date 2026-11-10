@@ -1295,7 +1295,11 @@ namespace
         // Or the forecast gives the fight under 50 % with health below 60 % (the analyst, 2026-11-10: out of healing
         // potions at 59 of 158, into another fight of three at 20 % to win).
         const CombatLearn::Forecast& fc = CombatLearn::forecast();
-        const bool lost = fc.foes > 0 && fc.win < 0.5f && health * 100 <= maximum * 60;
+        // Without a healing potion, a big fight forecast lost is left early (the analyst, 2026-11-10 21:03: the
+        // Gladiator, Dark Elf and Wood Elf below 20 % of health in 12-13 % of their fights, into 11-16 enemies with
+        // the potions gone): at 85 % of health with five or more about.
+        const bool dry = Gear::healingLeft() == 0 && fc.foes >= 5;
+        const bool lost = fc.foes > 0 && fc.win < 0.5f && health * 100 <= maximum * (dry ? 85 : 60);
         const bool low = health * 100 <= maximum * c.retreatPercent ||
                          (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f) || lost;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
