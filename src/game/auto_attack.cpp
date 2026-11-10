@@ -250,6 +250,10 @@ namespace
                (it->second.count >= kLootTries || static_cast<int>(now - it->second.retryAt) < 0);
     }
 
+    // Loot the hero stood at and that stayed: an opened container, an item that did not fit. Never gone for again; nor loot
+    // not reached four times.
+    std::unordered_set<uint32_t> g_lootDone;
+
     void lootFailed(uint32_t id, DWORD now, bool soon = false)
     {
         id = lootKey(id);
@@ -259,10 +263,19 @@ namespace
         }
         LootFailure& f = g_lootFailures[id];
         ++f.count;
-        f.retryAt = now + (soon ? kLootSoonMs : kLootRetryMs * f.count);
+        // Three times as long each time, left for good at the fourth (the analyst, 2026-11-10: the same loot «not
+        // reached» again and again in a few minutes).
+        DWORD wait = kLootRetryMs;
+        for (int i = 1; i < f.count && wait < 1800000; ++i)
+        {
+            wait *= 3;
+        }
+        f.retryAt = now + (soon ? kLootSoonMs : wait);
+        if (!soon && f.count >= 4)
+        {
+            g_lootDone.insert(id);
+        }
     }
-    // Loot the hero stood at and that stayed: an opened container, an item that did not fit. Never gone for again.
-    std::unordered_set<uint32_t> g_lootDone;
 
     // The hero gets no nearer to the loot for this long: it cannot reach it (behind a fence, in a house).
     constexpr DWORD kLootStuckMs = 6000;
@@ -1369,12 +1382,25 @@ namespace
                 const double len = std::sqrt(ax * ax + ay * ay);
                 ax = len > 1.0 ? ax / len : 1.0;
                 ay = len > 1.0 ? ay / len : 0.0;
-                g_walkX = static_cast<int32_t>(self->x + ax * 10 * kTileSize);
-                g_walkY = static_cast<int32_t>(self->y + ay * 10 * kTileSize);
+                // Hurt there again within 10 minutes (the analyst, 2026-11-10: three times on the same two tiles, the
+                // goals bringing the hero back): farther off each time, 10, 25, then 40 tiles.
+                static int32_t s_spotX = 0, s_spotY = 0;
+                static DWORD s_spotAt = 0;
+                static int s_spotTimes = 0;
+                const bool again = s_spotAt && now - s_spotAt < 600000 && std::abs(self->x - s_spotX) < 8 * kTileSize &&
+                                   std::abs(self->y - s_spotY) < 8 * kTileSize;
+                s_spotTimes = again ? s_spotTimes + 1 : 1;
+                s_spotX = self->x;
+                s_spotY = self->y;
+                s_spotAt = now;
+                const int tiles = s_spotTimes >= 3 ? 40 : s_spotTimes == 2 ? 25 : 10;
+                g_walkX = static_cast<int32_t>(self->x + ax * tiles * kTileSize);
+                g_walkY = static_cast<int32_t>(self->y + ay * tiles * kTileSize);
                 Inject::call(&walkThere, nullptr);
-                g_quietUntil = now + 4000;
+                g_quietUntil = now + 4000 + 1500 * (tiles / 10);
                 g_unseenHits = 0;
-                LOG("AutoAttack: hurt again with no enemy to answer ({} seen): off 10 tiles away", seen);
+                LOG("AutoAttack: hurt again with no enemy to answer ({} seen): off {} tiles away (time {} here)", seen,
+                    tiles, s_spotTimes);
                 Findings::note("unseen-hit", self->x, self->y, "hurt twice in 12 s with no enemy to answer ({} seen, health {} of {})",
                                seen, health, maximum);
                 return false;

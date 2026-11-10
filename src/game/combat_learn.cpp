@@ -693,6 +693,7 @@ void CombatLearn::observe(const Look& look)
             g_fight.experience = experience;
             g_fight.mountMin = mounted ? look.self->health : 0;
             g_fight.forecast = g_forecast;
+            if (g_forecast.foes > 0)
             LOG("Forecast: a fight with {} enemies, {:.0f}% of health to be lost in {:.0f} s, {:.0f}% to win "
                 "(first {:x})", g_forecast.foes, g_forecast.loss * 100.0f, g_forecast.seconds, g_forecast.win * 100.0f,
                 g_forecast.first);
