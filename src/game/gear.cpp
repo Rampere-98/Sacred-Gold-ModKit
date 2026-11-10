@@ -1571,6 +1571,9 @@ namespace
             {
                 return true;
             }
+            const auto* d = reinterpret_cast<const uint32_t*>(w + 0x150);
+            LOG("Gear: horse: window +0x150..+0x170: {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x} {:x}", d[0], d[1], d[2], d[3],
+                d[4], d[5], d[6], d[7], d[8]);
             return close("no horse offered");
         }
         // At most half the gold (potions come first).
