@@ -3064,6 +3064,12 @@ namespace
         // A quest whose ground is more than 2 levels above the hero: farming first, where the enemies fit, until the
         // hero has the levels (the player: «si pretende farmear, el foco no es ir a la quest»).
         auto questTooHard = [&](int32_t x, int32_t y) {
+            // A goal at hand is no trip into hard ground: the Daemon's start (a tutorial yard, region 59 marked
+            // levels 45-80, its main quest 8 tiles off behind a script's blocker) farmed instead, shut in, 14 min.
+            if (std::hypot(static_cast<double>(x - self->x), static_cast<double>(y - self->y)) < 60.0 * kTileSize)
+            {
+                return false;
+            }
             const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
             const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
             int lo = 0, hi = 0;
