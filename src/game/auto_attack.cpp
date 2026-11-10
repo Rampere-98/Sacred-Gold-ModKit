@@ -355,6 +355,35 @@ namespace
         return tiles <= kLootMaxTiles;     // all of it before going on, on a trip too (the player's wish)
     }
 
+    // Doors (AGENT_ADDRESSES «Puertas y entradas»: TYPE_OBJECT_DOOR_* 0x1612..0x1697 and TYPE_OBJECT_S_DOOR 0x1465,
+    // cObject3D; the village's open with a click). Which are shut is not known yet (Manolito, block K): a door is
+    // used, as the player's click on it does, when the hero is stuck, the nearest one not tried for 2 minutes.
+    std::unordered_map<uint32_t, DWORD> g_doorTried;
+    float g_doorRange = 12.0f * 53.66563f;
+
+    bool acceptDoor(uint32_t id, void*)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        cObject* o = objects && !isFixed(id) ? objects->object(id) : nullptr;
+        if (!o || !hero || o->asCreature())
+        {
+            return false;
+        }
+        const uint16_t type = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x10);
+        if (!((type >= 0x1612 && type <= 0x1697) || type == 0x1465))
+        {
+            return false;
+        }
+        const auto it = g_doorTried.find(id);
+        if (it != g_doorTried.end() && GetTickCount() - it->second < 120000)
+        {
+            return false;
+        }
+        const float dx = static_cast<float>(o->x - hero->x), dy = static_cast<float>(o->y - hero->y);
+        return dx * dx + dy * dy <= g_doorRange * g_doorRange;
+    }
+
     bool acceptLoot(uint32_t id, void*)
     {
         if (lootBlocked(id, GetTickCount()) || g_lootDone.count(lootKey(id)))
@@ -2480,6 +2509,19 @@ namespace
             return false;
         }
         ++s_stage;
+        // A door near (the player, 2026-11-10: «el agente no abre puertas», a Seraphim stuck before a gate in a
+        // dungeon): used first, a try of this stage.
+        {
+            AimAssist::Target door;
+            if (AimAssist::findObject(g_doorRange, &acceptDoor, nullptr, door))
+            {
+                g_doorTried[door.id] = now;
+                LOG("AutoAttack: stuck guard: a door near ({:x}): used, as a click on it", door.id);
+                Findings::note("door", self->x, self->y, "stuck: door {:x} used", door.id);
+                attack(door.id);
+                return true;
+            }
+        }
         if (s_stage == 1)
         {
             LOG("AutoAttack: stuck guard: 60 s within 16 tiles out of the fights: the marks «left for now» forgotten");
