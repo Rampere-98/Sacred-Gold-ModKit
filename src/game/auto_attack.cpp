@@ -2,6 +2,7 @@
 #include "game/combat_learn.h"
 #include "game/gear.h"
 #include "game/auto_start.h"
+#include "game/teleports.h"
 #include "game/hero_build.h"
 #include "game/lore.h"
 #include "game/click_walk.h"
@@ -30,6 +31,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
@@ -2612,7 +2614,24 @@ namespace
             const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
             int bx = 0, by = 0;
             double best = 1e18;
-            for (const auto& [ex, ey] : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+            std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius);
+            // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
+            // way out is there; Manolito, block L).
+            for (const Teleports::Interior& in : Teleports::interiors())
+            {
+                if (in.start && std::abs(in.outX - htx) <= Whereabouts::kRadius && std::abs(in.outY - hty) <= Whereabouts::kRadius)
+                {
+                    ways.emplace_back(in.outX, in.outY);
+                }
+                else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
+                {
+                    for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
+                    {
+                        ways.push_back(a);
+                    }
+                }
+            }
+            for (const auto& [ex, ey] : ways)
             {
                 const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
                 if (const auto t = s_wayTried.find(wk); t != s_wayTried.end() && now - t->second < 180000)
@@ -3215,6 +3234,106 @@ namespace
             // (seek off: only those that strike are fought).
             setIntent(Intent::Explore, "nothing to see to around: the ground unseen, its loot, a fight only if attacked");
         }
+        // Exploring takes in the caves, cellars and houses near whose inside fits the hero's level (the player: the
+        // agent never went into an interior on purpose): to its way in (a stairs anchor by its outside landing, or a
+        // tpstart tile), each once a game; in when the hero lands by its inside.
+        if (g_intent == Intent::Explore && layer == 0)
+        {
+            static int s_goingIn = -1;
+            static DWORD s_goingSince = 0;
+            static std::unordered_set<int> s_doneInteriors;
+            const std::vector<Teleports::Interior>& all = Teleports::interiors();
+            const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+            if (s_goingIn >= 0)
+            {
+                const Teleports::Interior& in = all[s_goingIn];
+                if (std::abs(htx - in.inX) < 30 && std::abs(hty - in.inY) < 30)
+                {
+                    LOG("AutoAttack: into the interior at {},{}: exploring it", in.inX, in.inY);
+                    s_doneInteriors.insert(s_goingIn);
+                    s_goingIn = -1;
+                }
+                else if (now - s_goingSince > 180000)
+                {
+                    LOG("AutoAttack: the way into {},{} not found in 3 min, left", in.inX, in.inY);
+                    s_doneInteriors.insert(s_goingIn);
+                    s_goingIn = -1;
+                }
+            }
+            if (s_goingIn < 0)
+            {
+                const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+                const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
+                double best = 80.0;
+                for (int i = 0; i < static_cast<int>(all.size()); ++i)
+                {
+                    const Teleports::Interior& in = all[i];
+                    int lo = 0, hi = 0;
+                    const double d = std::hypot(in.outX - htx, in.outY - hty);
+                    if (d < best && !s_doneInteriors.count(i) && in.outX < 3900 && world &&
+                        sectorLevels(world, in.inX, in.inY, lo, hi) && lo <= heroLevel + 2 && hi + 4 >= heroLevel)
+                    {
+                        best = d;
+                        s_goingIn = i;
+                    }
+                }
+                if (s_goingIn >= 0)
+                {
+                    s_goingSince = now;
+                    const Teleports::Interior& in = all[s_goingIn];
+                    LOG("AutoAttack: an interior of the hero's level at {:.0f} tiles (its way in by {},{}; inside {},{})",
+                        best, in.outX, in.outY, in.inX, in.inY);
+                    setIntent(Intent::Explore, "an interior of its level near: going in to explore it");
+                }
+            }
+            if (s_goingIn >= 0)
+            {
+                const Teleports::Interior& in = all[s_goingIn];
+                std::vector<std::pair<int, int>> doors;
+                if (in.start)
+                {
+                    doors.emplace_back(in.outX, in.outY);
+                }
+                else
+                {
+                    doors = Teleports::anchorsNear(0, in.outX, in.outY, 6);
+                }
+                if (doors.empty())
+                {
+                    s_doneInteriors.insert(s_goingIn);
+                    s_goingIn = -1;
+                }
+                else
+                {
+                    auto [dx, dy] = doors.front();
+                    for (const auto& d : doors)
+                    {
+                        if (std::hypot(d.first - htx, d.second - hty) < std::hypot(dx - htx, dy - hty))
+                        {
+                            dx = d.first;
+                            dy = d.second;
+                        }
+                    }
+                    const int32_t wx = static_cast<int32_t>((dx + 0.5) * kTileSize), wy = static_cast<int32_t>((dy + 0.5) * kTileSize);
+                    if (std::hypot(dx - htx, dy - hty) > 1.5)
+                    {
+                        if (travel(now, self, wx, wy, g_questAskAt))
+                        {
+                            MapMemory::setRoute(true, wx, wy);
+                            g_roamAt = 0;
+                            return;
+                        }
+                    }
+                    else if (!g_roamAt || now - g_roamAt > 3000)
+                    {
+                        // On the way in and nothing yet: a step off, the next look steps on again.
+                        g_roamAt = now;
+                        ClickWalk::walkTo(self->x + static_cast<int32_t>(2 * kTileSize), self->y, false);
+                        return;
+                    }
+                }
+            }
+        }
         MapMemory::visit(layer, self->x, self->y);
         // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
         if (g_roamAt)
@@ -3649,6 +3768,63 @@ namespace
         }
     }
 
+    // The player's teleport (Home menu): off while the agent plays, so the agent never moves but by the game's own ways.
+    void drawTeleport()
+    {
+        static int s_x = 0, s_y = 0, s_layer = 0, s_pick = -1;
+        int hx = 0, hy = 0, hl = 0;
+        if (!Teleports::heroAt(hx, hy, hl))
+        {
+            ImGui::TextDisabled("Sin héroe en el mundo.");
+            return;
+        }
+        ImGui::Text("El héroe está en %d, %d (capa %d)", hx, hy, hl);
+        if (g_on)
+        {
+            ImGui::TextWrapped("Solo para cuando juegas tú: el agente está activo (F11 lo para). El agente nunca se "
+                               "teletransporta; usa solo las entradas, escaleras y portales del juego.");
+            return;
+        }
+        if (ImGui::Button("Aquí##tp"))
+        {
+            s_x = hx;
+            s_y = hy;
+            s_layer = hl;
+        }
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(220);
+        ImGui::InputInt3("Casilla x, y, capa##tp", &s_x);
+        const std::vector<Teleports::Interior>& all = Teleports::interiors();
+        if (!all.empty())
+        {
+            char label[96];
+            std::snprintf(label, sizeof label, "%s", s_pick >= 0 && s_pick < static_cast<int>(all.size()) ? "elegido" : "un interior conocido");
+            ImGui::SetNextItemWidth(260);
+            if (ImGui::BeginCombo("Interiores##tp", label))
+            {
+                for (int i = 0; i < static_cast<int>(all.size()); ++i)
+                {
+                    const Teleports::Interior& in = all[i];
+                    char item[96];
+                    std::snprintf(item, sizeof item, "%s %d,%d (fuera %d,%d)##tp%d", in.start ? "salto" : "interior", in.inX,
+                                  in.inY, in.outX, in.outY, i);
+                    if (ImGui::Selectable(item, s_pick == i))
+                    {
+                        s_pick = i;
+                        s_x = in.inX;
+                        s_y = in.inY;
+                        s_layer = hl;
+                    }
+                }
+                ImGui::EndCombo();
+            }
+        }
+        if (ImGui::Button("Teletransportar##tp") && !Teleports::playerTeleport(s_x, s_y, s_layer))
+        {
+            LOG("Teleports: the player's teleport to {},{} (layer {}) refused", s_x, s_y, s_layer);
+        }
+    }
+
     // The ModKit menu's section: what changes applies at once.
     void drawMenu()
     {
@@ -3781,6 +3957,7 @@ void AutoAttack::install()
     ModkitMenu::add({"Misiones del agente", &drawQuestBook, nullptr});
     ModkitMenu::add({"Dónde está el héroe", &Whereabouts::drawMenu, nullptr});
     ModkitMenu::add({"Zona del agente", &drawZone, nullptr});
+    ModkitMenu::add({"Teletransporte (solo jugador)", &drawTeleport, nullptr});
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
