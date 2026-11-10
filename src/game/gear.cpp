@@ -767,7 +767,8 @@ namespace
                     mult = 1.0f;
                 }
                 // What gets through a resistance (the official manual's formula, darkmatters.org topic 3783, via the
-                // web researcher; not yet checked in the exe): dealt^2 / (dealt + resistance), kind by kind.
+                // web researcher; Manolito found it in the exe, resistDamage 0x43EEE0 with k = 0.5 for the hero):
+                // dealt^2 / (dealt + resistance), kind by kind.
                 const float dealt = d[k] * mult;
                 const float r = target ? resistanceOf(target, k) : 0.0f;
                 total += dealt > 0.0f ? dealt * dealt / (dealt + r) : 0.0f;
