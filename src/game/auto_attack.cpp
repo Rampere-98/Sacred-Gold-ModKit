@@ -356,7 +356,7 @@ namespace
     }
 
     // Doors (AGENT_ADDRESSES «Puertas y entradas»: TYPE_OBJECT_DOOR_* 0x1612..0x1697 and TYPE_OBJECT_S_DOOR 0x1465,
-    // cObject3D; the village's open with a click). Which are shut is not known yet (Manolito, block K): a door is
+    // cObject3D; the village's open with a click). Only shut ones a key or a click opens (their trigger, below): a door is
     // used, as the player's click on it does, when the hero is stuck, the nearest one not tried for 2 minutes.
     std::unordered_map<uint32_t, DWORD> g_doorTried;
     float g_doorRange = 12.0f * 53.66563f;
@@ -374,6 +374,29 @@ namespace
         if (!((type >= 0x1612 && type <= 0x1697) || type == 0x1465))
         {
             return false;
+        }
+        // Its state, in its trigger record (Manolito, block K, AGENT_ADDRESSES «Puertas y palancas»): door+0x34 the
+        // trigger's index, the records [world+0x268] (end [world+0x26C]) 0x10 each, world = [[0xAD5C40]]; +0xA u16
+        // bit 0 open, 0x8000 locked by a script or lever; +0xC u32 the key it asks (the game looks in the backpack).
+        // Open ones and those a script holds shut are passed by.
+        if (const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40))
+        {
+            if (const uintptr_t world = *reinterpret_cast<const uintptr_t*>(holder))
+            {
+                const uintptr_t begin = *reinterpret_cast<const uintptr_t*>(world + 0x268);
+                const uintptr_t end = *reinterpret_cast<const uintptr_t*>(world + 0x26C);
+                const uint32_t index = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(o) + 0x34);
+                const uintptr_t trig = begin + static_cast<uintptr_t>(index) * 0x10;
+                if (begin && end > begin && index < 0x100000 && trig + 0x10 <= end)
+                {
+                    const uint16_t state = *reinterpret_cast<const uint16_t*>(trig + 0xA);
+                    const uint32_t key = *reinterpret_cast<const uint32_t*>(trig + 0xC);
+                    if ((state & 1) || ((state & 0x8000) && !key))
+                    {
+                        return false;
+                    }
+                }
+            }
         }
         const auto it = g_doorTried.find(id);
         if (it != g_doorTried.end() && GetTickCount() - it->second < 120000)
