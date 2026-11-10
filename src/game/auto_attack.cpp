@@ -2523,8 +2523,64 @@ namespace
         return true;
     }
 
+    // A shut door ahead on a trip: within 6 tiles, toward the goal (the player, 2026-11-10: «al agente aún le cuesta
+    // detectar puertas»; before, doors were only used shut in or stuck).
+    struct DoorAhead
+    {
+        int32_t heroX, heroY, goalX, goalY;
+    };
+
+    bool acceptDoorAhead(uint32_t id, void* context)
+    {
+        if (!acceptDoor(id, nullptr))
+        {
+            return false;
+        }
+        const auto* a = static_cast<const DoorAhead*>(context);
+        cObjectManager* objects = cObjectManager::instance();
+        const cObject* o = objects ? objects->object(id) : nullptr;
+        if (!o)
+        {
+            return false;
+        }
+        const double dx = o->x - a->heroX, dy = o->y - a->heroY;
+        const double gx = a->goalX - a->heroX, gy = a->goalY - a->heroY;
+        const double dl = std::hypot(dx, dy), gl = std::hypot(gx, gy);
+        return dl > 1.0 && gl > 1.0 && (dx * gx + dy * gy) / (dl * gl) > 0.5 && dl < gl + 2.0 * kTileSize;
+    }
+
+    bool doorOnTheWay(DWORD now, const cCreature* self, int32_t x, int32_t y)
+    {
+        static DWORD s_at = 0;
+        if (s_at && now - s_at < 3000)
+        {
+            return false;
+        }
+        s_at = now;
+        DoorAhead ahead{self->x, self->y, x, y};
+        const float range = g_doorRange;
+        g_doorRange = 6.0f * kTileSize;
+        AimAssist::Target door;
+        const bool found = AimAssist::findObject(g_doorRange, &acceptDoorAhead, &ahead, door);
+        g_doorRange = range;
+        if (!found)
+        {
+            return false;
+        }
+        g_doorTried[door.id] = now;
+        LOG("AutoAttack: a shut door on the way ({:x}): opened", door.id);
+        remember("abre una puerta cerrada en el camino");
+        attack(door.id);
+        return true;
+    }
+
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
+        if (doorOnTheWay(now, self, x, y))
+        {
+            g_travel.lastAt = now;
+            return true;
+        }
         if (waitForCompanions(now, self))
         {
             g_travel.lastAt = now;
