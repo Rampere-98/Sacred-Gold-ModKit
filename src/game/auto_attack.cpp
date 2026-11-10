@@ -2797,8 +2797,8 @@ namespace
                 }
                 // Far: the agent's travel; near (15 tiles) or in a house: clicks on him, the game's own path through
                 // the doors, more tries for the walk.
-                const bool near = bestDistance <= 15.0 * kTileSize || best->layer != layer;
-                if (!near)
+                const bool closeBy = bestDistance <= 15.0 * kTileSize || best->layer != layer;
+                if (!closeBy)
                 {
                     if (!travel(now, self, best->x, best->y, g_shopAskAt))
                     {
