@@ -678,7 +678,7 @@ namespace
     // copies equipment 12/13 into the active slot every frame. selectWeaponSlot (the keys 1-5) thiscall(taskbar, slot,
     // 1); setSlotHand thiscall(entry, slot, hand, id, net). Weapon damage by kind (physical, fire, magic, poison):
     // info +0x1C.. min, +0x24.. max; the hero's multiplier of kind k = st+0x96+4k + st+0xA6+4k; an enemy's resistance
-    // = st+0x66+4k x st+0xD6+4k. How a resistance cuts a blow is not known yet: 100 / (100 + r) is taken meanwhile.
+    // = st+0x66+4k x st+0xD6+4k; through it gets dealt^2 / (dealt + resistance) (the manual's formula).
     uintptr_t g_selectSlot = 0, g_setSlotHand = 0;
     using SelectSlot = void(__fastcall*)(void* taskbar, void*, uint32_t slot, uint32_t flag);
     using SetSlotHand = uint8_t(__fastcall*)(uint8_t* entry, void*, uint32_t slot, uint32_t hand, uint32_t id, uint32_t net);
@@ -766,8 +766,11 @@ namespace
                 {
                     mult = 1.0f;
                 }
-                const float cut = target ? 100.0f / (100.0f + resistanceOf(target, k)) : 1.0f;
-                total += d[k] * mult * cut;
+                // What gets through a resistance (the official manual's formula, darkmatters.org topic 3783, via the
+                // web researcher; not yet checked in the exe): dealt^2 / (dealt + resistance), kind by kind.
+                const float dealt = d[k] * mult;
+                const float r = target ? resistanceOf(target, k) : 0.0f;
+                total += dealt > 0.0f ? dealt * dealt / (dealt + r) : 0.0f;
             }
         }
         return total;
