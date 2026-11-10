@@ -24,6 +24,7 @@ namespace CombatLearn
         bool atHero = false;        // aiming at the hero (or what it rides)
         bool atHireling = false;
         bool ranged = false;        // aiming at the hero from beyond the melee look after look
+        bool soon = false;          // within its aggro reach of the hero (Manolito, block N: 600 u): joins the fight
     };
 
     struct Look

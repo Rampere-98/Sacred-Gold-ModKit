@@ -457,7 +457,7 @@ namespace
         {
             const CombatLearn::Foe& f = look.foes[i];
             const Seen& s = g_seen[f.id];
-            if (f.health <= 0 || (anyEngaged && !f.atHero && !f.atHireling && !s.firstHurtAt))
+            if (f.health <= 0 || (anyEngaged && !f.atHero && !f.atHireling && !s.firstHurtAt && !f.soon))
             {
                 continue;
             }

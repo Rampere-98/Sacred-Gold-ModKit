@@ -1522,8 +1522,13 @@ namespace
             const bool current = f.id == g_target;
             {
                 const auto looks = g_farAimLooks.find(f.id);
+                // Within its aggro reach (600 world units, a margin on top) it joins the fight in moments: counted by
+                // the forecast (the player, 2026-11-10: «no consigue identificar cuántos enemigos tiene alrededor»;
+                // 8 around, the forecast took the 2 striking: 104 % foreseen, 201 % lost).
+                const bool soon = foeObject && std::hypot(static_cast<double>(foeObject->x - self->x),
+                                                          static_cast<double>(foeObject->y - self->y)) < 750.0;
                 learnFoes.push_back({f.id, f.health, f.maxHealth, atHero, atHireling,
-                                     looks != g_farAimLooks.end() && looks->second >= 3});
+                                     looks != g_farAimLooks.end() && looks->second >= 3, soon});
             }
             // Given up on: only if it comes clearly nearer than it was then. Seen live (2026-11-09): one 122 px off
             // behind a graveyard's fence, within the melee look, was taken again at once, for minutes on end.
