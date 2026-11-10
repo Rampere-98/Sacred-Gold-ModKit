@@ -1210,25 +1210,23 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
     // seen is judged by the files too (walkable 14, not walkable no way), unknown stays 22.
     if (layer == 0)
     {
-        for (int y = 0; y < h; ++y)
+        std::vector<int8_t> files(static_cast<size_t>(w) * h);
+        WorldTiles::fill(x0, y0, w, h, files.data());
+        for (size_t i = 0; i < files.size(); ++i)
         {
-            for (int x = 0; x < w; ++x)
+            uint8_t& v = step[i];
+            const int b = files[i];
+            if (!v || b < 0)
             {
-                uint8_t& v = step[static_cast<size_t>(y) * w + x];
-                if (!v)
-                {
-                    continue;   // seen blocked
-                }
-                const int g = WorldTiles::ground(0, x0 + x, y0 + y);
-                if (g >= 0 && WorldTiles::road(g) && WorldTiles::walkable(0, x0 + x, y0 + y) == 1)
-                {
-                    v = 6;
-                }
-                else if (v == 22)
-                {
-                    const int walk = WorldTiles::walkable(0, x0 + x, y0 + y);
-                    v = walk == 1 ? 14 : walk == 0 ? 0 : 22;
-                }
+                continue;   // seen blocked, or the files do not know
+            }
+            if ((b & 1) && WorldTiles::road((b >> 1) & 0xF))
+            {
+                v = 6;
+            }
+            else if (v == 22)
+            {
+                v = (b & 1) ? 14 : 0;
             }
         }
     }
@@ -1243,7 +1241,8 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
     // Weighted a little past admissible: fast over open unknown ground, the route still close to the shortest.
     const auto estimate = [&](int x, int y) {
         const int dx = std::abs(x - toX), dy = std::abs(y - toY);
-        return 12 * (dx + dy) - 7 * std::min(dx, dy);
+        // 8 straight, 12 diagonal: nearer the roads' 6 (the code reviewer: 12/17 made the roads count for little).
+        return 8 * (dx + dy) - 4 * std::min(dx, dy);
     };
     using Entry = std::pair<int32_t, int32_t>;
     std::priority_queue<Entry, std::vector<Entry>, std::greater<Entry>> open;

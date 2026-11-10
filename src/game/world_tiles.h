@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 // Whether a walker may stand on any surface tile of the world, read from the game's own files on disk
 // (WORLD\sectors.keyx + sectors.wldx, see docs/AGENT_ADDRESSES.md "Casillas pisables (bloque P)"), not only the 5x5
 // sectors loaded around the hero. Sectors are inflated on demand and kept in a small LRU cache.
@@ -15,6 +17,9 @@ namespace WorldTiles
     // bridge, 0xD town paving, 0xE wooden floor, 0xF gravel, 1 desert, 2 arctic, 3 forest, 4 grass, 5 swamp, 6 lava,
     // 8 dungeon, 9/0xA water. -1 not known or outside the world. Thread-safe.
     int ground(int layer, int tileX, int tileY);
+    // A surface box at once (one lock): per tile -1 not known, 0 not walkable or outside, else bit 0 walkable and
+    // bits 1-4 the ground.
+    void fill(int tileX, int tileY, int w, int h, int8_t* out);
     // A road one walks on to go far: stone or gravel road, a bridge, a town's paving.
     inline bool road(int ground)
     {

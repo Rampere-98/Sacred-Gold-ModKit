@@ -190,8 +190,28 @@ namespace
     }
 }
 
-// The tile's byte (walkable bit 0, ground bits 1-4); -1 not known, -2 outside the world.
-static int tileByte(int layer, int tileX, int tileY);
+// The tile's byte (walkable bit 0, ground bits 1-4); -1 not known, -2 outside the world. The lock held by the caller.
+static int tileByteLocked(int layer, int tileX, int tileY);
+
+static int tileByte(int layer, int tileX, int tileY)
+{
+    std::lock_guard<std::mutex> lock(g_lock);
+    return tileByteLocked(layer, tileX, tileY);
+}
+
+void WorldTiles::fill(int tileX, int tileY, int w, int h, int8_t* out)
+{
+    // One lock for the whole box (the code reviewer: a lock a tile, three a tile, held up a big route by 100 ms).
+    std::lock_guard<std::mutex> lock(g_lock);
+    for (int y = 0; y < h; ++y)
+    {
+        for (int x = 0; x < w; ++x)
+        {
+            const int b = tileByteLocked(0, tileX + x, tileY + y);
+            out[static_cast<size_t>(y) * w + x] = static_cast<int8_t>(b == -1 ? -1 : b < 0 ? 0 : b);
+        }
+    }
+}
 
 int WorldTiles::walkable(int layer, int tileX, int tileY)
 {
@@ -205,13 +225,12 @@ int WorldTiles::ground(int layer, int tileX, int tileY)
     return b < 0 ? -1 : (b >> 1) & 0xF;
 }
 
-static int tileByte(int layer, int tileX, int tileY)
+static int tileByteLocked(int layer, int tileX, int tileY)
 {
     if (layer != 0)
     {
         return -1;
     }
-    std::lock_guard<std::mutex> lock(g_lock);
     if (!open())
     {
         return -1;
