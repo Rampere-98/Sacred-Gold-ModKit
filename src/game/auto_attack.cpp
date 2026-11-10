@@ -3734,8 +3734,10 @@ namespace
                     Gear::foreignRunes());
                 // The hero stays by him while Gear works his window (the live verifier, 2026-11-10: four stable
                 // visits, the hero back on its quest 6 s after the window opened and no «Gear: horse» line).
-                g_craftHoldUntil = now + 15000;
-                if (const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(0x17EEBBC))
+                g_craftHoldUntil = now + 25000;     // a forge of 12 steps takes longer than 15 s (the code reviewer)
+                static bool s_windowsLogged = false;
+                if (const uint8_t* ui = !s_windowsLogged ? *reinterpret_cast<const uint8_t* const*>(0x17EEBBC) : nullptr;
+                    ui && (s_windowsLogged = true))
                 {
                     for (int i = 0; i < 48; ++i)
                     {

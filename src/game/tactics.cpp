@@ -163,11 +163,14 @@ namespace
         {
             return false;
         }
-        const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + (slotKind == 2 ? 0x90 : 0x74));
+        const uint8_t flags = entry[slotKind == 2 ? 0x90 : 0x74];
         if (flags & 2)
         {
             using HasBow = uint8_t(__fastcall*)(const void* creature, void*);
-            return reinterpret_cast<HasBow>(0x54A2A0)(hero, nullptr) != 0;
+            if (!reinterpret_cast<HasBow>(0x54A2A0)(hero, nullptr))
+            {
+                return false;
+            }
         }
         return !(flags & 1);
     }

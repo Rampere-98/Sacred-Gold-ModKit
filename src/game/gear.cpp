@@ -425,6 +425,7 @@ namespace
     }
 
     std::atomic<uint32_t> g_socketBase{0};     // the item kept for the smith while a socketing is wanted
+    bool socketable(uint32_t id);
 
     // At a merchant: one item sold (worse than the worn one for every slot it fits, or not for this class).
     bool sellOne(cCreature* hero, uint8_t* pack)
@@ -438,7 +439,8 @@ namespace
             }
             // Not the item on its way to the smith (the live verifier, 2026-11-10: «589 has 1 free sockets … off to
             // a smith», then «sold 589» at the merchant on the way).
-            if (id == g_socketBase.load())
+            // Nor the gems and runes it is to take (the code reviewer).
+            if (id == g_socketBase.load() || (g_socketBase.load() && socketable(id)))
             {
                 return;
             }
