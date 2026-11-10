@@ -18,7 +18,7 @@ namespace
     struct Settings
     {
         bool enabled = true;
-        bool intent = true, route = true, target = true, aggro = true, doors = true;
+        bool intent = true, route = true, target = true, aggro = false, doors = true;
     } g_settings;
 
     struct Prim
@@ -191,7 +191,7 @@ void AgentOverlay::install()
         g_settings.intent = read(L"Intent", 1);
         g_settings.route = read(L"Route", 1);
         g_settings.target = read(L"Target", 1);
-        g_settings.aggro = read(L"Aggro", 1);
+        g_settings.aggro = read(L"Aggro", 0);   // off (the player, 2026-11-10: «no quiero ver más los overlays de aggro»)
         g_settings.doors = read(L"Doors", 1);
         ModkitMenu::add({"Overlays del agente", &drawMenu, &saveMenu});
         Overlay::addHud(&drawHud);
