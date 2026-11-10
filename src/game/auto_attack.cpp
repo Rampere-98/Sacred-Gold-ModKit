@@ -3364,7 +3364,13 @@ namespace
         {
             return;
         }
-        if (g_intent != Intent::Farm || !g_farmKnown)
+        if (questHere)
+        {
+            // At the quest's goal: still the quest, looking around it (not «explore»: the analyst saw the two
+            // swapping every second, 172 lines in 10 minutes).
+            setIntent(Intent::Quest, "at the quest's goal: looking around it");
+        }
+        else if (g_intent != Intent::Farm || !g_farmKnown)
         {
             // Exploring (the player, 2026-11-10): first the ground unseen, then the loot on it, a fight only in danger
             // (seek off: only those that strike are fought).
