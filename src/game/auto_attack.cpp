@@ -1101,7 +1101,7 @@ namespace
     constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
     constexpr double kRetreatWay = 8 * kTileSize;
     // The hero's last positions (one every 2 s while it moves, the last 2 minutes): the way back for a retreat.
-    std::deque<std::pair<int32_t, int32_t>> g_trail;
+    std::deque<std::pair<int32_t, int32_t>> g_fleeTrail;
 
     void noteTrail(DWORD now, int32_t x, int32_t y, int layer)
     {
@@ -1110,22 +1110,22 @@ namespace
         if (layer != s_layer)
         {
             s_layer = layer;
-            g_trail.clear();    // another floor: the old way back does not lead from here
+            g_fleeTrail.clear();    // another floor: the old way back does not lead from here
         }
         if (now - s_at < 2000)
         {
             return;
         }
         s_at = now;
-        if (!g_trail.empty() && std::hypot(static_cast<double>(x - g_trail.back().first),
-                                           static_cast<double>(y - g_trail.back().second)) < 2 * kTileSize)
+        if (!g_fleeTrail.empty() && std::hypot(static_cast<double>(x - g_fleeTrail.back().first),
+                                           static_cast<double>(y - g_fleeTrail.back().second)) < 2 * kTileSize)
         {
             return;
         }
-        g_trail.emplace_back(x, y);
-        if (g_trail.size() > 60)
+        g_fleeTrail.emplace_back(x, y);
+        if (g_fleeTrail.size() > 60)
         {
-            g_trail.pop_front();
+            g_fleeTrail.pop_front();
         }
     }
 
@@ -1274,7 +1274,7 @@ namespace
             const double ex = cx / close, ey = cy / close;
             double bestScore = 0.0;
             int32_t bx = 0, by = 0;
-            for (const auto& [px, py] : g_trail)
+            for (const auto& [px, py] : g_fleeTrail)
             {
                 const double fromFoes = std::hypot(px - ex, py - ey), fromHero = std::hypot(px - self->x, py - self->y);
                 const double heroFromFoes = std::hypot(self->x - ex, self->y - ey);
