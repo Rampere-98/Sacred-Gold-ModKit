@@ -2125,6 +2125,10 @@ namespace
     // A creature's side (+0x1F0, seen live 2026-11-09): 1 hero, 3 civilians, 4 horses, 7 soldiers are spoken to.
     constexpr size_t kSide = 0x1F0;
     constexpr DWORD kTalkAgainMs = 120000;
+    // Creatures that would not speak, and how often: each time four times as long before the next try (2, 8, 32 min,
+    // then left for good). Seen live (2026-11-10, the analyst): a hireling for hire taken for the quest creature, 41
+    // tries in 24 minutes.
+    std::unordered_map<uint32_t, int> g_talkFails;
     uint32_t g_talkId = 0;
     DWORD g_talkAt = 0;
     int g_talkTries = 0;
@@ -2201,6 +2205,7 @@ namespace
     void forgetTalks()
     {
         g_talkedAt.clear();
+        g_talkFails.clear();    // a quest step done: who would not speak may now
     }
 
     // The companions kept with the hero on a long walk (the player's wish, 2026-11-09: the agent looks after its
@@ -2827,7 +2832,11 @@ namespace
                 return;
             }
             const auto talked = g_talkedAt.find(who);
-            if (talkable(npc) && (talked == g_talkedAt.end() || now - talked->second > kTalkAgainMs))
+            const auto fails = g_talkFails.find(who);
+            const int failed = fails != g_talkFails.end() ? fails->second : 0;
+            const DWORD again = failed >= 4 ? 0xFFFFFFFFu : kTalkAgainMs << (2 * std::max(failed - 1, 0));
+            if (talkable(npc) && !isHireling(who) && failed < 4 &&
+                (talked == g_talkedAt.end() || now - talked->second > again))
             {
                 if (who != g_talkId)
                 {
@@ -2839,7 +2848,9 @@ namespace
                 {
                     if (++g_talkTries > 6)
                     {
-                        LOG("AutoAttack: quest creature {:x} would not speak, left a while", who);
+                        const int times = ++g_talkFails[who];
+                        LOG("AutoAttack: quest creature {:x} would not speak (time {}), left {}", who, times,
+                            times >= 4 ? "for good" : "a while");
                         Findings::note("quest", self->x, self->y, "quest creature {:x} would not speak after 6 tries", who);
                         g_talkedAt[who] = now;
                         g_talkId = 0;
