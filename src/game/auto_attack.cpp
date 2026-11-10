@@ -4340,7 +4340,7 @@ static void writeMind(DWORD now, cCreature* self, int layer, int heroLevel)
     if (g_on)
     {
         node(3, intentSpanish());
-        node(3, std::format("desde hace {} s", (now - g_intentSince) / 1000));
+        node(3, g_intentSince ? std::format("desde hace {} s", (now - g_intentSince) / 1000) : std::string("aún sin decidir"));
     }
     else
     {
