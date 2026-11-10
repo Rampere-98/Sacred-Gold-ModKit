@@ -1562,6 +1562,23 @@ namespace
             setIntent(Intent::Recover, "low on health, no healing potion or a fight foreseen lost: stepping back");
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
                 close);
+            // Down below a quarter by them: those close are not gone back to for 3 min, fought only if they come
+            // into the melee (the analyst, 2026-11-10: an Orc Warrior of level 5 brought the Seraphim to 5-15 of 158
+            // five times in 8 min, the hero healed and went back to it each time).
+            if (health * 4 < maximum)
+            {
+                for (int i = 0; i < count; ++i)
+                {
+                    const float dx = foes[i].x - hx, dy = foes[i].y - hy;
+                    if (dx * dx + dy * dy < range * range)
+                    {
+                        g_unreachable[foes[i].id] = now + 180000;
+                        g_unreachableAt[foes[i].id] = 1e9f;
+                        LOG("AutoAttack: {:x} too strong for now (health {} of {}): not gone back to for 3 min",
+                            foes[i].id, health, maximum);
+                    }
+                }
+            }
         }
         if (close && (!g_retreatWalkAt || now - g_retreatWalkAt >= 1000))
         {
