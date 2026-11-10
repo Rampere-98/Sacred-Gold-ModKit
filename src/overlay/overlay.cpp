@@ -228,7 +228,7 @@ namespace
     }
 
     // One ImGui frame of the open screen; false closes it.
-    bool frame(Overlay::DrawFn draw, Overlay::HudFn hud, HWND window)
+    bool frame(Overlay::DrawFn draw, Overlay::HudFn hud, HWND window, float bufferW, float bufferH)
     {
         {
             std::vector<Message> queue;
@@ -244,6 +244,13 @@ namespace
         ImGuiIO& io = ImGui::GetIO();
         ImGui_ImplDX9_NewFrame();
         ImGui_ImplWin32_NewFrame();
+        // The window may be smaller or larger than the frame the game draws (an agent's copy in a cell of the screen,
+        // the picture scaled by the present; seen live 2026-11-10: the radar in the window's middle): ImGui works in
+        // the back buffer's pixels (the mouse stays in the window's: the menu is meant for the full-size game).
+        if (bufferW > 0.0f && bufferH > 0.0f)
+        {
+            io.DisplaySize = ImVec2(bufferW, bufferH);
+        }
         dropBackendGamepad();
         if (g_gamepadNavigation.load(std::memory_order_relaxed))
         {
@@ -290,7 +297,10 @@ namespace
             }
         }
         const bool imgui = draw || hud;
-        const bool keep = imgui ? frame(draw, hud, window) : true;
+        d9::D3DSURFACE_DESC bufferDesc = {};
+        backBuffer->GetDesc(&bufferDesc);
+        const bool keep = imgui ? frame(draw, hud, window, static_cast<float>(bufferDesc.Width),
+                                        static_cast<float>(bufferDesc.Height)) : true;
 
         d9::IDirect3DSurface9* target = nullptr;
         d9::IDirect3DSurface9* depth = nullptr;
