@@ -1010,8 +1010,12 @@ namespace
             }
         }
         // Low on health, or below 40 % with those striking about to take the rest in moments.
+        // Or the forecast gives the fight under 30 % with health below 60 % (the analyst, 2026-11-10: out of healing
+        // potions at 59 of 158, into another fight of three at 20 % to win).
+        const CombatLearn::Forecast& fc = CombatLearn::forecast();
+        const bool lost = fc.foes > 0 && fc.win < 0.3f && health * 100 <= maximum * 60;
         const bool low = health * 100 <= maximum * c.retreatPercent ||
-                         (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f);
+                         (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f) || lost;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
         if (g_retreatUntil)
         {

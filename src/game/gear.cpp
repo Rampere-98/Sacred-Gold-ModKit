@@ -476,6 +476,65 @@ namespace
         return done;
     }
 
+    // Healing potions (ITEM_FUNCTIONS.md: 0x1433 «Schwacher Heiltrank», 0x1419, 0x1414): how many the backpack holds,
+    // and at a merchant one bought while under 5 (the analyst, 2026-11-10: out of them mid-fight at 59 of 158).
+    bool healingType(uint32_t type)
+    {
+        return type == 0x1433 || type == 0x1419 || type == 0x1414;
+    }
+    int g_healing = -1;     // in the backpack at the last look (-1: not counted yet)
+    constexpr int kWantHealing = 5;
+
+    int countHealing(uint8_t* pack)
+    {
+        int n = 0;
+        eachItem(pack, [&](uint32_t id, int, int, int) { n += healingType(typeOf(id)) ? 1 : 0; });
+        return n;
+    }
+
+    bool buyPotion(cCreature* hero, uint8_t* pack)
+    {
+        if (countHealing(pack) >= kWantHealing)
+        {
+            return false;
+        }
+        void* inv = inventory();
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        bool done = false;
+        for (int page = 0; page < kStockPages && !done; ++page)
+        {
+            uint8_t* stock = entryOf(kFirstStockPage + page);
+            if (!stock)
+            {
+                continue;
+            }
+            eachItem(stock, [&](uint32_t id, int, int w, int h) {
+                if (done || !healingType(typeOf(id)))
+                {
+                    return;
+                }
+                const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
+                uint16_t free = 0;
+                // Potions before the gold kept back: at most a quarter of the gold on one.
+                if (price > gold / 4 || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                {
+                    return;
+                }
+                cObject* item = cObjectManager::instance()->object(id);
+                fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
+                fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
+                if (uint8_t* info = item ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr)
+                {
+                    *reinterpret_cast<uint32_t*>(info + 4) &= ~0x200000u;
+                }
+                fn<PutItem>(g_putItem)(pack, nullptr, free, id, w, h, 1);
+                LOG("Gear: bought healing potion {:x} (type {:x}) for {} gold (of {})", id, typeOf(id), price, gold);
+                done = true;
+            });
+        }
+        return done;
+    }
+
     // At a merchant: one item bought that would be clearly better than what the hero wears, within the gold to spend.
     bool buyOne(cCreature* hero, uint8_t* pack)
     {
@@ -899,6 +958,9 @@ namespace
             if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
             {
             }
+            else if (shop && (g_settings.buy || trip) && buyPotion(hero, pack))
+            {
+            }
             else if (shop && (g_settings.buy || trip) && buyOne(hero, pack))
             {
             }
@@ -919,12 +981,13 @@ namespace
                 acted = false;
             }
             g_full = packFull(pack);
+            g_healing = countHealing(pack);
             g_idleWorks = acted ? 0 : g_idleWorks + 1;
             if (trip && g_idleWorks >= 2)
             {
                 LOG("Gear: merchant trip done (backpack {})", g_full ? "still full: nothing more to sell" : "has room");
                 g_tripDone = true;
-                if (g_full)
+                if (g_full || g_healing == 0)   // no potion sold there either: not straight back
                 {
                     g_noTripUntil = GetTickCount() + 600000;
                 }
@@ -1064,7 +1127,11 @@ bool Gear::packFull()
 bool Gear::wantsShop()
 {
     const DWORD quiet = g_noTripUntil;
-    return g_ready && g_settings.trips && g_full && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0);
+    // A full backpack, or no healing potion left with gold to buy some (and buying on).
+    const cCreature* hero = cObjectManager::instance() ? cObjectManager::instance()->hero() : nullptr;
+    const uint32_t gold = hero ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold) : 0;
+    const bool potions = g_settings.buy && g_healing == 0 && gold >= 200;
+    return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0);
 }
 
 void Gear::tripOpened()
