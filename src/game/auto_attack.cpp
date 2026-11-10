@@ -2225,9 +2225,77 @@ namespace
         double radius = 0.0;
         uint32_t who = 0;           // creature to speak to (or -1)
         uint32_t titleKey = 0, objectiveKey = 0;
+        int32_t number = 0;         // the quest's number (record +0x08), journal goals only
+        int tier = 0;               // 2 a deadline running, 1 before it is lost, 0 normal, -1 last
+        int32_t minutesLeft = -1;   // game minutes to its deadline, -1 none
         double distance = 0.0;
         bool blocked = false;
     };
+
+    // The quest's number (Manolito's block X, 2026-11-10): DQ_<n> is n, R<rr>NQ<qq> is 100 + 50*rr + qq.
+    constexpr int32_t rq(int32_t region, int32_t quest)
+    {
+        return 100 + 50 * region + quest;
+    }
+    // From the quest reader's table (docs/QUESTS.md, 2026-11-10): 1 = do before it is lost or because it opens
+    // something (the Book of Wisdom: rune swaps and the combo master), -1 = leave for last (the Riddle in the Desert,
+    // Pure Water before the Whiskey Supplier, Moca not to be fought...).
+    int questPriority(int32_t number)
+    {
+        static constexpr int32_t kFirst[] = {15009, 15015, rq(2, 4), rq(3, 1), rq(5, 1), rq(5, 2),
+                                             rq(7, 3),  rq(12, 2), rq(22, 1), rq(24, 11)};
+        static constexpr int32_t kLast[] = {10259, 10260, rq(6, 2), rq(13, 1), rq(22, 3)};
+        if (std::find(std::begin(kFirst), std::end(kFirst), number) != std::end(kFirst))
+        {
+            return 1;
+        }
+        if (std::find(std::begin(kLast), std::end(kLast), number) != std::end(kLast))
+        {
+            return -1;
+        }
+        return 0;
+    }
+
+    // The game minutes left on a quest's deadline, -1 if none (Manolito's block W2, 2026-11-10): the script's
+    // timers at [0xAA4540] +0x2C..+0x30, 0x4C bytes each (+0 key = the quest's number, +4 length and +8 start in
+    // game minutes); the clock's date at +0x18 (u32 year, u16 month, day, hour, minute). Timers of 6 h or less are
+    // a scene's pauses, not deadlines. 24 game minutes go by in a real one.
+    int32_t deadlineLeft(int32_t number)
+    {
+        const uint8_t* clk = *reinterpret_cast<const uint8_t* const*>(0xAA4540);
+        if (!clk || number <= 0)
+        {
+            return -1;
+        }
+        const auto begin = *reinterpret_cast<const uint8_t* const*>(clk + 0x2C);
+        const auto end = *reinterpret_cast<const uint8_t* const*>(clk + 0x30);
+        constexpr size_t kTimer = 0x4C;
+        if (!begin || end <= begin || (end - begin) % kTimer || (end - begin) / kTimer > 256)
+        {
+            return -1;
+        }
+        const auto u16 = [&](size_t at) { return static_cast<int64_t>(*reinterpret_cast<const uint16_t*>(clk + at)); };
+        const int64_t nowMin =
+            u16(0x22) +
+            60 * (u16(0x20) + 24 * (u16(0x1E) + 30 * (u16(0x1C) + 12 * static_cast<int64_t>(
+                                                                         *reinterpret_cast<const uint32_t*>(clk + 0x18)))));
+        int64_t best = -1;
+        for (const uint8_t* t = begin; t < end; t += kTimer)
+        {
+            const int32_t key = *reinterpret_cast<const int32_t*>(t);
+            const int64_t length = *reinterpret_cast<const int32_t*>(t + 4), start = *reinterpret_cast<const int32_t*>(t + 8);
+            if (key != number || length <= 360)
+            {
+                continue;
+            }
+            const int64_t left = start + length - nowMin;
+            if (left > 0 && (best < 0 || left < best))
+            {
+                best = left;
+            }
+        }
+        return best > 0x7FFFFFFF ? 0x7FFFFFFF : static_cast<int32_t>(best);
+    }
     std::vector<QuestGoal> g_questBook;     // rebuilt by questTarget, nearest first
     int g_questsDone = 0, g_questsFailed = 0;
     // The yellow "?!" / "!" signs of the last pass (creatures the hero can speak to now), on the hero's layer.
@@ -2279,6 +2347,9 @@ namespace
                                                                          : 0xFFFFFFFFu;
                 g.titleKey = *reinterpret_cast<const uint32_t*>(r + 0x24);
                 g.objectiveKey = *reinterpret_cast<const uint32_t*>(r + 0x28);
+                g.number = *reinterpret_cast<const int32_t*>(r + 0x08);
+                g.minutesLeft = deadlineLeft(g.number);
+                g.tier = g.minutesLeft > 0 ? 2 : questPriority(g.number);
                 g_questBook.push_back(g);
             }
             // A step done or failed (the journal moved on): who was spoken to lately may have the next one at once.
@@ -2323,6 +2394,16 @@ namespace
             {
                 return !a.blocked;
             }
+            // The quests first by their weight (QUESTS.md and the deadlines), then the nearest: one with a
+            // deadline running, the soonest first; one that is lost if left; the rest; those for last.
+            if (a.tier != b.tier)
+            {
+                return a.tier > b.tier;
+            }
+            if (a.tier == 2 && a.minutesLeft != b.minutesLeft)
+            {
+                return a.minutesLeft < b.minutesLeft;
+            }
             return a.distance < b.distance;
         });
         if (g_questBook.empty() || g_questBook.front().blocked)
@@ -2343,11 +2424,12 @@ namespace
         if (pick != told)
         {
             told = pick;
-            LOG("AutoAttack: quest book: {} goals ({} done, {} failed), going for the nearest: {} at {:.0f} tiles",
+            LOG("AutoAttack: quest book: {} goals ({} done, {} failed), going for: {} {} (weight {}, {} game min left) "
+                "at {:.0f} tiles",
                 g_questBook.size(), g_questsDone, g_questsFailed,
                 g.kind == GoalKind::Journal ? (g.main ? "main quest" : "side quest")
                                             : g.kind == GoalKind::Offer ? "a quest offered" : "a report",
-                g.distance / kTileSize);
+                g.number, g.tier, g.minutesLeft, g.distance / kTileSize);
         }
         return true;
     }
@@ -2360,7 +2442,7 @@ namespace
             ImGui::TextDisabled("Ninguna misión en curso ni ofrecida a la vista.");
             return;
         }
-        ImGui::TextDisabled("En orden de cercanía; la primera es la que sigue el agente.");
+        ImGui::TextDisabled("Por peso (plazo, antes de perderse, normal, al final) y cercanía; la primera es la que sigue el agente.");
         int n = 0;
         for (const QuestGoal& g : g_questBook)
         {
