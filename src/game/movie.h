@@ -8,4 +8,8 @@ namespace Movie
 {
     // Hooks the game's movie functions; call inside a Patch transaction.
     void install();
+
+    // While the game's own movie loop plays with the agent on: the state its key poll reads (Escape down once, then
+    // all up), true if it is one of them.
+    bool agentKey(int key, short& state);
 }

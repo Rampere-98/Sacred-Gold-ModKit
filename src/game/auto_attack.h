@@ -17,4 +17,7 @@ namespace AutoAttack
 
     // Once per presented frame, on the presenting thread.
     void onFrame();
+
+    // The agent plays (F11 / the menu's «Activo ahora»).
+    bool on();
 }

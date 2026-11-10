@@ -5,6 +5,7 @@
 #include "input/input_mode.h"
 #include "overlay/overlay.h"
 #include "config/auto_attack.h"
+#include "game/movie.h"
 #include "config/display.h"
 #include "log.h"
 #include "patch.h"
@@ -46,6 +47,10 @@ namespace
     SHORT WINAPI hookGetAsyncKeyState(int key)
     {
         const SHORT state = g_origGetAsyncKeyState(key);   // also consumes the "pressed since last call" bit
+        if (short agent = 0; Movie::agentKey(key, agent))
+        {
+            return agent;
+        }
         if (!active() || Overlay::isOpen())
         {
             return 0;

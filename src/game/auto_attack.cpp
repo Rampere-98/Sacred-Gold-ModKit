@@ -2099,6 +2099,17 @@ namespace
         }
     }
 
+    // Hostile creatures near the hero on the surface (40 tiles), from the world pass each second: the explorer keeps
+    // clear of those not after it yet (Manolito, block N: a creature fixes on the hero within 600 u, 11.2 tiles, and
+    // a pack (+0x24D its leader) comes as one; gives up beyond 1500 u, 27.9 tiles).
+    struct AggroFoe
+    {
+        int32_t x, y;
+        bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
+    };
+    std::vector<AggroFoe> g_aggroFoes;
+    constexpr double kAggroTiles = 13.0;
+
     void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY, int heroLevel, uint8_t heroLayer)
     {
         if (g_questMarksAt && now - g_questMarksAt < 1000)
@@ -2112,6 +2123,7 @@ namespace
         g_farmBuilding.clear();
         g_chestBuilding = 0;
         g_chestBest = 0.0;
+        g_aggroFoes.clear();
         const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
         const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
         const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
@@ -2137,6 +2149,15 @@ namespace
                         {
                             const int tx = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x1C) / kTileSize);
                             const int ty = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x20) / kTileSize);
+                            const int32_t fx = *reinterpret_cast<const int32_t*>(o + 0x1C);
+                            const int32_t fy = *reinterpret_cast<const int32_t*>(o + 0x20);
+                            if (heroLayer == 0 && std::hypot(static_cast<double>(fx - heroX), static_cast<double>(fy - heroY)) <
+                                                      40.0 * kTileSize)
+                            {
+                                const int32_t target = *reinterpret_cast<const int32_t*>(o + 0x251);
+                                const uint32_t ai = *reinterpret_cast<const uint32_t*>(o + 0x1F4);
+                                g_aggroFoes.push_back({fx, fy, target >= 1 && target <= 0x10 && (ai & 4) && !(ai & 0x100)});
+                            }
                             FarmCount& f = g_farmBuilding[(tx >> 6) * 1024 + (ty >> 6)];
                             ++f.count;
                             f.sumX += tx;
@@ -3402,6 +3423,9 @@ namespace
         }
         bool found = !rethink;
         int32_t bestX = keptX, bestY = keptY;
+        const bool avoidAggro = g_intent != Intent::Farm && !Config::autoAttack.seek && !g_aggroFoes.empty();
+        float aggroCost[16] = {};
+        int bestK = -1;
         for (int k = 0; k < 16 && rethink; ++k)
         {
             const double a = k * 3.14159265 / 8.0;
@@ -3417,6 +3441,31 @@ namespace
                 const double reach = d * 3.0 * kTileSize;
                 cost += MapMemory::cost(layer, static_cast<int32_t>(self->x + ux * reach),
                                         static_cast<int32_t>(self->y + uy * reach)) / d;
+            }
+            // Exploring (not farming nor seeking a fight): the ways within reach of foes not after the hero yet cost
+            // (the player: «informar al agente el rango de aggro de los enemigos, para no meterse en peleas
+            // innecesariamente»); a pack, each of it.
+            if (avoidAggro)
+            {
+                float closeBy = 0.0f;
+                for (const AggroFoe& f : g_aggroFoes)
+                {
+                    if (f.onHero)
+                    {
+                        continue;
+                    }
+                    for (int d = 1; d <= 4; ++d)
+                    {
+                        const double px = self->x + ux * d * 3.0 * kTileSize, py = self->y + uy * d * 3.0 * kTileSize;
+                        if (std::hypot(f.x - px, f.y - py) < kAggroTiles * kTileSize)
+                        {
+                            closeBy += 0.6f / d;
+                            break;
+                        }
+                    }
+                }
+                cost += std::min(closeBy, 4.0f);
+                aggroCost[k] = std::min(closeBy, 4.0f);
             }
             // Turning away from the way it goes costs a little; turning back, more.
             const double turn = std::fabs(std::remainder(a - g_roamAngle, 2.0 * 3.14159265));
@@ -3435,6 +3484,22 @@ namespace
                 bestX = endX;
                 bestY = endY;
                 found = true;
+                bestK = k;
+            }
+        }
+        if (avoidAggro && bestK >= 0)
+        {
+            static DWORD s_aggroToldAt = 0;
+            float worst = 0.0f;
+            for (float c : aggroCost)
+            {
+                worst = std::max(worst, c);
+            }
+            if (worst > 0.0f && now - s_aggroToldAt > 30000)
+            {
+                s_aggroToldAt = now;
+                LOG("AutoAttack: {} hostile near, not after the hero yet: exploring around them (the way taken {:.1f} "
+                    "of aggro, the worst {:.1f})", g_aggroFoes.size(), aggroCost[bestK], worst);
             }
         }
         MapMemory::save(now, 60000);
@@ -3963,8 +4028,25 @@ void AutoAttack::install()
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
 
+bool AutoAttack::on()
+{
+    return g_on;
+}
+
 void AutoAttack::onFrame()
 {
+    // The game's cinema mode (cUI_Manager +8 bit 0x10, the script's SetCinemaMode; Manolito, block M): not to be
+    // skipped (the hero held for the script's NPC_Goto, MoveOver, Teleport); the agent stands, only noted here.
+    if (cUI_Manager* ui = cUI_Manager::instance())
+    {
+        static bool s_cinema = false;
+        const bool cinema = (ui->flags & cUI_Manager::cinematic) != 0;
+        if (cinema != s_cinema)
+        {
+            s_cinema = cinema;
+            LOG("AutoAttack: cinema mode {} (the script's scene: the agent stands)", cinema ? "on" : "off");
+        }
+    }
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
     const std::unique_lock lock(frameLock, std::try_to_lock);

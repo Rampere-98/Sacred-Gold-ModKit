@@ -1,4 +1,5 @@
 #include "game/movie.h"
+#include "game/auto_attack.h"
 #include "game/device_proxy.h"
 #include "game/frame_hooks.h"
 #include "game/sacred_addr.h"
@@ -35,6 +36,7 @@ namespace
 
     OpenStreamFn g_origOpenStream = nullptr;
     PlayVideoFn g_origPlayVideo = nullptr;
+    std::atomic<int> g_agentSkip{0};    // 1 Escape to read down, 2 read down already: up from then on
 
     // Not exported by every SDK library this links against.
     constexpr GUID kClsidWicImagingFactory = {0xcacaf262, 0x9370, 0x4615, {0xa1, 0x3b, 0x9f, 0x55, 0x39, 0xda, 0x4c, 0x0a}};
@@ -160,6 +162,12 @@ namespace
     // The keys and buttons the game's own loop skips movies with, while the game has the focus.
     bool skipPressed(HWND window)
     {
+        // The agent skips them (the player, 2026-11-10: «saltar las cinemáticas automáticamente»): movies carry no
+        // script (Manolito, block M), nothing lost.
+        if (AutoAttack::on())
+        {
+            return true;
+        }
         if (window && GetForegroundWindow() != window)
         {
             return false;
@@ -942,7 +950,16 @@ namespace
             return play(self, ddraw, primary, *file);
         }
         UiCanvas::Scope ui;     // the game's 1024x768 quad goes into the UI canvas
-        return g_origPlayVideo(self, edx, ddraw, primary, stream, w, h);
+        // The game's own loop (amstream): it polls GetAsyncKeyState each frame for Escape, Space and the buttons, then
+        // waits for Escape and Space to be up (0x6A147C); with the agent on, Escape reads down once, then up.
+        g_agentSkip = AutoAttack::on() ? 1 : 0;
+        const int result = g_origPlayVideo(self, edx, ddraw, primary, stream, w, h);
+        if (g_agentSkip)
+        {
+            LOG("Movie: skipped by the agent (the game's player)");
+        }
+        g_agentSkip = 0;
+        return result;
     }
 }
 
@@ -950,4 +967,20 @@ void Movie::install()
 {
     Patch::hook(g_origOpenStream, Addr::openMovieStream, &hookOpenStream, "openMovieStream");
     Patch::hook(g_origPlayVideo, Addr::playVideo, &hookPlayVideo, "playVideo");
+}
+
+bool Movie::agentKey(int key, short& state)
+{
+    if (!g_agentSkip || (key != VK_ESCAPE && key != VK_SPACE && key != VK_LBUTTON && key != VK_RBUTTON))
+    {
+        return false;
+    }
+    if (key == VK_ESCAPE && g_agentSkip == 1)
+    {
+        g_agentSkip = 2;
+        state = static_cast<short>(0x8000);
+        return true;
+    }
+    state = 0;
+    return true;
 }
