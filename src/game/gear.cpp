@@ -1013,6 +1013,151 @@ namespace
         return n;
     }
 
+    // The swap at a combo master's window (Manolito, AGENT_ADDRESSES «Canje por código, sin ratón (bloque S)»): the
+    // window cUI_Master is UI window 14 ([[0x17EEBBC] + 0xB8], open while +0x10 & 1); its tab sheet at +0x154 (pages
+    // vector +0x78, entries 0x18 with the page at +0x14, the active page u16 +0x84; 1 = the runes' page,
+    // cUI_MasterLotto vtable 0x896834), setActivePage 0x729260 thiscall(tab, u16). The page's 4 input slots at
+    // +0x24C + i*0x114 start with a drag descriptor {u16 1, u16 0x1C, u32 item id, 0, 0}; refresh 0x6D3FD0 (the price
+    // to +0x7B4); the button: pay 0x57FD80(-price) (the game's own gold change, its anti-cheat copies right), doSwap
+    // 0x6D4520 (3 runes -> one of the hero's class), the new rune's id at +0x798 (+0x794..+0x7A7 its descriptor), into
+    // the backpack with findFree/putItem. show(0) of the page (vtable +0x24) gives back whatever is still in the slots.
+    constexpr uintptr_t kUiManager = 0x17EEBBC, kMasterVtable = 0x896798, kLottoVtable = 0x896834;
+    constexpr uintptr_t kSetActivePage = 0x729260, kLottoRefresh = 0x6D3FD0, kDoSwap = 0x6D4520;
+    constexpr size_t kSlot0 = 0x24C, kSlotSize = 0x114, kResult = 0x794, kPrice = 0x7B4;
+    using SetActivePage = void(__fastcall*)(uint8_t* tab, void*, uint16_t page);
+    using UiCall = void(__fastcall*)(uint8_t* ui, void*);
+    using UiShow = void(__fastcall*)(uint8_t* ui, void*, int show);
+    int g_swapsDone = 0;
+
+    uint8_t* masterWindow()
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        uint8_t* master = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xB8) : nullptr;
+        if (!master || *reinterpret_cast<const uintptr_t*>(master) != kMasterVtable ||
+            !(*reinterpret_cast<const uint32_t*>(master + 0x10) & 1))
+        {
+            return nullptr;
+        }
+        return master;
+    }
+
+    // One step of the swap a frame; true while the master's window holds the agent.
+    bool swapRunes(cCreature* hero, uint8_t* pack)
+    {
+        static DWORD s_openAt = 0;
+        static bool s_told = false;
+        uint8_t* master = masterWindow();
+        if (!master)
+        {
+            s_openAt = 0;
+            s_told = false;
+            return false;
+        }
+        const DWORD now = GetTickCount();
+        if (!s_openAt)
+        {
+            s_openAt = now;
+        }
+        uint8_t* tab = master + 0x154;
+        const auto* pages = *reinterpret_cast<uint8_t* const*>(tab + 0x78);
+        const auto* pagesEnd = *reinterpret_cast<uint8_t* const*>(tab + 0x7C);
+        uint8_t* lotto = pages && pagesEnd - pages >= 2 * 0x18 ? *reinterpret_cast<uint8_t* const*>(pages + 0x18 + 0x14) : nullptr;
+        if (!lotto || *reinterpret_cast<const uintptr_t*>(lotto) != kLottoVtable)
+        {
+            if (!s_told)
+            {
+                s_told = true;
+                LOG("Gear: combo master's window open, but no runes' page found (pages {})", (pagesEnd - pages) / 0x18);
+            }
+            return now - s_openAt < 10000;
+        }
+        if (*reinterpret_cast<const uint16_t*>(tab + 0x84) != 1)
+        {
+            LOG("Gear: combo master's window open: to the runes' page");
+            fn<SetActivePage>(kSetActivePage)(tab, nullptr, 1);
+            return true;
+        }
+        // The swap's rune: into the backpack.
+        if (const uint32_t made = *reinterpret_cast<const uint32_t*>(lotto + kResult + 4))
+        {
+            int w = 0, h = 0;
+            uint16_t free = 0;
+            if (sizeOf(made, w, h) && fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+            {
+                fn<PutItem>(g_putItem)(pack, nullptr, free, made, w, h, 1);
+                std::memset(lotto + kResult, 0, 0x14);
+                *reinterpret_cast<uint32_t*>(lotto + kPrice) = 0;
+                fn<UiCall>(kLottoRefresh)(lotto, nullptr);
+                ++g_swapsDone;
+                LOG("Gear: rune swap done: new rune {:x} (type {:x}) in the backpack ({} swaps)", made, typeOf(made),
+                    g_swapsDone);
+                g_runesTried.erase(made);
+            }
+            else
+            {
+                LOG("Gear: the swap's rune {:x}: no room in the backpack; given back on closing", made);
+                fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(lotto))[0x24 / 4])(lotto, nullptr, 0);
+            }
+            return true;
+        }
+        int filled = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            filled += *reinterpret_cast<const uint32_t*>(lotto + kSlot0 + i * kSlotSize + 4) ? 1 : 0;
+        }
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        const uint32_t price3 = *reinterpret_cast<const uint32_t*>(0xAD4B2C + 3 * 4);
+        if (filled < 3 && countForeignRunes(hero, pack) + filled >= 3 && gold >= price3 + 300)
+        {
+            // Another rune of another class into the next free slot.
+            cObjectManager* objects = cObjectManager::instance();
+            uint32_t rune = 0;
+            eachItem(pack, [&](uint32_t id, int, int, int) {
+                const auto* o = rune || !objects ? nullptr : reinterpret_cast<const uint8_t*>(objects->object(id));
+                if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && !(flagsOf(id) & kQuestItem) &&
+                    fn<CanUse>(g_canUse)(hero, nullptr, id, 1) == 0)
+                {
+                    rune = id;
+                }
+            });
+            for (int i = 0; rune && i < 4; ++i)
+            {
+                uint8_t* slot = lotto + kSlot0 + i * kSlotSize;
+                if (*reinterpret_cast<const uint32_t*>(slot + 4))
+                {
+                    continue;
+                }
+                fn<RemoveItem>(g_removeItem)(pack, nullptr, rune, 1);
+                std::memset(slot, 0, 0x14);
+                *reinterpret_cast<uint16_t*>(slot) = 1;
+                *reinterpret_cast<uint16_t*>(slot + 2) = 0x1C;
+                *reinterpret_cast<uint32_t*>(slot + 4) = rune;
+                fn<UiCall>(kLottoRefresh)(lotto, nullptr);
+                LOG("Gear: rune {:x} (type {:x}, another class) into the swap's slot {}", rune, typeOf(rune), i + 1);
+                return true;
+            }
+        }
+        if (filled == 3)
+        {
+            const uint32_t price = *reinterpret_cast<const uint32_t*>(0xAD4B2C + filled * 4);
+            if (gold >= price && price && price < 100000)
+            {
+                fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
+                fn<UiCall>(kDoSwap)(lotto, nullptr);
+                fn<UiCall>(kLottoRefresh)(lotto, nullptr);
+                LOG("Gear: 3 runes of other classes swapped for {} gold (one of the hero's class)", price);
+                return true;
+            }
+        }
+        // Nothing more to swap: whatever is in the slots back to the backpack, the window closed.
+        LOG("Gear: rune swaps over ({} done, {} runes of other classes left): closing the master's window", g_swapsDone,
+            countForeignRunes(hero, pack));
+        fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(lotto))[0x24 / 4])(lotto, nullptr, 0);
+        fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(master))[0x24 / 4])(master, nullptr, 0);
+        g_foreignRunes = countForeignRunes(hero, pack);
+        return true;
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1034,7 +1179,10 @@ namespace
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
-            if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
+            if (g_settings.runes && g_canUse && swapRunes(hero, pack))
+            {
+            }
+            else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
             {
             }
             else if (shop && (g_settings.buy || trip) && buyPotion(hero, pack))
