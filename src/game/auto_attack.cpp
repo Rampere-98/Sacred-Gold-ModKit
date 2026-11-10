@@ -437,6 +437,10 @@ namespace
     // cObject3D; the village's open with a click). Only shut ones a key or a click opens (their trigger, below): a door is
     // used, as the player's click on it does, when the hero is stuck, the nearest one not tried for 2 minutes.
     std::unordered_map<uint32_t, DWORD> g_doorTried;
+    // After a click on a door, the hero is let walk to it and use it (a diagnosis of the logs, 2026-11-10: the Daemon
+    // 14 min in a merchant's house, a Seraphim 10 min in a cave: each door click overridden 0.13-3.6 s later by the
+    // roam's, the quest's or the shop's own walk, the door never reached).
+    DWORD g_doorHoldUntil = 0;
     float g_doorRange = 12.0f * 53.66563f;
 
     bool acceptDoor(uint32_t id, void*)
@@ -3257,6 +3261,7 @@ namespace
                 LOG("AutoAttack: stuck guard: a door near ({:x}): used, as a click on it", door.id);
                 Findings::note("door", self->x, self->y, "stuck: door {:x} used", door.id);
                 attack(door.id);
+                g_doorHoldUntil = now + 6000;
                 return true;
             }
         }
@@ -3394,6 +3399,10 @@ namespace
         {
             return;
         }
+        if (static_cast<int>(now - g_doorHoldUntil) < 0)
+        {
+            return;     // on the way to the door just clicked
+        }
         // Shut in with a door that opens near (the player, 2026-11-10: «la cueva tiene puertas que el agente no sabe
         // abrir»; the cave was worth staying in, only the way on was shut): opened at once, the way on before the way
         // out, every 8 s at most, each door once in 2 minutes.
@@ -3413,6 +3422,7 @@ namespace
                 LOG("AutoAttack: shut in, a door that opens near ({:x}): opened, the way on", door.id);
                 Findings::note("door", self->x, self->y, "shut in: door {:x} opened", door.id);
                 attack(door.id);
+                g_doorHoldUntil = now + 6000;
                 return;
             }
         }
@@ -3560,6 +3570,24 @@ namespace
                         best = &m;
                         bestDistance = d;
                     }
+                }
+                // The quests are the game's progress (the player, 2026-11-10: «el objetivo principal del agente siempre
+                // tiene que ser las misiones»): a combo, a rune swap, a socket or a horse is no trip away from one,
+                // only when the craftsman is at hand (40 tiles) or no quest is open.
+                int32_t qx = 0, qy = 0;
+                double qr = 0.0;
+                uint32_t qwho = 0;
+                const bool questOpen = Config::autoAttack.quests && questTarget(self->x, self->y, qx, qy, qr, qwho);
+                if (best && questOpen && bestDistance > 40.0 * kTileSize)
+                {
+                    static DWORD s_toldAt = 0;
+                    if (!s_toldAt || now - s_toldAt > 300000)
+                    {
+                        s_toldAt = now;
+                        LOG("AutoAttack: a craftsman {:.0f} tiles off: the quest first, he waits till one is near",
+                            bestDistance / kTileSize);
+                    }
+                    best = nullptr;
                 }
                 if (best)
                 {
