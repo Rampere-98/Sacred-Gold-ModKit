@@ -827,7 +827,12 @@ namespace
     // its kind, the bow's for the Wood Elf): the others are judged by their estimate times theirs (or the mean of
     // those known). Without it the estimate ran 1.5 times the panel and the slots swapped every 5-10 s (the analyst,
     // 2026-11-10: 11 switches in 8 minutes, the active slot 0.67 of itself idle).
+    // Still the ping-pong (the analyst, 2026-11-10 17:14: the Dwarf 11 switches in 4 min, the active slot 0.5-0.64 of
+    // itself idle): the panel lags a switch, so a ratio learned then was the other weapon's. Now learned only once
+    // the panel has settled (3 s after a switch), and every slot, the active one too, judged the same way (its
+    // estimate times its ratio), so none looks better only for being idle.
     std::unordered_map<uint32_t, float> g_panelRatio;
+    DWORD g_slotSwitchAt = 0;
 
     // A slot's damage from its weapons alone (multipliers by kind, through the target's resistances).
     float estimateDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
@@ -877,7 +882,7 @@ namespace
                 const float r = target ? resistanceOf(target, k) : 0.0f;
                 panel += dealt > 0.0f ? dealt * dealt / (dealt + r) : 0.0f;
             }
-            if (weapon && estimate > 1.0f && panel > 0.0f)
+            if (weapon && estimate > 1.0f && panel > 0.0f && GetTickCount() - g_slotSwitchAt > 3000)
             {
                 const float ratio = std::clamp(panel / estimate, 0.1f, 10.0f);
                 auto [it, fresh] = g_panelRatio.try_emplace(weapon, ratio);
@@ -886,7 +891,10 @@ namespace
                     it->second = it->second * 0.8f + ratio * 0.2f;
                 }
             }
-            return panel;
+            if (!weapon || !g_panelRatio.count(weapon))
+            {
+                return panel;
+            }
         }
         float ratio = 0.0f;
         if (const auto it = g_panelRatio.find(weapon); it != g_panelRatio.end())
@@ -1632,11 +1640,12 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         s_toldAt = GetTickCount();
         LOG("Gear: weapon slots against {:x}: {}(active {})", targetId, each, active + 1);
     }
-    // Only for a clear gain (15 %): no switching back and forth over a hair.
-    if (best == active || bestDamage < current * 1.15f + 0.5f)
+    // Only for a clear gain (15 %), and not within 20 s of the last switch: no switching back and forth.
+    if (best == active || bestDamage < current * 1.15f + 0.5f || GetTickCount() - g_slotSwitchAt < 20000)
     {
         return false;
     }
+    g_slotSwitchAt = GetTickCount();
     LOG("Gear: weapon slot {} -> {} against {:x} (expected damage {:.0f} -> {:.0f}; its resistances {:.0f}/{:.0f}/{:.0f}/{:.0f})",
         active + 1, best + 1, targetId, current, bestDamage, resistanceOf(target, 0), resistanceOf(target, 1),
         resistanceOf(target, 2), resistanceOf(target, 3));
