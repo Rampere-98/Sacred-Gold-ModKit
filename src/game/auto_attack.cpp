@@ -3211,7 +3211,9 @@ namespace
         }
         if (g_intent != Intent::Farm || !g_farmKnown)
         {
-            setIntent(Intent::Explore, "nothing to see to around: looking for what there is");
+            // Exploring (the player, 2026-11-10): first the ground unseen, then the loot on it, a fight only in danger
+            // (seek off: only those that strike are fought).
+            setIntent(Intent::Explore, "nothing to see to around: the ground unseen, its loot, a fight only if attacked");
         }
         MapMemory::visit(layer, self->x, self->y);
         // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
