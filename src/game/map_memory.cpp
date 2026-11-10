@@ -2,6 +2,7 @@
 #include "game/combat_learn.h"
 #include "game/click_walk.h"
 #include "game/hero_profile.h"
+#include "game/world_tiles.h"
 #include <queue>
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
@@ -1195,11 +1196,39 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
                 {
                     v = 10;
                 }
+
                 else if (c.scan == 2 || c.blocked >= 2)
                 {
                     v = 0;
                 }
                 step[static_cast<size_t>(ty - y0) * w + (tx - x0)] = v;
+            }
+        }
+    }
+    // The roads first (the player, 2026-11-10: «las carreteras mapeadas y el agente se moviera por ellas»): on the
+    // surface, by the world files (Manolito, block R2), a road tile costs 6, so far walks follow them; ground never
+    // seen is judged by the files too (walkable 14, not walkable no way), unknown stays 22.
+    if (layer == 0)
+    {
+        for (int y = 0; y < h; ++y)
+        {
+            for (int x = 0; x < w; ++x)
+            {
+                uint8_t& v = step[static_cast<size_t>(y) * w + x];
+                if (!v)
+                {
+                    continue;   // seen blocked
+                }
+                const int g = WorldTiles::ground(0, x0 + x, y0 + y);
+                if (g >= 0 && WorldTiles::road(g) && WorldTiles::walkable(0, x0 + x, y0 + y) == 1)
+                {
+                    v = 6;
+                }
+                else if (v == 22)
+                {
+                    const int walk = WorldTiles::walkable(0, x0 + x, y0 + y);
+                    v = walk == 1 ? 14 : walk == 0 ? 0 : 22;
+                }
             }
         }
     }

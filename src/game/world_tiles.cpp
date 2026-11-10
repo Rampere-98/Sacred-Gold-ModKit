@@ -180,7 +180,8 @@ namespace
             // +0x1E (an object or barrier decides) is unknown offline: walkable.
             const uint8_t* tile = raw.data() + kTilesAt + t * kTileSize;
             const uint8_t kind = tile[0x1F] & 0xF;
-            s.walk[t] = kind == 1 || kind == 2 || (tile[0x1E] & 8) ? 0 : 1;
+            // Bit 0 walkable; bits 1-4 the ground (block R2: the high nibble of +0x1F).
+            s.walk[t] = static_cast<uint8_t>((kind == 1 || kind == 2 || (tile[0x1E] & 8) ? 0 : 1) | ((tile[0x1F] >> 4) << 1));
         }
         s.code = code;
         s.lastUse = ++g_clock;
@@ -189,7 +190,22 @@ namespace
     }
 }
 
+// The tile's byte (walkable bit 0, ground bits 1-4); -1 not known, -2 outside the world.
+static int tileByte(int layer, int tileX, int tileY);
+
 int WorldTiles::walkable(int layer, int tileX, int tileY)
+{
+    const int b = tileByte(layer, tileX, tileY);
+    return b == -1 ? -1 : b < 0 ? 0 : (b & 1);
+}
+
+int WorldTiles::ground(int layer, int tileX, int tileY)
+{
+    const int b = tileByte(layer, tileX, tileY);
+    return b < 0 ? -1 : (b >> 1) & 0xF;
+}
+
+static int tileByte(int layer, int tileX, int tileY)
 {
     if (layer != 0)
     {
@@ -202,13 +218,13 @@ int WorldTiles::walkable(int layer, int tileX, int tileY)
     }
     if (tileX < 0 || tileY < 0 || tileX >= kGrid * kSectorTiles || tileY >= kGrid * kSectorTiles)
     {
-        return 0;
+        return -2;
     }
     const int sx = tileX / kSectorTiles, sy = tileY / kSectorTiles;
     const int code = sy * kGrid + sx;
     if (!g_blocks[code].size)
     {
-        return 0;   // no sector there: outside the world
+        return -2;  // no sector there: outside the world
     }
     const Slot* s = sector(code);
     if (!s)

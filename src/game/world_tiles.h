@@ -11,4 +11,13 @@ namespace WorldTiles
     // 1 walkable, 0 not (blocked, deep water, cliff, or outside the world's sector grid), -1 not known (a layer
     // other than the surface, or the files missing or unreadable). Thread-safe.
     int walkable(int layer, int tileX, int tileY);
+    // The tile's ground (Manolito, block R2: the high nibble of tile +0x1F): 0xB stone road, 0xC gravel road, 7 a
+    // bridge, 0xD town paving, 0xE wooden floor, 0xF gravel, 1 desert, 2 arctic, 3 forest, 4 grass, 5 swamp, 6 lava,
+    // 8 dungeon, 9/0xA water. -1 not known or outside the world. Thread-safe.
+    int ground(int layer, int tileX, int tileY);
+    // A road one walks on to go far: stone or gravel road, a bridge, a town's paving.
+    inline bool road(int ground)
+    {
+        return ground == 0xB || ground == 0xC || ground == 7 || ground == 0xD;
+    }
 }
