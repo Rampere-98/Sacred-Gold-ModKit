@@ -822,43 +822,33 @@ namespace
     }
 
     // A slot's expected damage against `target` (null: plain, no resistances), with the hero's multipliers.
-    float slotDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
+    // Each weapon's panel damage over its bare estimate, learned while it is the active one (the skills' bonuses for
+    // its kind, the bow's for the Wood Elf): the others are judged by their estimate times theirs (or the mean of
+    // those known). Without it the estimate ran 1.5 times the panel and the slots swapped every 5-10 s (the analyst,
+    // 2026-11-10: 11 switches in 8 minutes, the active slot 0.67 of itself idle).
+    std::unordered_map<uint32_t, float> g_panelRatio;
+
+    // A slot's damage from its weapons alone (multipliers by kind, through the target's resistances).
+    float estimateDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
     {
         const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
         float total = 0.0f;
-        // The active slot: the hero's own weapon damage (st+0x86 min, st+0x76 max, the panel's «Arma»), which holds
-        // the skills' bonuses for that kind of weapon (a bow for the Wood Elf's ranged skill); the others only by
-        // their weapons. Seen live (2026-11-10): the Wood Elf's bow at 9 against a sword at 30 by the bare weapons.
-        const bool active = slot == *reinterpret_cast<const uint16_t*>(entry + kActiveSlot);
-        for (int hand = 0; hand < (active ? 1 : 2); ++hand)
+        for (int hand = 0; hand < 2; ++hand)
         {
             float d[4] = {};
-            if (active)
-            {
-                for (int k = 0; k < 4; ++k)
-                {
-                    const float lo = *reinterpret_cast<const float*>(st + 0x86 + 4 * k);
-                    const float hi = *reinterpret_cast<const float*>(st + 0x76 + 4 * k);
-                    d[k] = lo >= 0.0f && hi >= 0.0f && hi < 100000.0f ? (lo + hi) * 0.5f : 0.0f;
-                }
-            }
-            else if (!damageOf(slotItem(entry, slot, hand), d))
+            if (!damageOf(slotItem(entry, slot, hand), d))
             {
                 continue;
             }
             for (int k = 0; k < 4; ++k)
             {
-                // The active slot's damage is the panel's, the multipliers in it already (counted twice, the active
-                // slot always won: no switch in 31 fights, the analyst, 2026-11-10).
-                float mult = active ? 1.0f
-                                    : *reinterpret_cast<const float*>(st + 0x96 + 4 * k) +
-                                          *reinterpret_cast<const float*>(st + 0xA6 + 4 * k);
+                float mult = *reinterpret_cast<const float*>(st + 0x96 + 4 * k) +
+                             *reinterpret_cast<const float*>(st + 0xA6 + 4 * k);
                 if (!(mult > 0.1f && mult < 20.0f))
                 {
                     mult = 1.0f;
                 }
-                // What gets through a resistance (the official manual's formula, darkmatters.org topic 3783, via the
-                // web researcher; Manolito found it in the exe, resistDamage 0x43EEE0 with k = 0.5 for the hero):
+                // What gets through a resistance (the official manual's formula; Manolito: resistDamage 0x43EEE0):
                 // dealt^2 / (dealt + resistance), kind by kind.
                 const float dealt = d[k] * mult;
                 const float r = target ? resistanceOf(target, k) : 0.0f;
@@ -866,6 +856,51 @@ namespace
             }
         }
         return total;
+    }
+
+    float slotDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
+    {
+        const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
+        const bool active = slot == *reinterpret_cast<const uint16_t*>(entry + kActiveSlot);
+        const uint32_t weapon = slotItem(entry, slot, 0);
+        const float estimate = estimateDamage(hero, entry, slot, target);
+        if (active)
+        {
+            // The hero's own weapon damage (st+0x86 min, st+0x76 max, the panel's «Arma»), its multipliers in it.
+            float panel = 0.0f;
+            for (int k = 0; k < 4; ++k)
+            {
+                const float lo = *reinterpret_cast<const float*>(st + 0x86 + 4 * k);
+                const float hi = *reinterpret_cast<const float*>(st + 0x76 + 4 * k);
+                const float dealt = lo >= 0.0f && hi >= 0.0f && hi < 100000.0f ? (lo + hi) * 0.5f : 0.0f;
+                const float r = target ? resistanceOf(target, k) : 0.0f;
+                panel += dealt > 0.0f ? dealt * dealt / (dealt + r) : 0.0f;
+            }
+            if (weapon && estimate > 1.0f && panel > 0.0f)
+            {
+                const float ratio = std::clamp(panel / estimate, 0.1f, 10.0f);
+                auto [it, fresh] = g_panelRatio.try_emplace(weapon, ratio);
+                if (!fresh)
+                {
+                    it->second = it->second * 0.8f + ratio * 0.2f;
+                }
+            }
+            return panel;
+        }
+        float ratio = 0.0f;
+        if (const auto it = g_panelRatio.find(weapon); it != g_panelRatio.end())
+        {
+            ratio = it->second;
+        }
+        else if (!g_panelRatio.empty())
+        {
+            for (const auto& [id, r] : g_panelRatio)
+            {
+                ratio += r;
+            }
+            ratio /= static_cast<float>(g_panelRatio.size());
+        }
+        return estimate * (ratio > 0.0f ? ratio : 1.0f);
     }
 
     // Out of a fight: an empty open slot (not the active one) gets a weapon from the backpack, one of a kind the slots
