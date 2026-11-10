@@ -774,7 +774,11 @@ namespace
             }
             for (int k = 0; k < 4; ++k)
             {
-                float mult = *reinterpret_cast<const float*>(st + 0x96 + 4 * k) + *reinterpret_cast<const float*>(st + 0xA6 + 4 * k);
+                // The active slot's damage is the panel's, the multipliers in it already (counted twice, the active
+                // slot always won: no switch in 31 fights, the analyst, 2026-11-10).
+                float mult = active ? 1.0f
+                                    : *reinterpret_cast<const float*>(st + 0x96 + 4 * k) +
+                                          *reinterpret_cast<const float*>(st + 0xA6 + 4 * k);
                 if (!(mult > 0.1f && mult < 20.0f))
                 {
                     mult = 1.0f;
@@ -1143,14 +1147,23 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     const float current = slotDamage(hero, pack, active, target);
     int best = active;
     float bestDamage = current;
+    std::string each;
     for (int slot = 0; slot < open; ++slot)
     {
         const float d = slot == active ? 0.0f : slotDamage(hero, pack, slot, target);
+        each += std::to_string(slot + 1) + "=" + std::to_string(static_cast<int>(slot == active ? current : d)) + " ";
         if (d > bestDamage)
         {
             best = slot;
             bestDamage = d;
         }
+    }
+    // Now and then what each slot was worth (the analyst's measure of the choice).
+    static DWORD s_toldAt = 0;
+    if (open > 1 && (!s_toldAt || GetTickCount() - s_toldAt > 120000))
+    {
+        s_toldAt = GetTickCount();
+        LOG("Gear: weapon slots against {:x}: {}(active {})", targetId, each, active + 1);
     }
     // Only for a clear gain (15 %): no switching back and forth over a hair.
     if (best == active || bestDamage < current * 1.15f + 0.5f)
