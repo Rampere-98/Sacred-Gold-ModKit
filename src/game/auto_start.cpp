@@ -4,6 +4,7 @@
 #include "game/resolution.h"
 #include "input/inject.h"
 #include "log.h"
+#include "sacred/engine.h"
 #include "sacred/ui.h"
 
 #include <cmath>
