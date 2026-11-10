@@ -265,7 +265,7 @@ namespace
             std::fprintf(f, "# SacredBild combat learning: model w0 w1 w2 w3 samples; kind id samples logRate minLevel "
                             "maxLevel killed name\n");
             std::fprintf(f, "model %.5f %.5f %.5f %.5f %d\n", g_w[0], g_w[1], g_w[2], g_w[3], g_samples);
-            std::fprintf(f, "forecast %.5f %.5f %d\n", g_lossBias, g_lossSpread, g_lossSamples);
+            std::fprintf(f, "forecast2 %.5f %.5f %d\n", g_lossBias, g_lossSpread, g_lossSamples);
             for (const auto& [type, k] : g_kinds)
             {
                 std::fprintf(f, "kind %u %d %.5f %d %d %d %s\n", type, k.samples, k.logRate, k.minLevel, k.maxLevel,
