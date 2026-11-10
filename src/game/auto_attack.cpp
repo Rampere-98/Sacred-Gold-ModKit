@@ -4160,6 +4160,34 @@ void AutoAttack::install()
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
 }
 
+// The intent and its reason in Spanish, for the player's overlay (the log keeps English).
+static std::string intentSpanish()
+{
+    static const char* const names[] = {"Explorar", "Farmear", "Misión", "Tienda", "Recuperarse", "Escapar"};
+    static const std::pair<const char*, const char*> reasons[] = {
+        {"low on health", "poca vida, sin poción o pelea prevista perdida: retrocede"},
+        {"shut in", "encerrado: primero las puertas, luego la salida"},
+        {"the backpack full", "mochila llena o sin pociones de curación: a un mercader"},
+        {"the quest's ground is levels", "la zona de la misión es de más nivel: farmear antes"},
+        {"a quest creature", "hablar con un personaje de la misión"},
+        {"a quest's goal", "ir al objetivo de la misión"},
+        {"the quest's goal inside", "el objetivo está dentro de una casa: a su puerta"},
+        {"no quest to see to", "sin misión: experiencia donde los enemigos son de su nivel"},
+        {"at the quest's goal", "en el objetivo de la misión: mira alrededor"},
+        {"nothing to see to", "descubrir terreno, recoger botín, luchar solo si le atacan"},
+        {"an interior of its level", "un interior de su nivel cerca: entra a explorarlo"},
+    };
+    std::string text = names[std::clamp(static_cast<int>(g_intent), 0, 5)];
+    for (const auto& [en, es] : reasons)
+    {
+        if (g_intentWhy.rfind(en, 0) == 0)
+        {
+            return text + ": " + es;
+        }
+    }
+    return g_intentWhy.empty() ? text : text + ": " + g_intentWhy;
+}
+
 // The agent's overlay over the world (AgentOverlay): what it is about, where it goes, what it fights, the aggro reach.
 static void publishOverlay(DWORD now, cCreature* self, float sx, float sy)
 {
@@ -4192,7 +4220,7 @@ static void publishOverlay(DWORD now, cCreature* self, float sx, float sy)
         static const uint32_t colors[] = {IM_COL32(120, 200, 255, 255), IM_COL32(255, 200, 60, 255),
                                           IM_COL32(120, 255, 120, 255), IM_COL32(255, 160, 255, 255),
                                           IM_COL32(255, 120, 90, 255), IM_COL32(255, 80, 80, 255)};
-        AgentOverlay::heroText(std::string(intentName(g_intent)) + ": " + g_intentWhy,
+        AgentOverlay::heroText(intentSpanish(),
                                colors[std::clamp(static_cast<int>(g_intent), 0, 5)]);
     }
     if (AgentOverlay::shown(Layer::Aggro))
@@ -4217,7 +4245,7 @@ static void publishOverlay(DWORD now, cCreature* self, float sx, float sy)
         }
         else if (ClickWalk::walking() && (g_walkX || g_walkY))
         {
-            AgentOverlay::way(g_walkX, g_walkY, IM_COL32(120, 200, 255, 200), intentName(g_intent));
+            AgentOverlay::way(g_walkX, g_walkY, IM_COL32(120, 200, 255, 200), "paso");
         }
     }
     if (AgentOverlay::shown(Layer::Doors) && g_doorAt && now - g_doorAt < 5000)
