@@ -151,6 +151,27 @@ namespace
         return entry && entry[slotKind == 2 ? 0x3C : 0x4C] == 2;
     }
 
+    // Whether an art may be cast on horseback, as the game's order handler decides (Manolito's block U4,
+    // 2026-11-10, ENG 00530036): a weapon art's flags at its record +0x74, a spell's at +0x90; flag 2 wants a bow in
+    // hand (ENG 0054A2A0 thiscall(creature), u8), otherwise flag 1 forbids it. Combos never (the web: «combos
+    // imposibles montado»). Most spells, Hard Hit's variants, the buffs and the bow arts pass; the melee moves do not.
+    bool castMounted(uint16_t slotKind, uint32_t art, const cCreature* hero)
+    {
+        const uintptr_t info = slotKind == 2 ? g_spellInfo : slotKind == 3 ? g_moveInfo : 0;
+        const uint8_t* entry = info && art < 0x10000 ? reinterpret_cast<ArtInfo>(info)(art) : nullptr;
+        if (!entry)
+        {
+            return false;
+        }
+        const uint32_t flags = *reinterpret_cast<const uint32_t*>(entry + (slotKind == 2 ? 0x90 : 0x74));
+        if (flags & 2)
+        {
+            using HasBow = uint8_t(__fastcall*)(const void* creature, void*);
+            return reinterpret_cast<HasBow>(0x54A2A0)(hero, nullptr) != 0;
+        }
+        return !(flags & 1);
+    }
+
     int slotKey(int slot)
     {
         return slot == 4 ? '0' : '6' + slot;
@@ -778,16 +799,14 @@ namespace
             return;
         }
         // Mounted by the horse's place (the player, 2026-11-10: «usa habilidades bloqueadas a caballo saltándose el
-        // bloqueo»: the slot keys go past the game's check, 0x592C50, and the controlled creature stays the hero). The
-        // horse (hero +0x570) stands exactly where its rider does (seen live).
+        // bloqueo»: the slot keys go past the game's own check, and the controlled creature stays the hero). The
+        // horse (hero +0x570) stands where its rider does (seen live). Mounted, only the arts the game allows there.
+        bool mounted = false;
         {
             const uint32_t horseId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
             cObjectManager* objects = cObjectManager::instance();
             const cCreature* horse = horseId && objects ? objects->creature(horseId) : nullptr;
-            if (horse && horse->x == hero->x && horse->y == hero->y)
-            {
-                return;
-            }
+            mounted = horse && std::abs(horse->x - hero->x) <= 3 && std::abs(horse->y - hero->y) <= 3;
         }
         const Config::Tactics& c = Config::tactics;
         const AimAssist::Foe* target = nullptr;
@@ -879,7 +898,7 @@ namespace
         for (int slot = 0; slot < kSlots; ++slot)
         {
             const SlotArt sa = slotArt(player, slot);
-            if (!sa.kind || !sa.art)
+            if (!sa.kind || !sa.art || (mounted && !castMounted(sa.kind, sa.art, hero)))
             {
                 continue;
             }
