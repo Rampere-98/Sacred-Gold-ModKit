@@ -1272,10 +1272,9 @@ namespace
             s_approachSince = 0;
             return;
         }
-        if (!s_approachSince && (now - s_at < 8000 || static_cast<int>(now - s_restUntil) < 0))
-        {
-            return;
-        }
+        // The 8 s between changes holds the mounting only: getting off for an enemy near is never put off (the live
+        // verifier, 2026-11-10: off at 7 and 4 tiles, the gate had held it).
+        const bool gated = now - s_at < 8000 || static_cast<int>(now - s_restUntil) < 0;
         // Mounted: the horse stands exactly where the rider does (seen live 2026-11-10, the player's Gladiator on its
         // horse: same position each second; +0x200 & 0x10, the guess, stayed clear and the agent kept mounting).
         cObjectManager* om = cObjectManager::instance();
@@ -1308,11 +1307,13 @@ namespace
         }
         const bool longWalk = ClickWalk::routing() || g_questTravel;
         uint32_t code = 0;
-        if (!mounted && longWalk && nearest > 20.0 * kTileSize)
+        // Up again once the nearest enemy is 15 tiles off (20 kept the hero on foot 80 % of the time among
+        // enemies all about, the live verifier).
+        if (!mounted && longWalk && nearest > 15.0 * kTileSize && (s_approachSince || !gated))
         {
             code = 0x209;
         }
-        else if (mounted && nearest < 12.0 * kTileSize)
+        else if (mounted && nearest < 12.0 * kTileSize && now - s_at > 1500)
         {
             code = 0x20A;
         }
