@@ -1226,8 +1226,15 @@ namespace
     void ride(DWORD now, const cCreature* self)
     {
         static DWORD s_at = 0;
+        // Walking up to the horse: since when (0: not), and when last told to walk.
+        static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
         const uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
-        if (!horse || now - s_at < 8000 || *(reinterpret_cast<const uint8_t*>(self) + 0x24))
+        if (!horse || *(reinterpret_cast<const uint8_t*>(self) + 0x24))
+        {
+            s_approachSince = 0;
+            return;
+        }
+        if (!s_approachSince && (now - s_at < 8000 || static_cast<int>(now - s_restUntil) < 0))
         {
             return;
         }
@@ -1257,18 +1264,50 @@ namespace
         }
         if (!code)
         {
+            s_approachSince = 0;
             return;
+        }
+        if (code == 0x209)
+        {
+            // Up as a player gets up: the hero walks to the horse first and mounts beside it (the player, 2026-11-10:
+            // the event put the hero onto the horse wherever it stood, «se teleporta encima del caballo»; Manolito's
+            // block U2: a click on one's own horse is no order, the game's pick skips it, so a walk to it).
+            const double off = std::hypot(static_cast<double>(steed->x - self->x), static_cast<double>(steed->y - self->y));
+            if (off > 2.0 * kTileSize)
+            {
+                if (off > 40.0 * kTileSize)
+                {
+                    s_at = now;     // left far behind: no detour back for it now
+                    s_approachSince = 0;
+                    return;
+                }
+                if (!s_approachSince)
+                {
+                    s_approachSince = now;
+                    LOG("AutoAttack: walking to horse {:x} ({:.1f} tiles) to mount it", horse, off / kTileSize);
+                }
+                else if (now - s_approachSince > 20000)
+                {
+                    LOG("AutoAttack: horse {:x} not reached in 20 s ({:.1f} tiles): on foot", horse, off / kTileSize);
+                    s_restUntil = now + 60000;  // a minute before the next try
+                    s_approachSince = 0;
+                    return;
+                }
+                g_doorHoldUntil = now + 1500;   // the roam's travel holds its orders meanwhile
+                if (now - s_approachStep > 1000)
+                {
+                    s_approachStep = now;
+                    g_walkX = steed->x;
+                    g_walkY = steed->y;
+                    Inject::call(&walkThere, nullptr);
+                }
+                return;
+            }
+            s_approachSince = 0;
         }
         s_at = now;
         LOG("AutoAttack: {} horse {:x} ({:.0f} tiles to the nearest enemy)", code == 0x209 ? "mounting" : "getting off", horse,
             nearest < 1e8 ? nearest / kTileSize : 99.0);
-        if (code == 0x209)
-        {
-            // Up as a player gets up: a click on the horse, the hero walks to it and mounts (the player, 2026-11-10:
-            // the event put the hero onto the horse wherever it stood, «se teleporta encima del caballo»).
-            attack(horse);
-            return;
-        }
         g_rideCode = code;
         g_rideHorse = horse;
         Inject::call(&sendRide, nullptr);
