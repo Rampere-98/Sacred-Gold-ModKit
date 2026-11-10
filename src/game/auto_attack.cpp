@@ -43,6 +43,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <deque>
 #include <vector>
 
 using namespace Sacred;
@@ -1099,6 +1100,34 @@ namespace
     DWORD g_noRetreatUntil = 0;     // after a long retreat, fight again for a while first
     constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
     constexpr double kRetreatWay = 8 * kTileSize;
+    // The hero's last positions (one every 2 s while it moves, the last 2 minutes): the way back for a retreat.
+    std::deque<std::pair<int32_t, int32_t>> g_trail;
+
+    void noteTrail(DWORD now, int32_t x, int32_t y, int layer)
+    {
+        static DWORD s_at = 0;
+        static int s_layer = -1;
+        if (layer != s_layer)
+        {
+            s_layer = layer;
+            g_trail.clear();    // another floor: the old way back does not lead from here
+        }
+        if (now - s_at < 2000)
+        {
+            return;
+        }
+        s_at = now;
+        if (!g_trail.empty() && std::hypot(static_cast<double>(x - g_trail.back().first),
+                                           static_cast<double>(y - g_trail.back().second)) < 2 * kTileSize)
+        {
+            return;
+        }
+        g_trail.emplace_back(x, y);
+        if (g_trail.size() > 60)
+        {
+            g_trail.pop_front();
+        }
+    }
 
     // The hero's trail (the player's wish, 2026-11-09: the agent knows where it is and how it got there): a point for
     // each tile walked, so a hero shut in backs out the way it came. Seen live: the Vampiress walked into her start
@@ -1180,6 +1209,32 @@ namespace
         const bool low = health * 100 <= maximum * c.retreatPercent ||
                          (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f) || lost;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
+        // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
+        // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
+        // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
+        int lastBreath = 0;
+        for (int i = 0; i < count; ++i)
+        {
+            const float dx = foes[i].x - hx, dy = foes[i].y - hy;
+            if (dx * dx + dy * dy < (range * 0.45f) * (range * 0.45f) && foes[i].maxHealth > 0 &&
+                foes[i].health * 4 <= foes[i].maxHealth)
+            {
+                ++lastBreath;
+            }
+        }
+        const float toDie = CombatLearn::secondsToDie();
+        const bool aboutWon = (fc.foes > 0 && fc.win >= 0.6f && fc.seconds > 0.0f && fc.seconds < toDie * 0.7f) ||
+                              (close == 1 && lastBreath == 1 && toDie > 2.0f);
+        if (aboutWon)
+        {
+            if (g_retreatUntil)
+            {
+                LOG("AutoAttack: stepping back over: the fight is about won ({:.1f} s to win, {:.1f} s of health)",
+                    fc.seconds, toDie);
+                g_retreatUntil = 0;
+            }
+            return false;
+        }
         if (g_retreatUntil)
         {
             const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
@@ -1213,11 +1268,46 @@ namespace
         }
         if (close && (!g_retreatWalkAt || now - g_retreatWalkAt >= 1000))
         {
-            const double ax = self->x - cx / close, ay = self->y - cy / close;
-            const double len = std::sqrt(ax * ax + ay * ay);
-            const double ux = len > 1.0 ? ax / len : 1.0, uy = len > 1.0 ? ay / len : 0.0;
-            g_walkX = static_cast<int32_t>(self->x + ux * kRetreatWay);
-            g_walkY = static_cast<int32_t>(self->y + uy * kRetreatWay);
+            // Where to: back the way the hero came (the player: «muriendo por no saber huir»; straight away from the
+            // enemies ran it into walls and unknown ground, caught there): of the hero's last positions, the one
+            // farthest from the enemies that lies away from them, at least 8 tiles off; else straight away as before.
+            const double ex = cx / close, ey = cy / close;
+            double bestScore = 0.0;
+            int32_t bx = 0, by = 0;
+            for (const auto& [px, py] : g_trail)
+            {
+                const double fromFoes = std::hypot(px - ex, py - ey), fromHero = std::hypot(px - self->x, py - self->y);
+                const double heroFromFoes = std::hypot(self->x - ex, self->y - ey);
+                if (fromHero < kRetreatWay || fromFoes < heroFromFoes + 4 * kTileSize)
+                {
+                    continue;
+                }
+                const double score = fromFoes - 0.3 * fromHero;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    bx = px;
+                    by = py;
+                }
+            }
+            if (bestScore > 0.0)
+            {
+                g_walkX = bx;
+                g_walkY = by;
+            }
+            else
+            {
+                const double ax = self->x - ex, ay = self->y - ey;
+                const double len = std::sqrt(ax * ax + ay * ay);
+                const double ux = len > 1.0 ? ax / len : 1.0, uy = len > 1.0 ? ay / len : 0.0;
+                g_walkX = static_cast<int32_t>(self->x + ux * kRetreatWay);
+                g_walkY = static_cast<int32_t>(self->y + uy * kRetreatWay);
+            }
+            if (!g_retreatWalkAt)
+            {
+                LOG("AutoAttack: stepping back {} ({:.0f} tiles off)", bestScore > 0.0 ? "the way it came" : "straight away",
+                    std::hypot(g_walkX - self->x, g_walkY - self->y) / kTileSize);
+            }
             Inject::call(&walkThere, nullptr);
             g_retreatWalkAt = now;
         }
@@ -1350,6 +1440,7 @@ namespace
         uint32_t enemy = 0;
         bool currentCandidate = false;      // the enemy fought now is still there to fight
         bool enemyEngaged = false, currentEngaged = false;
+        float currentLeft = 1.0f;           // the current one's health left (a share of its maximum)
         // What an ordinary enemy's maximum health is here: one well above hits harder (a strong one).
         int typical = 0;
         {
@@ -1482,7 +1573,14 @@ namespace
             const bool striking = atHero || atHireling;
             if (striking)
             {
-                cost /= std::clamp(std::sqrt(hardness), 0.7f, 1.6f);   // the harder it hits, the sooner it goes down
+                // Focus fire (the player, 2026-11-10: «parece que deja los más peligrosos para el final»): of those
+                // striking, the one that takes the most of the hero's health for the blows it still needs goes down
+                // first: how hard it hits (learned, against an ordinary one) weighed above its health left (against an
+                // ordinary one's), so a hard hitter is not left for last because it has more health.
+                const float healthShare =
+                    typical > 0 ? std::clamp(static_cast<float>(f.health) / static_cast<float>(typical), 0.15f, 4.0f) : 1.0f;
+                const float priority = std::clamp(std::pow(hardness, 1.5f) / std::sqrt(healthShare), 0.3f, 6.0f);
+                cost /= priority;
             }
             // The forecast's kill order (the least health lost: the highest blows per second needed to kill it, a
             // summoner weighed with what it brings): its first one pulled ahead among several.
@@ -1497,6 +1595,7 @@ namespace
                 cost *= 0.4f;
                 currentCandidate = true;
                 currentEngaged = striking;
+                currentLeft = f.maxHealth > 0 ? static_cast<float>(f.health) / static_cast<float>(f.maxHealth) : 1.0f;
             }
             // One that strikes always before one that does not, whatever the distance.
             if (!enemy || (striking && !enemyEngaged) || (striking == enemyEngaged && cost < enemyCost))
@@ -1603,6 +1702,13 @@ namespace
             if (enemyEngaged && !currentEngaged)
             {
                 LOG("AutoAttack: focus: {:x} left for {:x}, which strikes (danger)", g_target, enemy);
+            }
+            else if (enemyEngaged && currentEngaged && currentLeft > 0.3f)
+            {
+                // Both strike: the other came out well ahead though the current one is kept at 0.4 of its cost (it
+                // hits far harder for the health it has left); the current one is kept when nearly down.
+                LOG("AutoAttack: focus: {:x} left for {:x}, far more dangerous ({:.0f} % of its health left on {:x})",
+                    g_target, enemy, currentLeft * 100.0f, g_target);
             }
             else
             {
@@ -4811,6 +4917,7 @@ void AutoAttack::onFrame()
         {
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
+            noteTrail(now, self->x, self->y, layer);
             writeMind(now, self, layer,
                       *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,
