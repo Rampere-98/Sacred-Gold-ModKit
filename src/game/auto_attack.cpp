@@ -1391,6 +1391,116 @@ namespace
     // hero (by their own steps, in the world) or shooting at it from afar first, the badly wounded finished off, the
     // current one kept for a moment at least and then unless another is clearly better; one the hero gets no nearer
     // to is given up for a while. Loot is not the auto attack's: the player collects with A.
+    // Arrows coming at the hero (the player, 2026-11-10: «el agente no identifica proyectiles, es bueno que lo haga
+    // para conseguir esquivarlos»). Manolito, block U: cArrow3D (vtable 0x891AB4) lives in the object table, +0x1E4
+    // bit 1 in flight, +0x204 its target, +0x208 the shooter; they fly straight. Seen live 2026-11-10: the world
+    // position is the usual one at +0x1C/+0x20; the direction +0x1F4/+0x1F8 is in the game's axes, turned 45 degrees
+    // from the world's (world = (dx + dy, dy - dx)), about 16 tiles a second. One whose line passes within a tile of
+    // the hero, ahead of it within 15 tiles, is side-stepped: 2.5 tiles across its line, the side away from it first,
+    // on walkable ground; once per arrow, at most every 1.2 s.
+    bool dodgeArrow(DWORD now, const cCreature* self, uint32_t heroId)
+    {
+        static DWORD s_at = 0;
+        static uint32_t s_lastArrow = 0;
+        static int s_dodges = 0;
+        if (now - s_at < 1200 || g_retreatUntil)
+        {
+            return false;
+        }
+        const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
+        if (!manager)
+        {
+            return false;
+        }
+        const auto table = *reinterpret_cast<const uint8_t* const* const*>(manager + 4);
+        const auto tableEnd = *reinterpret_cast<const uint8_t* const* const*>(manager + 8);
+        if (!table || tableEnd <= table || tableEnd - table >= 0x40000)
+        {
+            return false;
+        }
+        const auto* sides = reinterpret_cast<const uint8_t*>(0x8EB548);
+        const size_t entries = static_cast<size_t>(tableEnd - table);
+        double bestT = 1e9, offX = 0.0, offY = 0.0, dirX = 0.0, dirY = 0.0;
+        uint32_t arrow = 0;
+        for (size_t i = 1; i < entries; ++i)
+        {
+            const uint8_t* o = table[i];
+            if (!o || *reinterpret_cast<const uint32_t*>(o) != 0x891AB4 || !(*reinterpret_cast<const uint32_t*>(o + 0x1E4) & 1))
+            {
+                continue;
+            }
+            const uint32_t target = *reinterpret_cast<const uint32_t*>(o + 0x204);
+            const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208);
+            bool hostile = target == heroId || target == self->id;
+            if (!hostile && shooter && shooter < entries && table[shooter])
+            {
+                const uint32_t side = *reinterpret_cast<const uint32_t*>(table[shooter] + 0x1F0);
+                hostile = side < 16 && side != 1 && sides[16 + side] == 0;
+            }
+            if (!hostile)
+            {
+                continue;
+            }
+            const float gx = *reinterpret_cast<const float*>(o + 0x1F4), gy = *reinterpret_cast<const float*>(o + 0x1F8);
+            double dx = gx + gy, dy = gy - gx;
+            const double len = std::hypot(dx, dy);
+            if (len < 0.1)
+            {
+                continue;
+            }
+            dx /= len;
+            dy /= len;
+            const double wx = self->x - *reinterpret_cast<const int32_t*>(o + 0x1C);
+            const double wy = self->y - *reinterpret_cast<const int32_t*>(o + 0x20);
+            const double t = wx * dx + wy * dy;     // how far ahead along its line the hero stands
+            if (t <= 0.0 || t > 15.0 * kTileSize)
+            {
+                continue;
+            }
+            const double ox = wx - t * dx, oy = wy - t * dy;
+            if (std::hypot(ox, oy) < 1.0 * kTileSize && t < bestT)
+            {
+                bestT = t;
+                offX = ox;
+                offY = oy;
+                dirX = dx;
+                dirY = dy;
+                arrow = static_cast<uint32_t>(i);
+            }
+        }
+        if (!arrow || arrow == s_lastArrow)
+        {
+            return false;
+        }
+        const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+        // Across its line: the side the hero already leans to first.
+        double nx = -dirY, ny = dirX;
+        if (offX * nx + offY * ny < 0.0)
+        {
+            nx = -nx;
+            ny = -ny;
+        }
+        for (const double sign : {1.0, -1.0})
+        {
+            const int32_t px = static_cast<int32_t>(self->x + sign * nx * 2.5 * kTileSize);
+            const int32_t py = static_cast<int32_t>(self->y + sign * ny * 2.5 * kTileSize);
+            if (ClickWalk::walkable(layer, static_cast<int>(px / kTileSize), static_cast<int>(py / kTileSize)) == 0)
+            {
+                continue;
+            }
+            s_at = now;
+            s_lastArrow = arrow;
+            ++s_dodges;
+            LOG("AutoAttack: arrow {:x} coming ({:.1f} tiles off), side-stepping {} ({} dodged)", arrow, bestT / kTileSize,
+                sign > 0 ? "away from its line" : "the other way", s_dodges);
+            g_walkX = px;
+            g_walkY = py;
+            Inject::call(&walkThere, nullptr);
+            return true;
+        }
+        return false;
+    }
+
     bool decide(DWORD now, Choice& out)
     {
         float hx, hy;
@@ -1902,6 +2012,10 @@ namespace
         situation.hy = hy;
         // Low on health with no potion: step back instead (unless an art is under way); no arts meanwhile.
         if (!Tactics::busy(now) && retreat(now, self, health, maximum, foes, count, hx, hy, range, objects))
+        {
+            return false;
+        }
+        if (!Tactics::busy(now) && dodgeArrow(now, self, objects->hero() ? objects->hero()->id : self->id))
         {
             return false;
         }
