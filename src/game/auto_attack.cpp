@@ -1127,6 +1127,7 @@ namespace
     float g_targetBest = 0.0f;      // its nearest distance since, pixels (0: none yet)
     DWORD g_targetBestAt = 0;       // ... reached then
     DWORD g_lastLookAt = 0;         // the last look at the situation
+    int g_retreatExtended = 0;      // times the retreat went on with little health and no potion
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
     std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
     std::unordered_map<uint32_t, int> g_unreachableTimes;   // ... how many times so far (the wait grows each time)
@@ -1645,17 +1646,16 @@ namespace
             // Not back into the fight with little health and no potion (the live verifier, 2026-11-11: 5 of 13
             // deaths within 15 s of «too long, fighting again», one at 30 of 189): the retreat goes on, three times
             // at most, before it does turn to fight.
-            static int s_extended = 0;
-            if (tooLong && noPotions && anyNear && health * 100 < maximum * 40 && s_extended < 3)
+            if (tooLong && noPotions && anyNear && health * 100 < maximum * 40 && g_retreatExtended < 3)
             {
-                ++s_extended;
+                ++g_retreatExtended;
                 g_retreatUntil = now + kRetreatMaxMs;
-                LOG("AutoAttack: stepping back on: {} of {} health and no potion ({} of 3)", health, maximum, s_extended);
+                LOG("AutoAttack: stepping back on: {} of {} health and no potion ({} of 3)", health, maximum, g_retreatExtended);
                 tooLong = false;
             }
             else if (recovered || !noPotions || !anyNear || tooLong)
             {
-                s_extended = 0;
+                g_retreatExtended = 0;
             }
             if (recovered || !noPotions || !anyNear || tooLong)
             {
@@ -1680,6 +1680,7 @@ namespace
         {
             g_retreatUntil = now + kRetreatMaxMs;
             g_retreatWalkAt = 0;
+            g_retreatExtended = 0;
             setIntent(Intent::Recover, "low on health, no healing potion or a fight foreseen lost: stepping back");
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
                 close);
