@@ -4,6 +4,7 @@
 #include "input/inject.h"
 #include "log.h"
 #include "sacred/object.h"
+#include "sacred/ui.h"
 #include "sig.h"
 
 #include <imgui.h>
@@ -29,7 +30,8 @@ namespace
         int keepGoldPercent = 50;   // buying spends at most the rest
         bool trips = true;      // to a merchant when the backpack is full
         bool runes = true;
-        bool scrolls = true;    // read the scrolls and books of the backpack (the encyclopedia: monsters, the undead)      // read the runes in the backpack (learn the art, or a level more)
+        bool scrolls = true;
+        bool weaponSlots = true;    // fill the weapon slots and fight with the best one against each enemy    // read the scrolls and books of the backpack (the encyclopedia: monsters, the undead)      // read the runes in the backpack (learn the art, or a level more)
     };
     Settings g_settings;
 
@@ -669,6 +671,198 @@ namespace
         s_heldId = 0;
     }
 
+    // --- The weapon slots (the player's wish, 2026-11-10: each slot a build, the agent fights with the best one) ------
+    // Manolito, AGENT_ADDRESSES «Ranuras de armas (bloque H)»: in the hero's inventory entry (the backpack's), 5 slots x
+    // 2 hands x 12 bytes at +0xC18 (hand 0 = equipment 12: shield, bow, second weapon; hand 1 = 13: the main weapon),
+    // the active slot u16 at +0xD58, the slots open by level (1: 1, 2-7: 2, 8-15: 3, 16-29: 4, 30+: 5). The taskbar
+    // copies equipment 12/13 into the active slot every frame. selectWeaponSlot (the keys 1-5) thiscall(taskbar, slot,
+    // 1); setSlotHand thiscall(entry, slot, hand, id, net). Weapon damage by kind (physical, fire, magic, poison):
+    // info +0x1C.. min, +0x24.. max; the hero's multiplier of kind k = st+0x96+4k + st+0xA6+4k; an enemy's resistance
+    // = st+0x66+4k x st+0xD6+4k. How a resistance cuts a blow is not known yet: 100 / (100 + r) is taken meanwhile.
+    uintptr_t g_selectSlot = 0, g_setSlotHand = 0;
+    using SelectSlot = void(__fastcall*)(void* taskbar, void*, uint32_t slot, uint32_t flag);
+    using SetSlotHand = uint8_t(__fastcall*)(uint8_t* entry, void*, uint32_t slot, uint32_t hand, uint32_t id, uint32_t net);
+    constexpr size_t kSlotHands = 0xC18, kActiveSlot = 0xD58;
+    constexpr size_t kHeroLevel = 0x3FE;
+    bool g_slotsReady = false;
+
+    int slotsOpen(const cCreature* hero)
+    {
+        const int level = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + kHeroLevel);
+        return level >= 30 ? 5 : level >= 16 ? 4 : level >= 8 ? 3 : level >= 2 ? 2 : 1;
+    }
+
+    uint32_t slotItem(const uint8_t* entry, int slot, int hand)
+    {
+        return *reinterpret_cast<const uint32_t*>(entry + kSlotHands + slot * 0x18 + hand * 0xC);
+    }
+
+    // A weapon's mean damage of each kind (physical, fire, magic, poison); false if it is no weapon.
+    bool damageOf(uint32_t id, float out[4])
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* item = objects && id ? objects->object(id) : nullptr;
+        const uint8_t* info = item ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr;
+        if (!info)
+        {
+            return false;
+        }
+        const auto* lo = reinterpret_cast<const uint16_t*>(info + 0x1C);
+        const auto* hi = reinterpret_cast<const uint16_t*>(info + 0x24);
+        float sum = 0.0f;
+        for (int k = 0; k < 4; ++k)
+        {
+            out[k] = (lo[k] + hi[k]) * 0.5f;
+            sum += out[k];
+        }
+        return sum > 0.0f;
+    }
+
+    // The kind a weapon deals most of (0 physical, 1 fire, 2 magic, 3 poison); -1 none.
+    int mainKind(uint32_t id)
+    {
+        float d[4] = {};
+        if (!damageOf(id, d))
+        {
+            return -1;
+        }
+        int best = 0;
+        for (int k = 1; k < 4; ++k)
+        {
+            best = d[k] > d[best] ? k : best;
+        }
+        return best;
+    }
+
+    const char* kindName(int k)
+    {
+        static const char* const names[] = {"physical", "fire", "magic", "poison"};
+        return k >= 0 && k < 4 ? names[k] : "none";
+    }
+
+    float resistanceOf(const cCreature* c, int k)
+    {
+        const uint8_t* st = reinterpret_cast<const uint8_t*>(c) + kStats;
+        const float r = *reinterpret_cast<const float*>(st + 0x66 + 4 * k) * *reinterpret_cast<const float*>(st + 0xD6 + 4 * k);
+        return r > 0.0f && r < 100000.0f ? r : 0.0f;
+    }
+
+    // A slot's expected damage against `target` (null: plain, no resistances), with the hero's multipliers.
+    float slotDamage(const cCreature* hero, const uint8_t* entry, int slot, const cCreature* target)
+    {
+        const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
+        float total = 0.0f;
+        for (int hand = 0; hand < 2; ++hand)
+        {
+            float d[4] = {};
+            if (!damageOf(slotItem(entry, slot, hand), d))
+            {
+                continue;
+            }
+            for (int k = 0; k < 4; ++k)
+            {
+                float mult = *reinterpret_cast<const float*>(st + 0x96 + 4 * k) + *reinterpret_cast<const float*>(st + 0xA6 + 4 * k);
+                if (!(mult > 0.1f && mult < 20.0f))
+                {
+                    mult = 1.0f;
+                }
+                const float cut = target ? 100.0f / (100.0f + resistanceOf(target, k)) : 1.0f;
+                total += d[k] * mult * cut;
+            }
+        }
+        return total;
+    }
+
+    // Out of a fight: an empty open slot (not the active one) gets a weapon from the backpack, one of a kind the slots
+    // do not have yet first (a fire sword beside the plain one), else the strongest. Main hand only (no shields, bows or
+    // a second weapon: those need the game's own drop checks). One a call.
+    bool fillWeaponSlot(cCreature* hero, uint8_t* pack)
+    {
+        if (!g_slotsReady)
+        {
+            return false;
+        }
+        const int open = slotsOpen(hero);
+        const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+        int empty = -1;
+        bool have[4] = {};
+        for (int slot = 0; slot < open; ++slot)
+        {
+            const uint32_t a = slotItem(pack, slot, 0), b = slotItem(pack, slot, 1);
+            if (!a && !b && slot != active && empty < 0)
+            {
+                empty = slot;
+            }
+            for (uint32_t id : {a, b})
+            {
+                if (const int k = mainKind(id); k >= 0)
+                {
+                    have[k] = true;
+                }
+            }
+        }
+        if (empty < 0)
+        {
+            return false;
+        }
+        void* types = typeMgr();
+        uint32_t best = 0;
+        float bestScore = 0.0f;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            const uint32_t type = typeOf(id);
+            if ((flagsOf(id) & kQuestItem) || type == 0x1600 || type == 0x1601 || !types ||
+                !fn<SlotAccepts>(g_slotAccepts)(types, nullptr, 13, type) || !fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
+            {
+                return;
+            }
+            const int kind = mainKind(id);
+            if (kind < 0)
+            {
+                return;
+            }
+            const float score = worth(id).score * (have[kind] ? 1.0f : 3.0f);   // a new kind first
+            if (!best || score > bestScore)
+            {
+                best = id;
+                bestScore = score;
+            }
+        });
+        if (!best)
+        {
+            return false;
+        }
+        fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
+        fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), 1, best, 1);
+        if (slotItem(pack, empty, 1) != best)
+        {
+            // Not taken: back into the backpack, and the slots left alone from now on.
+            int w = 0, h = 0;
+            uint16_t free = 0;
+            if (sizeOf(best, w, h) && fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+            {
+                fn<PutItem>(g_putItem)(pack, nullptr, free, best, w, h, 1);
+            }
+            LOG("Gear: weapon {:x} not taken by weapon slot {}: the slots left alone", best, empty + 1);
+            g_slotsReady = false;
+            return false;
+        }
+        LOG("Gear: weapon {:x} ({}) put in weapon slot {} of {}", best, kindName(mainKind(best)), empty + 1, open);
+        return true;
+    }
+
+    std::atomic<uint32_t> g_switchTo{0xFFFFFFFFu};
+
+    void switchSlot(void*)
+    {
+        const uint32_t slot = g_switchTo.exchange(0xFFFFFFFFu);
+        cUI_Manager* ui = cUI_Manager::instance();
+        void* taskbar = ui ? static_cast<void*>(ui->taskbar()) : nullptr;
+        if (slot < 5 && taskbar && g_selectSlot)
+        {
+            fn<SelectSlot>(g_selectSlot)(taskbar, nullptr, slot, 1);
+        }
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -694,6 +888,9 @@ namespace
             {
             }
             else if (g_calm && !shop && g_settings.scrolls && g_useItem && readScroll(hero, pack))
+            {
+            }
+            else if (g_calm && !shop && g_settings.weaponSlots && fillWeaponSlot(hero, pack))
             {
             }
             else
@@ -744,6 +941,9 @@ namespace
         ImGui::Checkbox("Leer los pergaminos y libros (enciclopedia)", &g_settings.scrolls);
         ImGui::SetItemTooltip("Fuera de combate, como el clic derecho: aprende el arte o le sube un nivel. Las de otra "
                               "clase se quedan en la mochila.");
+        ImGui::Checkbox("Usar las ranuras de armas", &g_settings.weaponSlots);
+        ImGui::SetItemTooltip("Llena las ranuras abiertas con armas de la mochila (elementos distintos primero) y, al "
+                              "elegir enemigo, cambia a la ranura que más daño le hace según sus resistencias.");
         ImGui::Checkbox("Ir al mercader con la mochila llena", &g_settings.trips);
         ImGui::SetItemTooltip("Con el agente activo: va al mercader más cercano que conoce, vende lo que no usará, se "
                               "equipa lo mejor y cierra la tienda; luego sigue jugando.");
@@ -758,6 +958,7 @@ namespace
         ModkitMenu::write(ini, L"Gear", L"Trips", g_settings.trips);
         ModkitMenu::write(ini, L"Gear", L"Runes", g_settings.runes);
         ModkitMenu::write(ini, L"Gear", L"Scrolls", g_settings.scrolls);
+        ModkitMenu::write(ini, L"Gear", L"WeaponSlots", g_settings.weaponSlots);
     }
 
     void install()
@@ -769,6 +970,7 @@ namespace
         g_settings.trips = GetPrivateProfileIntW(L"Gear", L"Trips", 1, ini.c_str()) != 0;
         g_settings.runes = GetPrivateProfileIntW(L"Gear", L"Runes", 1, ini.c_str()) != 0;
         g_settings.scrolls = GetPrivateProfileIntW(L"Gear", L"Scrolls", 1, ini.c_str()) != 0;
+        g_settings.weaponSlots = GetPrivateProfileIntW(L"Gear", L"WeaponSlots", 1, ini.c_str()) != 0;
         g_settings.keepGoldPercent =
             std::clamp(static_cast<int>(GetPrivateProfileIntW(L"Gear", L"KeepGoldPercent", 50, ini.c_str())), 0, 95);
         const size_t missing = Sig::resolve(kSigs);
@@ -777,6 +979,16 @@ namespace
         const Sig::Entry kMouseSig[] = {
             {"cMouse::clear", "83 EC 14 53 57 8B F9 33 DB 8B 47 68", 0, Sig::Take::Match, &g_mouseClear}};
         Sig::resolve(kMouseSig);
+        // The weapon slots apart: without them only the slots are left alone.
+        const Sig::Entry kSlotSigs[] = {
+            {"selectWeaponSlot", "64 A1 00 00 00 00 6A FF 68 ?? ?? ?? ?? 50 64 89 25 00 00 00 00 83 EC 50 53 55 56 8B F1", 0,
+                Sig::Take::Match, &g_selectSlot},
+            {"setSlotHand", "6A FF 68 ?? ?? ?? ?? 64 A1 00 00 00 00 50 64 89 25 00 00 00 00 83 EC 74 8A", 0,
+                Sig::Take::Match, &g_setSlotHand},
+        };
+        g_slotsReady = Sig::resolve(kSlotSigs) == 0;
+        LOG("Gear: weapon slots {} (select {:x}, setSlotHand {:x})", g_slotsReady ? "ready" : "not available",
+            g_selectSlot, g_setSlotHand);
         if (g_addGoldCall && *reinterpret_cast<const uint8_t*>(g_addGoldCall) == 0xE8)
         {
             g_addGold = g_addGoldCall + 5 + *reinterpret_cast<const int32_t*>(g_addGoldCall + 1);
@@ -856,4 +1068,49 @@ bool Gear::shopOpen()
 {
     void* inv = g_ready ? inventory() : nullptr;
     return inv && *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
+}
+
+bool Gear::chooseWeaponFor(uint32_t targetId)
+{
+    if (!g_ready || !g_slotsReady || !g_settings.weaponSlots)
+    {
+        return false;
+    }
+    cObjectManager* objects = cObjectManager::instance();
+    cCreature* hero = objects ? objects->hero() : nullptr;
+    cCreature* target = objects ? objects->creature(targetId) : nullptr;
+    uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
+    if (!hero || !target || !pack)
+    {
+        return false;
+    }
+    const int open = slotsOpen(hero);
+    const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+    if (active < 0 || active >= 5)
+    {
+        return false;
+    }
+    const float current = slotDamage(hero, pack, active, target);
+    int best = active;
+    float bestDamage = current;
+    for (int slot = 0; slot < open; ++slot)
+    {
+        const float d = slot == active ? 0.0f : slotDamage(hero, pack, slot, target);
+        if (d > bestDamage)
+        {
+            best = slot;
+            bestDamage = d;
+        }
+    }
+    // Only for a clear gain (15 %): no switching back and forth over a hair.
+    if (best == active || bestDamage < current * 1.15f + 0.5f)
+    {
+        return false;
+    }
+    LOG("Gear: weapon slot {} -> {} against {:x} (expected damage {:.0f} -> {:.0f}; its resistances {:.0f}/{:.0f}/{:.0f}/{:.0f})",
+        active + 1, best + 1, targetId, current, bestDamage, resistanceOf(target, 0), resistanceOf(target, 1),
+        resistanceOf(target, 2), resistanceOf(target, 3));
+    g_switchTo = static_cast<uint32_t>(best);
+    Inject::call(&switchSlot, nullptr);
+    return true;
 }

@@ -3841,6 +3841,12 @@ void AutoAttack::onFrame()
     if (id != g_target)
     {
         ClickWalk::cancel();
+        // A new enemy: the weapon slot that hurts it most first (at most every 3 s; no art under way here).
+        static DWORD s_slotAt = 0;
+        if (!g_looting && now - s_slotAt > 3000 && Gear::chooseWeaponFor(id))
+        {
+            s_slotAt = now;
+        }
     }
     if (attack(id))
     {

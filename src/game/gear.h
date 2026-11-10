@@ -29,4 +29,9 @@ namespace Gear
     // equipment: the caller knows it is (by its class), so the grade is read without the damage/armour test (an
     // amulet has neither).
     int grade(uint32_t id, bool equipment = false);
+
+    // A new enemy taken: the weapon slot that deals it the most (each slot's weapons by kind, the hero's multipliers,
+    // the enemy's resistances), switched to as the keys 1-5 do when it beats the active one by 15 %. True if switched.
+    // Call with the hero at rest (no art under way).
+    bool chooseWeaponFor(uint32_t targetId);
 }
