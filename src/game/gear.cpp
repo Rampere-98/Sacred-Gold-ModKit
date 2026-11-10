@@ -500,6 +500,20 @@ namespace
         }
         void* inv = inventory();
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        // The gold at the visit's start (no potion bought for a minute: a new visit): each potion at most a quarter of
+        // it, and the potions together at most 60 % of it (the analyst, 2026-11-10: a quarter of the gold left took
+        // one potion a visit).
+        static uint32_t s_visitGold = 0;
+        static DWORD s_lastBuy = 0;
+        const DWORD now = GetTickCount();
+        if (!s_lastBuy || now - s_lastBuy > 60000 || gold > s_visitGold)
+        {
+            s_visitGold = gold;
+        }
+        if (gold < s_visitGold * 2 / 5)
+        {
+            return false;
+        }
         bool done = false;
         for (int page = 0; page < kStockPages && !done; ++page)
         {
@@ -515,8 +529,8 @@ namespace
                 }
                 const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
                 uint16_t free = 0;
-                // Potions before the gold kept back: at most a quarter of the gold on one.
-                if (price > gold / 4 || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                // Potions before the gold kept back: at most a quarter of the visit's gold on one, 40 % of it kept.
+                if (price > s_visitGold / 4 || gold - price < s_visitGold * 2 / 5 || !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
                 {
                     return;
                 }
@@ -530,6 +544,7 @@ namespace
                 fn<PutItem>(g_putItem)(pack, nullptr, free, id, w, h, 1);
                 LOG("Gear: bought healing potion {:x} (type {:x}) for {} gold (of {})", id, typeOf(id), price, gold);
                 done = true;
+                s_lastBuy = now;
             });
         }
         return done;
