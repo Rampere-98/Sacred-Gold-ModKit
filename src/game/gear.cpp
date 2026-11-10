@@ -1635,7 +1635,7 @@ namespace
         const uint32_t ownId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
         if (const cCreature* own = ownId && objects ? objects->creature(ownId) : nullptr)
         {
-            const int ownWorth = horseWorth(own), newWorth = horseWorth(horse);
+            const int ownWorth = Gear::horseWorth(own), newWorth = Gear::horseWorth(horse);
             LOG("Gear: horse {:x} for sale (worth {}) against the hero's {:x} (worth {})", horseId, newWorth, ownId, ownWorth);
             if (newWorth < ownWorth + 2000)
             {
