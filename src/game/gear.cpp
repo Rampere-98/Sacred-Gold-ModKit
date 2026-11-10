@@ -1564,8 +1564,10 @@ namespace
         // click on the horse. Manolito, V3b live: the horse for sale is bound to the stable man both ways (man +0x570
         // the horse, the horse's +0x570 the man; the man's id at window +0x158): offered here with 0x6BEB90
         // thiscall(window, horse id), ret 4, which also sets the price.
-        if (!*reinterpret_cast<const uint32_t*>(w + 0x154))
+        static DWORD s_offeredAt = 0;
+        if (!*reinterpret_cast<const uint32_t*>(w + 0x154) && s_offeredAt < s_openAt)
         {
+            s_offeredAt = tick;
             cObjectManager* om = cObjectManager::instance();
             const uint32_t manId = *reinterpret_cast<const uint32_t*>(w + 0x158);
             const auto* man = om && manId ? reinterpret_cast<const uint8_t*>(om->object(manId)) : nullptr;
