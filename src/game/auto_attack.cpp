@@ -1242,11 +1242,27 @@ namespace
         // horse: same position each second; +0x200 & 0x10, the guess, stayed clear and the agent kept mounting).
         cObjectManager* om = cObjectManager::instance();
         const cCreature* steed = om ? om->creature(horse) : nullptr;
-        if (!steed)
+        // Not while stepping back from a fight (the code reviewer: a walk to the horse must not undo a retreat).
+        if (!steed || g_retreatUntil)
         {
+            s_approachSince = 0;
             return;
         }
-        const bool mounted = steed->x == self->x && steed->y == self->y;
+        // A few units of slack: rider and horse may be read between their two updates (the code reviewer).
+        const bool mounted = std::abs(steed->x - self->x) <= 3 && std::abs(steed->y - self->y) <= 3;
+        // Ride events sent with the hero still on foot after them (no riding skill?): after 3, a long rest.
+        static int s_unmounted = 0;
+        if (mounted)
+        {
+            s_unmounted = 0;
+        }
+        else if (s_unmounted >= 3)
+        {
+            LOG("AutoAttack: 3 mounts of horse {:x} left the hero on foot: on foot for 10 min", horse);
+            s_unmounted = 0;
+            s_restUntil = now + 600000;
+            return;
+        }
         double nearest = 1e9;
         for (const AggroFoe& f : g_aggroFoes)
         {
@@ -1304,6 +1320,7 @@ namespace
                 return;
             }
             s_approachSince = 0;
+            ++s_unmounted;
         }
         s_at = now;
         LOG("AutoAttack: {} horse {:x} ({:.0f} tiles to the nearest enemy)", code == 0x209 ? "mounting" : "getting off", horse,
