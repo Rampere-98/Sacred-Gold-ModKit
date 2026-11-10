@@ -3664,7 +3664,9 @@ namespace
                 // One in a house (its floor another layer) only near: a click on him sends the hero there by the game's
                 // own path finder, which opens the doors on the way (the player: «algunos comerciantes se encuentran
                 // dentro de casas»).
-                if ((m.layer != layer && d > 30.0 * kTileSize) ||
+                // Nor one across the world (the player, 2026-11-10: the Daemon, level 3, set off for a merchant 427
+                // tiles off through higher grounds and got stuck on the way): 150 tiles at most.
+                if ((m.layer != layer && d > 30.0 * kTileSize) || d > 150.0 * kTileSize ||
                     (failed != g_shopFailedAt.end() && now - failed->second < 300000))
                 {
                     continue;
@@ -3719,7 +3721,7 @@ namespace
             if (!g_shopTold)
             {
                 g_shopTold = true;
-                LOG("AutoAttack: backpack full and no merchant known on this layer");
+                LOG("AutoAttack: backpack full and no merchant known within 150 tiles on this layer");
             }
         }
         // Runes of other classes (Gear::wantsRuneSwap): off to the nearest combo master as to a merchant, a click on
