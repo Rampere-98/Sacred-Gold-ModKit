@@ -385,11 +385,18 @@ namespace
         {
             return;
         }
+        // Logged on each change of intent; a new reason for the same one at most every 30 s (the log stays readable).
+        static DWORD s_toldAt = 0;
+        const DWORD tick = GetTickCount();
         if (i != g_intent)
         {
-            g_intentSince = GetTickCount();
+            g_intentSince = tick;
         }
-        LOG("Intent: {} ({})", intentName(i), why);
+        if (i != g_intent || tick - s_toldAt > 30000)
+        {
+            s_toldAt = tick;
+            LOG("Intent: {} ({})", intentName(i), why);
+        }
         g_intent = i;
         g_intentWhy = why;
     }
