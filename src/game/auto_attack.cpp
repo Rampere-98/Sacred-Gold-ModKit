@@ -371,7 +371,10 @@ namespace
             return false;
         }
         const uint16_t type = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x10);
-        if (!((type >= 0x1612 && type <= 0x1697) || type == 0x1465))
+        // A lever (LEVER01 0x17CD) too: used as a door is, it opens its own trigger, and the script then frees the
+        // door it holds (Manolito, block K); one already pulled (its trigger open) is passed by.
+        const bool lever = type == 0x17CD;
+        if (!((type >= 0x1612 && type <= 0x1697) || type == 0x1465 || lever))
         {
             return false;
         }
@@ -391,7 +394,8 @@ namespace
                 {
                     const uint16_t state = *reinterpret_cast<const uint16_t*>(trig + 0xA);
                     const uint32_t key = *reinterpret_cast<const uint32_t*>(trig + 0xC);
-                    if ((state & 1) || ((state & 0x8000) && !key))
+                    // 0x4000 is no lock: «just switched», gone in a second (Manolito).
+                    if ((state & 1) || (!lever && (state & 0x8000) && !key))
                     {
                         return false;
                     }
