@@ -199,7 +199,8 @@ namespace
     } g_snap;
 
     // The walkable tile nearest (tx, ty) within 40 tiles, ring by ring (the nearest of the first ring with one):
-    // 1 found, 0 none there, -1 the ground not loaded.
+    // 1 found, 0 none there, -1 not known. Beyond the loaded sectors ClickWalk::walkable answers from the world files
+    // (surface only), so the player's jump lands on a walkable tile worked out before it.
     int nearestWalkable(int layer, int tx, int ty, int& ox, int& oy)
     {
         const int here = ClickWalk::walkable(layer, tx, ty);

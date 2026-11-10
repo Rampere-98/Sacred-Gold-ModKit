@@ -33,7 +33,8 @@ namespace ClickWalk
     // Any routed walk under way (the player's or the agent's), or one asked for and not yet sent.
     bool routing();
 
-    // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test: 1 yes, 0 no, -1 not
-    // known (the tile outside the loaded sectors, or no tile test in this build).
+    // Whether a walker may stand on world tile (tx, ty) of `layer`, by the game's own tile test where its sector is
+    // loaded, else as the world files have it (WorldTiles: surface only, doors counted walkable): 1 yes, 0 no, -1 not
+    // known (another layer outside the loaded sectors, or no world files).
     int walkable(int layer, int tx, int ty);
 }

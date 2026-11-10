@@ -3,6 +3,7 @@
 #include "game/frame_hooks.h"
 #include "game/map_memory.h"
 #include "game/wide_sectors.h"
+#include "game/world_tiles.h"
 #include "input/inject.h"
 #include "log.h"
 #include "patch.h"
@@ -169,6 +170,11 @@ namespace
                     p.y = y;
                     p.layer = layer;
                     ok = g_walkable(map, nullptr, &p, 0) != 0;
+                }
+                else
+                {
+                    // Not loaded (yet): the tile as the world files have it.
+                    ok = WorldTiles::walkable(layer, x, y) == 1;
                 }
                 s = ok ? 1 : 2;
             }
@@ -823,19 +829,19 @@ int ClickWalk::walkable(int layer, int tx, int ty)
     const Sector* center = WideSectors::at(WideSectors::kCount / 2);
     if (!g_walkable || !WideSectors::active() || !map || !center)
     {
-        return -1;
+        return WorldTiles::walkable(layer, tx, ty);
     }
     const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
     if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
     {
-        return -1;
+        return WorldTiles::walkable(layer, tx, ty);
     }
     const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
     const Sector* sector = WideSectors::at(slot);
     if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
         sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
     {
-        return -1;
+        return WorldTiles::walkable(layer, tx, ty);
     }
     TilePos p{};
     p.x = tx;
