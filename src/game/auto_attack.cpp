@@ -2522,6 +2522,51 @@ namespace
                 return true;
             }
         }
+        // Shut in (Whereabouts): the ways out MapMemory saw (a portal end, the arrival of a cave's entry) walked onto,
+        // each tried once in 3 minutes; standing on one already, a step off first (a teleport fires on stepping on).
+        // Seen twice (2026-11-10, a Gladiator 3 h, a Seraphim 16 min): into a cave from 3180,2670, shut in at
+        // 4819..4828 x 367..387, the stuck guard only walking about inside.
+        if (Whereabouts::area().shutIn)
+        {
+            static std::unordered_map<uint64_t, DWORD> s_wayTried;
+            const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+            int bx = 0, by = 0;
+            double best = 1e18;
+            for (const auto& [ex, ey] : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+            {
+                const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
+                if (const auto t = s_wayTried.find(wk); t != s_wayTried.end() && now - t->second < 180000)
+                {
+                    continue;
+                }
+                const double d = std::hypot(ex - htx, ey - hty);
+                if (d < best)
+                {
+                    best = d;
+                    bx = ex;
+                    by = ey;
+                }
+            }
+            if (best < 1e17)
+            {
+                if (best <= 1.5)
+                {
+                    // On it: a step off, the next stage walks back onto it.
+                    const double a = now * 0.001;
+                    ClickWalk::walkTo(static_cast<int32_t>(self->x + std::cos(a) * 3 * kTileSize),
+                                      static_cast<int32_t>(self->y + std::sin(a) * 3 * kTileSize), false);
+                    LOG("AutoAttack: stuck guard: shut in, on the way out at {},{}: a step off to step on again", bx, by);
+                    return true;
+                }
+                s_wayTried[(static_cast<uint64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by)] = now;
+                LOG("AutoAttack: stuck guard: shut in: to the way out at {},{} ({:.0f} tiles)", bx, by, best);
+                Findings::note("stuck", self->x, self->y, "shut in: to the way out at {},{}", bx, by);
+                ClickWalk::walkTo(static_cast<int32_t>((bx + 0.5) * kTileSize), static_cast<int32_t>((by + 0.5) * kTileSize),
+                                  false);
+                return true;
+            }
+        }
         if (s_stage == 1)
         {
             LOG("AutoAttack: stuck guard: 60 s within 16 tiles out of the fights: the marks «left for now» forgotten");
