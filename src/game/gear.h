@@ -20,7 +20,8 @@ namespace Gear
     int foreignRunes();
     bool wantsRuneSwap();
     bool wantsCombo();
-    bool wantsSocket();        // something to socket at a smith         // a combo to learn at a combo master
+    bool wantsSocket();
+    bool wantsHorse();         // no horse yet: one from a stable        // something to socket at a smith         // a combo to learn at a combo master
 
     // Healing potions in the backpack at the last look (-1 not counted yet).
     int healingLeft();

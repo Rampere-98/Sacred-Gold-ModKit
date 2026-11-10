@@ -1193,6 +1193,68 @@ namespace
         }
     }
 
+    // Riding (the tutorial's step 10). Manolito, block V3/V3b: mounting is an event to the rider, hero->vt[6](&ev),
+    // a 0x44-byte cEvent (vtable 0x89095C) with +4 0x209 to mount, 0x20A to get off, +0x14 the horse's id (hero
+    // +0x570); destroyed by 0x416B30 thiscall(&ev). Mounted: creature +0x200 & 0x10. Mounted blows are split by the
+    // riding skill (down to a third): on for the long walks with no enemy within 20 tiles, off once one comes within
+    // 12; at most a change every 8 s.
+    uint32_t g_rideCode = 0, g_rideHorse = 0;
+
+    void sendRide(void*)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!hero || !g_rideHorse || !objects->creature(g_rideHorse))
+        {
+            return;
+        }
+        alignas(8) uint8_t ev[0x44] = {};
+        *reinterpret_cast<uintptr_t*>(ev) = 0x89095C;
+        *reinterpret_cast<uint32_t*>(ev + 4) = g_rideCode;
+        *reinterpret_cast<uint32_t*>(ev + 0x14) = g_rideHorse;
+        using Handle = void(__fastcall*)(void* self, void*, void* ev);
+        const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
+        reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
+        using Destroy = void(__fastcall*)(void* ev, void*);
+        reinterpret_cast<Destroy>(0x416B30)(ev, nullptr);
+    }
+
+    void ride(DWORD now, const cCreature* self)
+    {
+        static DWORD s_at = 0;
+        const uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
+        if (!horse || now - s_at < 8000 || *(reinterpret_cast<const uint8_t*>(self) + 0x24))
+        {
+            return;
+        }
+        const bool mounted = (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x200) & 0x10) != 0;
+        double nearest = 1e9;
+        for (const AggroFoe& f : g_aggroFoes)
+        {
+            nearest = std::min(nearest, std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)));
+        }
+        const bool longWalk = ClickWalk::routing() || g_questTravel;
+        uint32_t code = 0;
+        if (!mounted && longWalk && nearest > 20.0 * kTileSize)
+        {
+            code = 0x209;
+        }
+        else if (mounted && nearest < 12.0 * kTileSize)
+        {
+            code = 0x20A;
+        }
+        if (!code)
+        {
+            return;
+        }
+        s_at = now;
+        g_rideCode = code;
+        g_rideHorse = horse;
+        LOG("AutoAttack: {} horse {:x} ({:.0f} tiles to the nearest enemy)", code == 0x209 ? "mounting" : "getting off", horse,
+            nearest < 1e8 ? nearest / kTileSize : 99.0);
+        Inject::call(&sendRide, nullptr);
+    }
+
     void noteTrail(DWORD now, int32_t x, int32_t y, int layer)
     {
         static DWORD s_at = 0;
@@ -2322,6 +2384,8 @@ namespace
     std::vector<Merchant> g_masters;
     // The smiths (+0x200 & 0x1000): where sockets are filled.
     std::vector<Merchant> g_smiths;
+    // The stable men (+0x200 & 0x4000000): where a horse is bought.
+    std::vector<Merchant> g_stables;
 
     // Farming zones, from the same pass (the object list holds the whole world): living hostile creatures on the
     // surface counted per sector (64x64 tiles), the sector's level range from its block ([sector +0x17C] +0xD3 min,
@@ -2611,6 +2675,7 @@ namespace
         g_merchants.clear();
         g_masters.clear();
         g_smiths.clear();
+        g_stables.clear();
         g_farmBuilding.clear();
         g_chestBuilding = 0;
         g_chestBest = 0.0;
@@ -2693,6 +2758,13 @@ namespace
                         g_smiths.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
                                             *reinterpret_cast<const int32_t*>(o + 0x1C),
                                             *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    }
+                    if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0x200) & 0x4000000))
+                    {
+                        g_stables.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
+                                             *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                             *reinterpret_cast<const int32_t*>(o + 0x20)});
                     }
                     if (!o || !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) ||
                         (*reinterpret_cast<const uint32_t*>(o + 0x200) & (0x1000 | 0x2000 | 0x4000 | 0x4000000)))
@@ -3475,11 +3547,12 @@ namespace
                 s_masterId = 0;
             }
             const bool toMaster = Gear::wantsRuneSwap() || Gear::wantsCombo();
-            if ((toMaster || Gear::wantsSocket()) && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
+            const bool toSmith = !toMaster && Gear::wantsSocket();
+            if ((toMaster || toSmith || Gear::wantsHorse()) && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
             {
                 const Merchant* best = nullptr;
                 double bestDistance = 0.0;
-                for (const Merchant& m : toMaster ? g_masters : g_smiths)
+                for (const Merchant& m : toMaster ? g_masters : toSmith ? g_smiths : g_stables)
                 {
                     const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
                     if ((m.layer == layer || d < 30.0 * kTileSize) && (!best || d < bestDistance))
@@ -3491,7 +3564,8 @@ namespace
                 if (best)
                 {
                     g_questTravel = true;
-                    setIntent(Intent::Shop, !toMaster            ? "something to socket: to a smith"
+                    setIntent(Intent::Shop, !toMaster && !toSmith ? "no horse: to a stable"
+                                            : !toMaster            ? "something to socket: to a smith"
                                             : Gear::wantsCombo() ? "a combo to learn: to a combo master"
                                                                : "runes of other classes: to a combo master to swap them");
                     if (best->id != s_masterId)
@@ -5289,6 +5363,7 @@ void AutoAttack::onFrame()
             MapMemory::visit(layer, self->x, self->y);
             noteTrail(now, self->x, self->y, layer);
             watchTutorial(now);
+            ride(now, self);
             writeMind(now, self, layer,
                       *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,

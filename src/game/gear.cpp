@@ -1514,6 +1514,58 @@ namespace
         return done(after < before ? "done" : "nothing set");
     }
 
+    // A horse from a stable (the tutorial's step 10). Manolito, block V3b: cUI_Horse (vtable 0x896528) is UI window 17
+    // ([[0x17EEBBC] + 0xC4], open while +0x10 & 1), opened by a use click on the stable man; it offers one horse, its
+    // id at +0x154, the price at +0x15C (the riding skill's discount in it). Buying as its button does: bind 0x55C640
+    // thiscall(hero, horse id, 1), ret 8 (hero +0x570 the horse, the horse's +0x570 the rider), then 0x5498F0
+    // thiscall(horse, 0, 1), and the price paid with the game's own addGold.
+    constexpr uintptr_t kHorseVtable = 0x896528, kBindHorse = 0x55C640, kHorseSettle = 0x5498F0;
+    using BindHorse = void(__fastcall*)(void* creature, void*, uint32_t id, int flag);
+    using HorseSettle = void(__fastcall*)(void* creature, void*, int n, int flag);
+    std::atomic<bool> g_wantHorse{false};
+    DWORD g_horseTriedAt = 0;
+
+    bool buyHorse(cCreature* hero)
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
+        if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1))
+        {
+            return false;
+        }
+        const auto close = [&](const char* why) {
+            LOG("Gear: horse: {}", why);
+            g_wantHorse = false;
+            g_horseTriedAt = GetTickCount();
+            fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(w))[0x24 / 4])(w, nullptr, 0);
+            return true;
+        };
+        if (!g_wantHorse)
+        {
+            return false;
+        }
+        const uint32_t horseId = *reinterpret_cast<const uint32_t*>(w + 0x154);
+        const uint32_t price = *reinterpret_cast<const uint32_t*>(w + 0x15C);
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* horse = objects && horseId ? objects->creature(horseId) : nullptr;
+        if (!horse)
+        {
+            return close("no horse offered");
+        }
+        // At most half the gold (potions come first).
+        if (!price || price > 100000 || price * 2 > gold)
+        {
+            return close(price ? "the horse costs more than half the gold: not now" : "no price");
+        }
+        fn<BindHorse>(kBindHorse)(hero, nullptr, horseId, 1);
+        fn<HorseSettle>(kHorseSettle)(horse, nullptr, 0, 1);
+        fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
+        const uint32_t own = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
+        LOG("Gear: horse {:x} bought for {} gold (the hero's horse now {:x})", horseId, price, own);
+        return close("bought");
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1535,6 +1587,13 @@ namespace
                 if (want != g_wantCombo.exchange(want) && want)
                 {
                     LOG("Gear: a combo to learn (none known, {} gold): off to a combo master", gold);
+                }
+                // A horse wanted: none yet, gold enough to spare half on it.
+                const bool horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 &&
+                                   gold >= 2000 && (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
+                if (horse != g_wantHorse.exchange(horse) && horse)
+                {
+                    LOG("Gear: no horse and {} gold: off to a stable", gold);
                 }
                 // Something to socket: a backpack item with a free socket and a gem for it, gold for the smith.
                 static DWORD s_socketLookAt = 0;
@@ -1564,7 +1623,10 @@ namespace
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
-            if (g_wantCombo && makeCombo(hero))
+            if (buyHorse(hero))
+            {
+            }
+            else if (g_wantCombo && makeCombo(hero))
             {
             }
             else if (g_wantSocket && socketAtSmith(hero, pack))
@@ -1745,6 +1807,11 @@ bool Gear::packFull()
 int Gear::foreignRunes()
 {
     return g_ready ? g_foreignRunes.load() : 0;
+}
+
+bool Gear::wantsHorse()
+{
+    return g_ready && g_wantHorse;
 }
 
 bool Gear::wantsSocket()
