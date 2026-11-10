@@ -1538,6 +1538,13 @@ namespace
             g_wantHorse = false;
             g_horseTriedAt = GetTickCount();
             fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(w))[0x24 / 4])(w, nullptr, 0);
+            // show(0) leaves this window open (the live verifier, 2026-11-10: flags 5 five minutes on): Escape, as a
+            // player closes it, only while it is still open (Escape with none open would bring up the game menu).
+            if (*reinterpret_cast<const uint32_t*>(w + 0x10) & 1)
+            {
+                Inject::key(VK_ESCAPE, true);
+                Inject::key(VK_ESCAPE, false);
+            }
             return true;
         };
         if (!g_wantHorse)
