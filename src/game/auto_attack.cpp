@@ -36,6 +36,7 @@
 #include <iterator>
 #include <mutex>
 #include <thread>
+#include <format>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -341,6 +342,54 @@ namespace
     // 3000 tiles off). g_questTravel: the hero is on a trip.
     bool g_questTravel = false;
     constexpr double kLootMaxTiles = 60.0;
+    // On a trip (a quest's goal, a merchant) the focus is the trip (the player, 2026-11-10: «si pretende hacer quest el
+    // foco no es batallar necesariamente»): only loot at hand is taken on the way.
+    constexpr double kTripLootTiles = 8.0;
+
+    // What the agent is about and why (the player, 2026-11-10: «en cada cosa que hace tiene que saber el motivo de por
+    // qué lo hace; si pretende farmear, el foco no es ir a la quest»). Set by the branch that drives the hero, logged on
+    // each change with its reason; the branches that would pull the hero elsewhere (loot, seeking enemies, quests while
+    // farming) read it.
+    enum class Intent
+    {
+        Explore,
+        Farm,
+        Quest,
+        Shop,
+        Recover,
+        Escape,
+    };
+    Intent g_intent = Intent::Explore;
+    std::string g_intentWhy;
+    DWORD g_intentSince = 0;
+
+    const char* intentName(Intent i)
+    {
+        switch (i)
+        {
+        case Intent::Farm: return "farm";
+        case Intent::Quest: return "quest";
+        case Intent::Shop: return "shop";
+        case Intent::Recover: return "recover";
+        case Intent::Escape: return "escape";
+        default: return "explore";
+        }
+    }
+
+    void setIntent(Intent i, const std::string& why)
+    {
+        if (i == g_intent && why == g_intentWhy)
+        {
+            return;
+        }
+        if (i != g_intent)
+        {
+            g_intentSince = GetTickCount();
+        }
+        LOG("Intent: {} ({})", intentName(i), why);
+        g_intent = i;
+        g_intentWhy = why;
+    }
 
     bool lootNear(int32_t x, int32_t y)
     {
@@ -352,7 +401,8 @@ namespace
         }
         const double tiles = std::max(std::abs(static_cast<double>(x - hero->x)), std::abs(static_cast<double>(y - hero->y))) /
                              kFixedTile;
-        return tiles <= kLootMaxTiles;     // all of it before going on, on a trip too (the player's wish)
+        // All of it before going on; on a trip only what lies at hand (the player's newer wish: the focus is the trip).
+        return tiles <= (g_questTravel ? kTripLootTiles : kLootMaxTiles);
     }
 
     // Doors (AGENT_ADDRESSES «Puertas y entradas»: TYPE_OBJECT_DOOR_* 0x1612..0x1697 and TYPE_OBJECT_S_DOOR 0x1465,
@@ -1100,6 +1150,7 @@ namespace
         {
             g_retreatUntil = now + kRetreatMaxMs;
             g_retreatWalkAt = 0;
+            setIntent(Intent::Recover, "low on health, no healing potion or a fight foreseen lost: stepping back");
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
                 close);
         }
@@ -1293,7 +1344,8 @@ namespace
             // On the way to the merchant with the backpack full, or on a trip to a quest: only those that attack (no
             // fight sought). Focus (the player's wish, 2026-11-10): a trip decided on is gone through to the end;
             // only danger (one that attacks) stops it on the way.
-            const bool seek = Config::autoAttack.seek && !Gear::wantsShop() && !g_questTravel;
+            // Farming is seeking the enemies (the intent); elsewhere only as the setting says, never on a trip.
+        const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm) && !Gear::wantsShop() && !g_questTravel;
             if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
@@ -2670,6 +2722,7 @@ namespace
             if (found)
             {
                 g_doorTried[door.id] = now;
+                setIntent(Intent::Escape, "shut in: the doors first, the way on");
                 LOG("AutoAttack: shut in, a door that opens near ({:x}): opened, the way on", door.id);
                 Findings::note("door", self->x, self->y, "shut in: door {:x} opened", door.id);
                 attack(door.id);
@@ -2716,11 +2769,15 @@ namespace
             for (const Merchant& m : g_merchants)
             {
                 const auto failed = g_shopFailedAt.find(m.id);
-                if (m.layer != layer || (failed != g_shopFailedAt.end() && now - failed->second < 300000))
+                const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                // One in a house (its floor another layer) only near: a click on him sends the hero there by the game's
+                // own path finder, which opens the doors on the way (the player: «algunos comerciantes se encuentran
+                // dentro de casas»).
+                if ((m.layer != layer && d > 30.0 * kTileSize) ||
+                    (failed != g_shopFailedAt.end() && now - failed->second < 300000))
                 {
                     continue;
                 }
-                const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
                 if (!best || d < bestDistance)
                 {
                     best = &m;
@@ -2730,6 +2787,7 @@ namespace
             if (best)
             {
                 g_questTravel = true;
+                setIntent(Intent::Shop, "the backpack full or no healing potion: to a merchant");
                 if (best->id != g_shopId)
                 {
                     LOG("AutoAttack: backpack full, off to merchant {:x} ({:.0f} tiles)", best->id, bestDistance / kTileSize);
@@ -2737,7 +2795,10 @@ namespace
                     g_shopTries = 0;
                     g_shopClickAt = 0;
                 }
-                if (bestDistance > 3.0 * kTileSize)
+                // Far: the agent's travel; near (15 tiles) or in a house: clicks on him, the game's own path through
+                // the doors, more tries for the walk.
+                const bool near = bestDistance <= 15.0 * kTileSize || best->layer != layer;
+                if (!near)
                 {
                     if (!travel(now, self, best->x, best->y, g_shopAskAt))
                     {
@@ -2747,7 +2808,7 @@ namespace
                 }
                 else if (!g_shopClickAt || now - g_shopClickAt > 3000)
                 {
-                    if (++g_shopTries > 5)
+                    if (++g_shopTries > (bestDistance > 3.0 * kTileSize ? 10 : 5))
                     {
                         LOG("AutoAttack: merchant {:x} would not trade, left 5 min", best->id);
                         g_shopFailedAt[best->id] = now;
@@ -2781,10 +2842,28 @@ namespace
         // On another layer (a house's floor, a cellar) only a goal near at hand: the journal's tiles are the
         // overworld's, but seen live (2026-11-09) the Vampiress starts in her house on layer 2 with the main quest 3
         // tiles off, and left it alone (no quest off layer 0) to roam against the walls for 20 minutes.
+        const int heroLevel = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x3FE);
+        // A quest whose ground is more than 2 levels above the hero: farming first, where the enemies fit, until the
+        // hero has the levels (the player: «si pretende farmear, el foco no es ir a la quest»).
+        auto questTooHard = [&](int32_t x, int32_t y) {
+            const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+            const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
+            int lo = 0, hi = 0;
+            if (!world || !sectorLevels(world, static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), lo, hi) ||
+                lo <= heroLevel + 2)
+            {
+                return false;
+            }
+            setIntent(Intent::Farm, std::format("the quest's ground is levels {}-{}, the hero {}: farming first", lo, hi,
+                                                heroLevel));
+            return true;
+        };
         if (Config::autoAttack.quests && questTarget(self->x, self->y, qx, qy, qr, who) &&
-            (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize))
+            (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize) &&
+            !(Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
         {
             questHere = true;
+            setIntent(Intent::Quest, who ? "a quest creature to speak to" : "a quest's goal");
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
             // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.
             const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
@@ -3108,6 +3187,10 @@ namespace
         // No quest to see to: off to the farming zone (many enemies of the hero's level), roaming there.
         if (Config::autoAttack.farm && !questHere && layer == 0 && g_farmKnown)
         {
+            if (g_intent != Intent::Farm)
+            {
+                setIntent(Intent::Farm, "no quest to see to: experience where the enemies fit the hero");
+            }
             const double away = std::hypot(static_cast<double>(g_farmX - self->x), static_cast<double>(g_farmY - self->y));
             if (away > 20.0 * kTileSize)
             {
@@ -3125,6 +3208,10 @@ namespace
         if (!Config::autoAttack.roam)
         {
             return;
+        }
+        if (g_intent != Intent::Farm || !g_farmKnown)
+        {
+            setIntent(Intent::Explore, "nothing to see to around: looking for what there is");
         }
         MapMemory::visit(layer, self->x, self->y);
         // No further since the last order: that way is blocked (water, a wall), and the map remembers it.
