@@ -4,6 +4,7 @@
 #include "input/inject.h"
 #include "input/input_mode.h"
 #include "overlay/overlay.h"
+#include "config/auto_attack.h"
 #include "config/display.h"
 #include "log.h"
 #include "patch.h"
@@ -64,9 +65,11 @@ namespace
     }
 
     // Not while the controller has the cursor: the game warps it to keep it on its world spot as the view scrolls.
+    // Nor while the agent plays (the player, 2026-11-10: «no quiero que mi ratón sea usado por el agente, tiene que
+    // funcionar de forma independiente»): the game never moves the real mouse then; its clicks go in-process.
     BOOL WINAPI hookSetCursorPos(int x, int y)
     {
-        return active() && !Controller::ownsCursor() ? g_origSetCursorPos(x, y) : TRUE;
+        return active() && !Controller::ownsCursor() && !Config::autoAttack.enabled ? g_origSetCursorPos(x, y) : TRUE;
     }
 
     // The player's own input (never the controller's injected messages): who is in charge, the controller or the
@@ -310,7 +313,8 @@ void Focus::onFrame()
         return;
     }
     subclass(window, true);
-    if (!Config::display.clipCursor)
+    // The mouse is never held in the window while the agent plays (the player's mouse stays the player's).
+    if (!Config::display.clipCursor || Config::autoAttack.enabled)
     {
         return;
     }
