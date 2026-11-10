@@ -1,6 +1,7 @@
 #include "game/map_memory.h"
 #include "game/combat_learn.h"
 #include "game/click_walk.h"
+#include "game/hero_profile.h"
 #include <queue>
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
@@ -876,8 +877,22 @@ namespace
         if (ImGui::Begin("##agentmap", nullptr, flags))
         {
             // The title centered over the radar, with a shadow to read on any ground.
-            char title[96];
-            std::snprintf(title, sizeof(title), "Visión del agente · capa %d", g_heroLayer);
+            // Whose vision it is (the player, 2026-11-10: the character's name at the top; with eight agents side by
+            // side each window tells its class and level).
+            static const char* const kNames[] = {"Héroe",     "Serafín",  "Gladiador", "Mago de batalla", "Elfo oscuro",
+                                                 "Elfa del bosque", "Vampiresa", "Vampiresa (noche)", "Enano", "Daemon"};
+            const HeroProfile::Data hero = HeroProfile::current();
+            const uint32_t cls = static_cast<uint32_t>(hero.cls);
+            char title[128];
+            if (hero.valid)
+            {
+                std::snprintf(title, sizeof(title), "%s · nivel %d · capa %d", kNames[cls < 10 ? cls : 0], hero.level,
+                              g_heroLayer);
+            }
+            else
+            {
+                std::snprintf(title, sizeof(title), "Visión del agente · capa %d", g_heroLayer);
+            }
             const ImVec2 extent = ImGui::CalcTextSize(title);
             const float width = std::max(size, extent.x);
             const ImVec2 origin = ImGui::GetCursorScreenPos();
