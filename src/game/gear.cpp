@@ -1560,6 +1560,25 @@ namespace
             s_openAt = tick;
         }
         s_lastSeen = tick;
+        // The window opens empty (the live verifier, 2026-11-10: +0x154 still 0 minutes on); the game fills it on a
+        // click on the horse. Manolito, V3b live: the horse for sale is bound to the stable man both ways (man +0x570
+        // the horse, the horse's +0x570 the man; the man's id at window +0x158): offered here with 0x6BEB90
+        // thiscall(window, horse id), ret 4, which also sets the price.
+        if (!*reinterpret_cast<const uint32_t*>(w + 0x154))
+        {
+            cObjectManager* om = cObjectManager::instance();
+            const uint32_t manId = *reinterpret_cast<const uint32_t*>(w + 0x158);
+            const auto* man = om && manId ? reinterpret_cast<const uint8_t*>(om->object(manId)) : nullptr;
+            const uint32_t forSale = man ? *reinterpret_cast<const uint32_t*>(man + 0x570) : 0;
+            const auto* offered = om && forSale ? reinterpret_cast<const uint8_t*>(om->creature(forSale)) : nullptr;
+            if (offered && *reinterpret_cast<const uint32_t*>(offered + 0x570) == manId)
+            {
+                using Offer = void(__fastcall*)(uint8_t* window, void*, uint32_t id);
+                fn<Offer>(0x6BEB90)(w, nullptr, forSale);
+                LOG("Gear: horse: the stable man {:x}'s horse {:x} offered", manId, forSale);
+                return true;
+            }
+        }
         const uint32_t horseId = *reinterpret_cast<const uint32_t*>(w + 0x154);
         const uint32_t price = *reinterpret_cast<const uint32_t*>(w + 0x15C);
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
