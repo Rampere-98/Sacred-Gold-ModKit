@@ -1259,3 +1259,8 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     Inject::call(&switchSlot, nullptr);
     return true;
 }
+
+int Gear::healingLeft()
+{
+    return g_healing;
+}

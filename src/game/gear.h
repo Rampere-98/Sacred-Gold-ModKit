@@ -15,6 +15,9 @@ namespace Gear
 
     // Merchant trips ([Gear] Trips): the backpack is full, the agent should take the hero to a merchant.
     bool wantsShop();
+
+    // Healing potions in the backpack at the last look (-1 not counted yet).
+    int healingLeft();
     // The backpack has no room left (whatever the trips setting): the agent leaves items lying.
     bool packFull();
     // The agent opened a shop for the trip: sold to, upgrades put on (whatever the menu says), then done.

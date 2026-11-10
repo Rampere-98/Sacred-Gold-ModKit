@@ -1,4 +1,5 @@
 #include "game/tactics.h"
+#include "game/gear.h"
 #include "config.h"
 #include "config/tactics.h"
 #include "game/combat_learn.h"
@@ -1086,7 +1087,10 @@ namespace
             for (int i = 0; objects && i < s.hirelingCount; ++i)
             {
                 const cCreature* h = objects->creature(s.hirelings[i]);
-                if (h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 60)
+                // Badly hurt only (35 %), and the hero's own kept: the analyst, 2026-11-10, counted 12 potions given
+                // to hirelings against 7 bought, the hero then with none (stepping back at 26 of 124).
+                if (h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 35 &&
+                    Gear::healingLeft() >= 3 && s.health * 2 >= s.maxHealth)
                 {
                     hurtHireling = true;
                 }
