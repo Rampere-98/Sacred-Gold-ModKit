@@ -3038,8 +3038,14 @@ namespace
                 double bestIn = 40.0;
                 for (const Teleports::Interior& in : Teleports::interiors())
                 {
+                    // Only a door nearer than the goal itself (a house's inside placed far off on the map): one 2893
+                    // tiles off for a goal 37 tiles away swapped with it every second (the player saw it looping,
+                    // 2026-11-10: «quiere abrir puertas a km de distancia»).
                     const double d = std::hypot(in.inX - gtx, in.inY - gty);
-                    if (d < bestIn && std::hypot(in.inX - htx, in.inY - hty) > 60.0)
+                    const double toDoor = std::hypot(in.outX - htx, in.outY - hty);
+                    const double toGoal = std::hypot(gtx - htx, gty - hty);
+                    if (d < bestIn && std::hypot(in.inX - htx, in.inY - hty) > 60.0 && toDoor < toGoal * 0.8 &&
+                        toDoor < 300.0)
                     {
                         bestIn = d;
                         door = &in;
