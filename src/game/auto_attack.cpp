@@ -4480,7 +4480,23 @@ namespace
                 npc = nullptr;
             }
             // A kill quest: the target a living enemy of the hero's, gone for even beyond the fight range.
-            if (cCreature* foe = npc ? npc->asCreature() : nullptr; foe && foe->health > 0 && hero->isEnemy(foe))
+            // Not one left as too strong for now, nor any with no healing potion left (the live verifier, 2026-11-11:
+            // the Dark Elf marked 5dd too strong, went for it as the quest's target 33 s on with no potion and died).
+            cCreature* questFoe = npc ? npc->asCreature() : nullptr;
+            if (questFoe && questFoe->health > 0 && hero->isEnemy(questFoe) &&
+                (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) || Gear::healingLeft() == 0))
+            {
+                static uint32_t s_toldFoe = 0;
+                if (s_toldFoe != who)
+                {
+                    s_toldFoe = who;
+                    LOG("AutoAttack: quest target {:x} is an enemy, but {}: not now", who,
+                        Gear::healingLeft() == 0 ? "no healing potion left" : "too strong for now");
+                }
+                questFoe = nullptr;
+                npc = nullptr;
+            }
+            if (cCreature* foe = questFoe; foe && foe->health > 0 && hero->isEnemy(foe))
             {
                 if (now - g_questAskAt > 2000)
                 {

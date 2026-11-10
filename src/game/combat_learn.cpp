@@ -478,7 +478,10 @@ namespace
             fc.loss += items[i].rate * clock;
             g_killRank[items[i].id] = static_cast<int>(i);
         }
-        fc.seconds = clock;
+        // Bounded (the live verifier, 2026-11-11: «351934% lost in 147 s», a kill rate near 0 stretching the clock):
+        // ten times the hero's health and ten minutes at most, the fight foreseen lost all the same.
+        fc.loss = std::min(fc.loss, 10.0f);
+        fc.seconds = std::min(clock, 600.0f);
         fc.first = items.empty() ? 0 : items[0].id;
         if (fc.loss > 1e-4f && heroFraction > 0.0f)
         {
