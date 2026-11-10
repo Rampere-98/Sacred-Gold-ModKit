@@ -1288,9 +1288,13 @@ namespace
             const cCreature* own = horse && om ? om->creature(horse) : nullptr;
             if (s_wildSentAt)
             {
-                if (horse == s_wildId)
+                // Taken: the hero's own now, or at least ridden (the hero where it stands; the code reviewer: the ride
+                // event may mount a free horse without binding it, unconfirmed).
+                const cCreature* wild = om ? om->creature(s_wildId) : nullptr;
+                const bool riding = wild && std::abs(wild->x - self->x) <= 3 && std::abs(wild->y - self->y) <= 3;
+                if (horse == s_wildId || riding)
                 {
-                    LOG("AutoAttack: wild horse {:x} taken", s_wildId);
+                    LOG("AutoAttack: wild horse {:x} taken ({})", s_wildId, horse == s_wildId ? "the hero's now" : "ridden, not bound");
                     s_wildId = 0;
                     s_wildSentAt = 0;
                 }
