@@ -1910,6 +1910,8 @@ namespace
         int32_t x, y;
     };
     std::vector<Merchant> g_merchants;
+    // The combo masters (creature +0x200 & 0x4000): where runes of other classes are swapped for the hero's own.
+    std::vector<Merchant> g_masters;
 
     // Farming zones, from the same pass (the object list holds the whole world): living hostile creatures on the
     // surface counted per sector (64x64 tiles), the sector's level range from its block ([sector +0x17C] +0xD3 min,
@@ -2208,6 +2210,7 @@ namespace
         g_signs.clear();
         std::vector<MapMemory::QuestMark> marks;
         g_merchants.clear();
+        g_masters.clear();
         g_farmBuilding.clear();
         g_chestBuilding = 0;
         g_chestBest = 0.0;
@@ -2273,6 +2276,13 @@ namespace
                         g_merchants.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
                                                *reinterpret_cast<const int32_t*>(o + 0x1C),
                                                *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    }
+                    if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0x200) & 0x4000))
+                    {
+                        g_masters.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
+                                             *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                             *reinterpret_cast<const int32_t*>(o + 0x20)});
                     }
                     if (!o || !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) ||
                         (*reinterpret_cast<const uint32_t*>(o + 0x200) & (0x1000 | 0x2000 | 0x4000 | 0x4000000)))
@@ -3024,6 +3034,89 @@ namespace
             {
                 g_shopTold = true;
                 LOG("AutoAttack: backpack full and no merchant known on this layer");
+            }
+        }
+        // Runes of other classes (Gear::wantsRuneSwap): off to the nearest combo master as to a merchant, a click on
+        // him opens his window. The swap itself waits for Manolito's block S; meanwhile the window's UI objects are
+        // logged once it opens and the trip is left 30 min.
+        {
+            static uint32_t s_masterId = 0;
+            static DWORD s_leftAt = 0, s_clickAt = 0, s_askAt = 0;
+            static int s_tries = 0;
+            const uint8_t mode = *(reinterpret_cast<const uint8_t*>(self) + 0xFC);
+            const uint32_t npc = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x100);
+            if (s_masterId && mode == 0xA && npc == s_masterId)
+            {
+                LOG("AutoAttack: at combo master {:x} with {} runes of other classes: his window open", s_masterId,
+                    Gear::foreignRunes());
+                if (const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(0x17EEBBC))
+                {
+                    for (int i = 0; i < 48; ++i)
+                    {
+                        const auto* w = *reinterpret_cast<const uint8_t* const*>(ui + 0x80 + 4 * i);
+                        if (w && !IsBadReadPtr(w, 0x14))
+                        {
+                            LOG("AutoAttack: ui window {} at +{:x}: vtable {:x}, +0x10 {:x}", i, 0x80 + 4 * i,
+                                *reinterpret_cast<const uint32_t*>(w), *reinterpret_cast<const uint32_t*>(w + 0x10));
+                        }
+                    }
+                }
+                s_leftAt = now;
+                s_masterId = 0;
+            }
+            if (Gear::wantsRuneSwap() && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
+            {
+                const Merchant* best = nullptr;
+                double bestDistance = 0.0;
+                for (const Merchant& m : g_masters)
+                {
+                    const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                    if ((m.layer == layer || d < 30.0 * kTileSize) && (!best || d < bestDistance))
+                    {
+                        best = &m;
+                        bestDistance = d;
+                    }
+                }
+                if (best)
+                {
+                    g_questTravel = true;
+                    setIntent(Intent::Shop, "runes of other classes: to a combo master to swap them");
+                    if (best->id != s_masterId)
+                    {
+                        LOG("AutoAttack: {} runes of other classes, off to combo master {:x} ({:.0f} tiles)",
+                            Gear::foreignRunes(), best->id, bestDistance / kTileSize);
+                        s_masterId = best->id;
+                        s_tries = 0;
+                        s_clickAt = 0;
+                    }
+                    if (bestDistance > 15.0 * kTileSize && best->layer == layer)
+                    {
+                        if (!travel(now, self, best->x, best->y, s_askAt))
+                        {
+                            LOG("AutoAttack: combo master {:x} out of reach: left 30 min", best->id);
+                            s_leftAt = now;
+                            s_masterId = 0;
+                        }
+                    }
+                    else if (!s_clickAt || now - s_clickAt > 3000)
+                    {
+                        if (++s_tries > 10)
+                        {
+                            LOG("AutoAttack: combo master {:x} would not open his window: left 30 min", best->id);
+                            s_leftAt = now;
+                            s_masterId = 0;
+                        }
+                        else
+                        {
+                            LOG("AutoAttack: speaking to combo master {:x} (try {})", best->id, s_tries);
+                            s_clickAt = now;
+                            attack(best->id);
+                        }
+                    }
+                    MapMemory::setRoute(true, best->x, best->y);
+                    g_roamAt = 0;
+                    return;
+                }
             }
         }
         // Held by the game: talking or trading with an NPC (the hero's +0xFC 0xA, the NPC at +0x100; Manolito, block

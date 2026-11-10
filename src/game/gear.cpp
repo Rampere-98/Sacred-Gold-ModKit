@@ -993,6 +993,26 @@ namespace
         }
     }
 
+    // Runes of other classes in the backpack (the player, 2026-11-10: «las runas son importantes para
+    // intercambiar/usar»): three of them and 500 gold make one of the hero's own at a combo master (AGENT_ADDRESSES
+    // «Comerciante de runas»: 2 -> any class for 100, 3 -> own class for 500, 4 -> chosen for 2000).
+    std::atomic<int> g_foreignRunes{0};
+
+    int countForeignRunes(cCreature* hero, uint8_t* pack)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        int n = 0;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            const auto* o = objects ? reinterpret_cast<const uint8_t*>(objects->object(id)) : nullptr;
+            if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && !(flagsOf(id) & kQuestItem) &&
+                fn<CanUse>(g_canUse)(hero, nullptr, id, 1) == 0)
+            {
+                ++n;
+            }
+        });
+        return n;
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1002,6 +1022,15 @@ namespace
         if (hero && inv && pack && hero->health > 0)
         {
             stashHeld(pack);
+            if (g_canUse)
+            {
+                const int foreign = countForeignRunes(hero, pack);
+                if (g_foreignRunes.exchange(foreign) != foreign && foreign)
+                {
+                    LOG("Gear: {} runes of other classes in the backpack (3 and 500 gold make one of the hero's own "
+                        "at a combo master)", foreign);
+                }
+            }
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
@@ -1172,6 +1201,19 @@ int Gear::grade(uint32_t id, bool equipment)
 bool Gear::packFull()
 {
     return g_ready && g_full;
+}
+
+int Gear::foreignRunes()
+{
+    return g_ready ? g_foreignRunes.load() : 0;
+}
+
+bool Gear::wantsRuneSwap()
+{
+    const cCreature* hero = cObjectManager::instance() ? cObjectManager::instance()->hero() : nullptr;
+    const uint32_t gold = hero ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold) : 0;
+    // 500 for the swap and as much kept for potions.
+    return g_ready && g_settings.runes && g_foreignRunes >= 3 && gold >= 1000;
 }
 
 bool Gear::wantsShop()
