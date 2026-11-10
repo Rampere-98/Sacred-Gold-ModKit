@@ -4138,6 +4138,7 @@ bool AutoAttack::on()
 
 void AutoAttack::onFrame()
 {
+    Teleports::onFrame();
     // The game's cinema mode (cUI_Manager +8 bit 0x10, the script's SetCinemaMode; Manolito, block M): not to be
     // skipped (the hero held for the script's NPC_Goto, MoveOver, Teleport); the agent stands, only noted here.
     if (cUI_Manager* ui = cUI_Manager::instance())

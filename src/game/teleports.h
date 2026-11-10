@@ -37,4 +37,7 @@ namespace Teleports
     // The player's Alt+click on the world map (M): the hero to the tile clicked (layer 0), never with the agent on.
     // Call inside a Patch transaction.
     void install();
+
+    // Each frame: a teleport onto ground not loaded then is set onto the nearest walkable tile once it loads.
+    void onFrame();
 }

@@ -1,5 +1,6 @@
 #include "game/teleports.h"
 #include "game/auto_attack.h"
+#include "game/click_walk.h"
 #include "game/sacred_addr.h"
 #include "log.h"
 #include "patch.h"
@@ -187,6 +188,104 @@ bool Teleports::heroAt(int& tx, int& ty, int& layer)
     return true;
 }
 
+namespace
+{
+    // A teleport whose ground was not loaded when clicked: once its sectors are, the hero goes to the nearest walkable
+    // tile if it stands on one that is not (water, a rock, a wall).
+    struct PendingSnap
+    {
+        int tx = 0, ty = 0, layer = 0;
+        DWORD since = 0;
+    } g_snap;
+
+    // The walkable tile nearest (tx, ty) within 40 tiles, ring by ring (the nearest of the first ring with one):
+    // 1 found, 0 none there, -1 the ground not loaded.
+    int nearestWalkable(int layer, int tx, int ty, int& ox, int& oy)
+    {
+        const int here = ClickWalk::walkable(layer, tx, ty);
+        if (here != 0)
+        {
+            ox = tx;
+            oy = ty;
+            return here;
+        }
+        for (int r = 1; r <= 40; ++r)
+        {
+            double best = 1e9;
+            bool unknown = false;
+            for (int dy = -r; dy <= r; ++dy)
+            {
+                for (int dx = -r; dx <= r; ++dx)
+                {
+                    if (std::abs(dx) != r && std::abs(dy) != r)
+                    {
+                        continue;
+                    }
+                    const int w = ClickWalk::walkable(layer, tx + dx, ty + dy);
+                    unknown = unknown || w < 0;
+                    if (w == 1 && std::hypot(dx, dy) < best)
+                    {
+                        best = std::hypot(dx, dy);
+                        ox = tx + dx;
+                        oy = ty + dy;
+                    }
+                }
+            }
+            if (best < 1e9)
+            {
+                return 1;
+            }
+            if (unknown)
+            {
+                return -1;
+            }
+        }
+        return 0;
+    }
+
+    bool writeHero(int tx, int ty, int layer)
+    {
+        const uintptr_t om = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+        const uintptr_t player = *reinterpret_cast<const uintptr_t*>(0x182EBE8);
+        int x = 0, y = 0, l = 0;
+        if (!Teleports::heroAt(x, y, l))
+        {
+            return false;
+        }
+        const uintptr_t hero = *reinterpret_cast<const uintptr_t*>(
+            *reinterpret_cast<const uintptr_t*>(om + 4) + 4 * *reinterpret_cast<const uint32_t*>(player + 0x14));
+        *reinterpret_cast<int32_t*>(hero + 0x1C) = static_cast<int32_t>((tx + 0.5) * Teleports::kWorldPerTile);
+        *reinterpret_cast<int32_t*>(hero + 0x20) = static_cast<int32_t>((ty + 0.5) * Teleports::kWorldPerTile);
+        *reinterpret_cast<uint8_t*>(hero + 0x24) = static_cast<uint8_t>(layer);
+        return true;
+    }
+}
+
+void Teleports::onFrame()
+{
+    if (!g_snap.since)
+    {
+        return;
+    }
+    if (GetTickCount() - g_snap.since > 10000)
+    {
+        LOG("Teleports: the ground at {},{} not loaded in 10 s: left as it is", g_snap.tx, g_snap.ty);
+        g_snap.since = 0;
+        return;
+    }
+    int ox = 0, oy = 0;
+    const int found = nearestWalkable(g_snap.layer, g_snap.tx, g_snap.ty, ox, oy);
+    if (found < 0)
+    {
+        return;     // not loaded yet
+    }
+    g_snap.since = 0;
+    if (found == 1 && (ox != g_snap.tx || oy != g_snap.ty) && writeHero(ox, oy, g_snap.layer))
+    {
+        LOG("Teleports: {},{} not walkable: the hero to {},{}, the nearest walkable", g_snap.tx, g_snap.ty, ox, oy);
+    }
+}
+
 bool Teleports::playerTeleport(int tx, int ty, int layer)
 {
     const uintptr_t om = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
@@ -196,11 +295,31 @@ bool Teleports::playerTeleport(int tx, int ty, int layer)
     {
         return false;
     }
-    const uintptr_t hero = *reinterpret_cast<const uintptr_t*>(
-        *reinterpret_cast<const uintptr_t*>(om + 4) + 4 * *reinterpret_cast<const uint32_t*>(player + 0x14));
-    *reinterpret_cast<int32_t*>(hero + 0x1C) = static_cast<int32_t>((tx + 0.5) * kWorldPerTile);
-    *reinterpret_cast<int32_t*>(hero + 0x20) = static_cast<int32_t>((ty + 0.5) * kWorldPerTile);
-    *reinterpret_cast<uint8_t*>(hero + 0x24) = static_cast<uint8_t>(layer);
+    (void)om;
+    (void)player;
+    // The tile clicked or the nearest walkable one, worked out before the jump where the ground is loaded; else on
+    // arrival, as soon as it loads.
+    int ox = tx, oy = ty;
+    const int found = nearestWalkable(layer, tx, ty, ox, oy);
+    if (found == 0)
+    {
+        return false;   // nothing walkable within 40 tiles
+    }
+    if (!writeHero(ox, oy, layer))
+    {
+        return false;
+    }
+    g_snap = {};
+    if (found < 0)
+    {
+        g_snap = {tx, ty, layer, GetTickCount()};
+    }
+    else if (ox != tx || oy != ty)
+    {
+        LOG("Teleports: {},{} not walkable: to {},{}, the nearest walkable", tx, ty, ox, oy);
+    }
+    tx = ox;
+    ty = oy;
     LOG("Teleports: the player teleported the hero from {},{} (layer {}) to {},{} (layer {})", x, y, l, tx, ty, layer);
     return true;
 }
