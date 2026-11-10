@@ -1164,30 +1164,32 @@ namespace
             "mercaderes: comprar o vender", "caballo: comprar o montar un caballo", "historia: seguir la misión principal",
             "primeros pasos: abrir el cofre y hablar con el PNJ", "terminado", "recompensas: cobrar en el «!»",
             "maestro de combos: crear un combo", "herrero: engarzar", "escaleras: subirlas", "paso 18"};
+        // Seen live 2026-11-10 (8 heroes): the value is the tutorial on screen, back to 0 once it is closed (2 at
+        // the first chest, 16 by the smith), not a running count: each one shown is a lesson, counted once.
+        static uint32_t s_seen = 0;     // bit per tutorial shown this session
         const uint32_t step = *reinterpret_cast<const uint32_t*>(s_var + 0x20);
         const char* ask = step < std::size(kAsks) ? kAsks[step] : "paso desconocido";
         if (step != s_step)
         {
-            if (s_step != 0xFFFFFFFFu)
+            if (step && step < 32 && !(s_seen & (1u << step)))
             {
+                s_seen |= 1u << step;
                 ++s_taken;
-                LOG("AutoAttack: tutorial: step {} -> {} ({}) after {} s, {} taken this session", s_step, step, ask,
-                    (now - s_stepAt) / 1000, s_taken);
-                remember(std::format("tutorial: paso {} cumplido en {} s; ahora {}", s_step, (now - s_stepAt) / 1000, ask));
+                LOG("AutoAttack: tutorial {} shown ({}), {} of 17 seen this session", step, ask, s_taken);
+                remember(std::format("tutorial {}: {}", step, ask));
             }
-            else
+            else if (!step && s_step && s_step != 0xFFFFFFFFu)
             {
-                LOG("AutoAttack: tutorial at step {} ({})", step, ask);
+                LOG("AutoAttack: tutorial {} closed after {} s", s_step, (now - s_stepAt) / 1000);
             }
             s_step = step;
             s_stepAt = now;
             s_stuckLogged = false;
         }
-        else if (!s_stuckLogged && step != 0 && step != 0x0D && now - s_stepAt > 180000)
+        else if (!s_stuckLogged && step != 0 && now - s_stepAt > 20000)
         {
             s_stuckLogged = true;
-            LOG("AutoAttack: tutorial: step {} ({}) standing for {} s", step, ask, (now - s_stepAt) / 1000);
-            remember(std::format("tutorial: atascado en el paso {} ({})", step, ask));
+            LOG("AutoAttack: tutorial {} ({}) open for {} s", step, ask, (now - s_stepAt) / 1000);
         }
     }
 
