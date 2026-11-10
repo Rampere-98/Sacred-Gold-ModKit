@@ -1231,7 +1231,15 @@ namespace
         {
             return;
         }
-        const bool mounted = (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x200) & 0x10) != 0;
+        // Mounted: the horse stands exactly where the rider does (seen live 2026-11-10, the player's Gladiator on its
+        // horse: same position each second; +0x200 & 0x10, the guess, stayed clear and the agent kept mounting).
+        cObjectManager* om = cObjectManager::instance();
+        const cCreature* steed = om ? om->creature(horse) : nullptr;
+        if (!steed)
+        {
+            return;
+        }
+        const bool mounted = steed->x == self->x && steed->y == self->y;
         double nearest = 1e9;
         for (const AggroFoe& f : g_aggroFoes)
         {
