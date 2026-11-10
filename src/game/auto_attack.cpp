@@ -1641,7 +1641,22 @@ namespace
             }
             const bool recovered =
                 health * 100 >= maximum * std::min((c.retreatPercent != 25 ? c.retreatPercent : Mind::now().retreatPercent) + 20, 90);
-            const bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
+            bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
+            // Not back into the fight with little health and no potion (the live verifier, 2026-11-11: 5 of 13
+            // deaths within 15 s of «too long, fighting again», one at 30 of 189): the retreat goes on, three times
+            // at most, before it does turn to fight.
+            static int s_extended = 0;
+            if (tooLong && noPotions && anyNear && health * 100 < maximum * 40 && s_extended < 3)
+            {
+                ++s_extended;
+                g_retreatUntil = now + kRetreatMaxMs;
+                LOG("AutoAttack: stepping back on: {} of {} health and no potion ({} of 3)", health, maximum, s_extended);
+                tooLong = false;
+            }
+            else if (recovered || !noPotions || !anyNear || tooLong)
+            {
+                s_extended = 0;
+            }
             if (recovered || !noPotions || !anyNear || tooLong)
             {
                 LOG("AutoAttack: stepping back over ({})", recovered    ? "health back up"
@@ -4487,8 +4502,11 @@ namespace
             cCreature* questFoe = npc ? npc->asCreature() : nullptr;
             const auto levelOf = [](const cCreature* c)
             { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(c) + 0x3FE)); };
+            // Nor into a fight foreseen under 30 % to win (the live verifier, 2026-11-11: attacked at 8 % among six).
+            const CombatLearn::Forecast& questFc = CombatLearn::forecast();
+            const bool questLost = questFc.foes > 0 && questFc.win < 0.3f;
             if (questFoe && questFoe->health > 0 && hero->isEnemy(questFoe) &&
-                (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) ||
+                (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) || questLost ||
                  (Gear::healingLeft() == 0 && levelOf(questFoe) + 3 > levelOf(hero))))
             {
                 static uint32_t s_toldFoe = 0;
@@ -4496,7 +4514,7 @@ namespace
                 {
                     s_toldFoe = who;
                     LOG("AutoAttack: quest target {:x} is an enemy, but {}: not now", who,
-                        Gear::healingLeft() == 0 ? "no healing potion left" : "too strong for now");
+                        questLost ? "the fight is foreseen lost" : Gear::healingLeft() == 0 ? "no healing potion left" : "too strong for now");
                 }
                 questFoe = nullptr;
                 npc = nullptr;

@@ -527,11 +527,16 @@ namespace
         {
             s_visitGold = gold;
         }
-        if (gold < s_visitGold * 2 / 5)
+        // Short of half the stock, potions come before anything else: only 300 gold kept back (the live verifier,
+        // 2026-11-11: two bought of eight with 2002 and 4842 gold left, then 14 of 15 deaths with no potion).
+        const int have = countHealing(pack);
+        const bool urgent = have * 2 < wantHealing();
+        if (!urgent && gold < s_visitGold * 2 / 5)
         {
             return false;
         }
         bool done = false;
+        const char* why = "no healing potion on sale";
         // The cheapest healing potion on sale first (more of them for the gold; the analyst, 2026-11-10: 3-5 a visit
         // at 585 each did not last the melee classes).
         uint32_t cheapest = 0xFFFFFFFFu;
@@ -562,9 +567,18 @@ namespace
                 const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
                 uint16_t free = 0;
                 // Potions before the gold kept back: at most a quarter of the visit's gold on one, 40 % of it kept.
-                if (price > cheapest || price > s_visitGold / 4 || gold - price < s_visitGold * 2 / 5 ||
-                    !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                if (price > cheapest)
                 {
+                    return;
+                }
+                if (urgent ? gold < price + 300 : (price > s_visitGold / 4 || gold - price < s_visitGold * 2 / 5))
+                {
+                    why = "gold kept back";
+                    return;
+                }
+                if (!fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                {
+                    why = "no room in the backpack";
                     return;
                 }
                 cObject* item = cObjectManager::instance()->object(id);
@@ -580,6 +594,16 @@ namespace
                 done = true;
                 s_lastBuy = now;
             });
+        }
+        if (!done)
+        {
+            static DWORD s_toldAt = 0;
+            if (now - s_toldAt > 30000)
+            {
+                s_toldAt = now;
+                LOG("Gear: potions: have {}, want {}, no more bought ({}; gold {}, cheapest {})", have, wantHealing(), why,
+                    gold, cheapest == 0xFFFFFFFFu ? 0u : cheapest);
+            }
         }
         return done;
     }

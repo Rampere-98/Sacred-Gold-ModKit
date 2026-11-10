@@ -497,6 +497,8 @@ namespace
 
     // A fight over: its loss against the forecast made at its start (the bias and spread of the log error), and the
     // hero's blows per second from the health the enemies lost.
+    uint32_t g_heroGold = 0;    // the hero's gold at the last look (for the death's log)
+
     void learnForecast(float seconds)
     {
         if (g_fight.heroMax <= 0)
@@ -534,8 +536,8 @@ namespace
                 }
             }
             g_dirty = true;
-            LOG("CombatLearn: the hero died: punished (forecast bias {:.2f} -> {:.2f}, {} enemy kinds learned as harder)",
-                before, g_lossBias, kinds);
+            LOG("CombatLearn: the hero died: punished (forecast bias {:.2f} -> {:.2f}, {} enemy kinds learned as harder; "
+                "{} healing potions, {} gold)", before, g_lossBias, kinds, Gear::healingLeft(), g_heroGold);
             return;
         }
         if (g_fight.forecast.loss > 0.01f && seconds >= 3.0f)
@@ -633,6 +635,10 @@ void CombatLearn::observe(const Look& look)
 {
     install();
     cCreature* hero = look.hero;
+    if (hero)
+    {
+        g_heroGold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x3A8 + 0x46);
+    }
     if (!hero || hero->maxHealth <= 0)
     {
         return;
