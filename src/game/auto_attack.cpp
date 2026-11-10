@@ -807,6 +807,27 @@ namespace
         return true;
     }
 
+    // The A key's «collect» (Manolito's block U3, 2026-11-10; the player: «al apretar A el personaje recogía sin salir
+    // del caballo»): a cEvent 0x113 with the player's id at +0xC to the hero's receiveEvent puts it in its pick up mode
+    // (+0xFC = 0xC), which walks to the nearest loot and takes it, mounted or not.
+    void sendCollect(void*)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        const uint8_t* player = *reinterpret_cast<const uint8_t* const*>(0x182EBE8);
+        if (!hero || !player)
+        {
+            return;
+        }
+        alignas(8) uint8_t ev[0x44] = {};
+        *reinterpret_cast<uintptr_t*>(ev) = 0x89095C;
+        *reinterpret_cast<uint32_t*>(ev + 4) = 0x113;
+        *reinterpret_cast<uint32_t*>(ev + 0xC) = *reinterpret_cast<const uint32_t*>(player + 0x14);
+        using Handle = void(__fastcall*)(void* self, void*, void* ev);
+        const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
+        reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
+    }
+
     // Orders the creature the mouse commands (the hero, or its mount) to attack, pick up or open `id`, as a click
     // on it does.
     bool attack(uint32_t id)
@@ -857,6 +878,19 @@ namespace
         if (cCreature* hero = objects->hero(); hero && hero != self && target->asCreature())
         {
             self = hero;
+        }
+        // Mounted, loot is taken as the A key takes it, without getting off (once a second at most).
+        else if (hero && hero != self && !target->asCreature())
+        {
+            static DWORD s_collectAt = 0;
+            const DWORD now = GetTickCount();
+            if (now - s_collectAt > 1000)
+            {
+                s_collectAt = now;
+                LOG("AutoAttack: mounted: collecting {:x} as the A key does", id);
+                Inject::call(&sendCollect, nullptr);
+            }
+            return true;
         }
         if (!target->asCreature() && walkFirst(self, target->x, target->y))
         {
