@@ -19,6 +19,7 @@ namespace Gear
     // the swap (three of them make one of the hero's own class).
     int foreignRunes();
     bool wantsRuneSwap();
+    bool wantsCombo();         // a combo to learn at a combo master
 
     // Healing potions in the backpack at the last look (-1 not counted yet).
     int healingLeft();

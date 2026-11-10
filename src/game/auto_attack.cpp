@@ -3460,7 +3460,7 @@ namespace
                 s_leftAt = now;
                 s_masterId = 0;
             }
-            if (Gear::wantsRuneSwap() && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
+            if ((Gear::wantsRuneSwap() || Gear::wantsCombo()) && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
             {
                 const Merchant* best = nullptr;
                 double bestDistance = 0.0;
@@ -3476,7 +3476,8 @@ namespace
                 if (best)
                 {
                     g_questTravel = true;
-                    setIntent(Intent::Shop, "runes of other classes: to a combo master to swap them");
+                    setIntent(Intent::Shop, Gear::wantsCombo() ? "a combo to learn: to a combo master"
+                                                               : "runes of other classes: to a combo master to swap them");
                     if (best->id != s_masterId)
                     {
                         LOG("AutoAttack: {} runes of other classes, off to combo master {:x} ({:.0f} tiles)",

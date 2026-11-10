@@ -9,6 +9,7 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <vector>
 #include <atomic>
 #include <cstring>
 #include <cstdint>
@@ -1158,6 +1159,143 @@ namespace
         return true;
     }
 
+    // Combos at a combo master (the tutorial's step 15; the player, 2026-11-10: «tienen que saber hacer todo el
+    // tutorial perfectamente»). Manolito, block V1: the master's tab page 0 is cUI_MasterCombo (vtable 0x8967E4); its 4
+    // art slots hold the art's id (dword) at +0x2CC + i*0x188 and its level (u16) at +0x2D0 + i*0x188, and each counts
+    // only when it matches the template of the dropped descriptor (+0x778, u16 kind 4; +0x780 u16 ids[4], +0x788 u8
+    // levels[4]); learn 0x6D22A0 thiscall(page, u32 the local player's id), ret 4: it checks the gold, finds the free
+    // combo, stores it (stats +0x10E), pays with the game's own addGold and empties the slots. Of the hero's learned
+    // arts (stats +0x102..+0x106, 22 bytes: u32 kind 1 spell / 2 weapon art, u16 id at +4, u16 level at +6) the 2-3 of
+    // one kind with the highest levels, not mixed (mixing unconfirmed). One combo for now (the tutorial's lesson).
+    constexpr uintptr_t kComboPageVtable = 0x8967E4, kLearnCombo = 0x6D22A0;
+    using LearnCombo = void(__fastcall*)(uint8_t* page, void*, uint32_t player);
+    std::atomic<bool> g_wantCombo{false};
+    DWORD g_comboTriedAt = 0;
+
+    int comboCount(const uint8_t* st)
+    {
+        const uint8_t* combos = *reinterpret_cast<uint8_t* const*>(st + 0x10E);
+        int n = 0;
+        for (int i = 0; combos && i < 4; ++i)
+        {
+            const uint8_t* r = combos + i * 38;
+            const uint16_t id = *reinterpret_cast<const uint16_t*>(r);
+            n += id >= 0x200 && id < 0x204 && *reinterpret_cast<const uint32_t*>(r + 2) ? 1 : 0;
+        }
+        return n;
+    }
+
+    // The arts for the next combo: up to 3 of the kind with the most, highest levels first; 0 when under 2.
+    int comboArts(const uint8_t* st, uint32_t ids[4], uint16_t levels[4])
+    {
+        struct Art
+        {
+            uint32_t kind;
+            uint16_t id, level;
+        };
+        std::vector<Art> arts;
+        const uint8_t* begin = *reinterpret_cast<uint8_t* const*>(st + 0x102);
+        const uint8_t* end = *reinterpret_cast<uint8_t* const*>(st + 0x106);
+        for (const uint8_t* a = begin; begin && end > begin && end - begin < 22 * 64 && a + 22 <= end; a += 22)
+        {
+            const uint32_t kind = *reinterpret_cast<const uint32_t*>(a);
+            const uint16_t id = *reinterpret_cast<const uint16_t*>(a + 4), level = *reinterpret_cast<const uint16_t*>(a + 6);
+            if ((kind == 1 || kind == 2) && id && level)
+            {
+                arts.push_back({kind, id, level});
+            }
+        }
+        const auto count = [&](uint32_t k) {
+            return std::count_if(arts.begin(), arts.end(), [&](const Art& a) { return a.kind == k; });
+        };
+        const uint32_t kind = count(2) >= count(1) ? 2 : 1;
+        std::erase_if(arts, [&](const Art& a) { return a.kind != kind; });
+        std::sort(arts.begin(), arts.end(), [](const Art& a, const Art& b) { return a.level > b.level; });
+        const int n = static_cast<int>(std::min<size_t>(arts.size(), 3));
+        for (int i = 0; i < 4; ++i)
+        {
+            ids[i] = i < n ? arts[i].id : 0;
+            levels[i] = i < n ? arts[i].level : 0;
+        }
+        return n >= 2 ? n : 0;
+    }
+
+    // One step a frame at the master's window; true while it holds the agent.
+    bool makeCombo(cCreature* hero)
+    {
+        static int s_steps = 0;
+        uint8_t* master = masterWindow();
+        if (!master || !g_wantCombo)
+        {
+            s_steps = 0;
+            return false;
+        }
+        const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
+        uint8_t* tab = master + 0x154;
+        const auto* pages = *reinterpret_cast<uint8_t* const*>(tab + 0x78);
+        const auto* pagesEnd = *reinterpret_cast<uint8_t* const*>(tab + 0x7C);
+        uint8_t* page = pages && pagesEnd - pages >= 0x18 ? *reinterpret_cast<uint8_t* const*>(pages + 0x14) : nullptr;
+        const auto giveUp = [&](const char* why) {
+            LOG("Gear: combo: {}; left 30 min", why);
+            g_wantCombo = false;
+            g_comboTriedAt = GetTickCount();
+            return true;
+        };
+        if (!page || *reinterpret_cast<const uintptr_t*>(page) != kComboPageVtable)
+        {
+            return giveUp("no combos' page in the master's window");
+        }
+        if (*reinterpret_cast<const uint16_t*>(tab + 0x84) != 0)
+        {
+            LOG("Gear: combo master's window open: to the combos' page");
+            fn<SetActivePage>(kSetActivePage)(tab, nullptr, 0);
+            return true;
+        }
+        if (++s_steps > 3)
+        {
+            return giveUp("not learned after 3 tries");
+        }
+        uint32_t ids[4];
+        uint16_t levels[4];
+        const int n = comboArts(st, ids, levels);
+        if (!n)
+        {
+            return giveUp("fewer than 2 arts of one kind");
+        }
+        const int before = comboCount(st);
+        std::memset(page + 0x778, 0, 0x14);
+        *reinterpret_cast<uint16_t*>(page + 0x778) = 4;
+        for (int i = 0; i < 4; ++i)
+        {
+            *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = ids[i];
+            *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = levels[i];
+            *reinterpret_cast<uint16_t*>(page + 0x780 + i * 2) = static_cast<uint16_t>(ids[i]);
+            *(page + 0x788 + i) = static_cast<uint8_t>(std::min<uint16_t>(levels[i], 255));
+        }
+        const uint8_t* local = *reinterpret_cast<const uint8_t* const*>(0x182EBE8);
+        const uint32_t player = local ? *reinterpret_cast<const uint32_t*>(local + 0x14) : 0;
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        fn<LearnCombo>(kLearnCombo)(page, nullptr, player);
+        const int after = comboCount(st);
+        const uint32_t left = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        if (after > before)
+        {
+            LOG("Gear: combo learned at the master: arts {:x} {:x} {:x} (levels {} {} {}) for {} gold, {} combos now",
+                ids[0], ids[1], ids[2], levels[0], levels[1], levels[2], gold - left, after);
+            g_wantCombo = false;
+            g_comboTriedAt = GetTickCount();
+            return true;
+        }
+        LOG("Gear: combo not learned (try {}, {} arts, {} gold)", s_steps, n, gold);
+        for (int i = 0; i < 4; ++i)
+        {
+            *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = 0;
+            *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = 0;
+        }
+        std::memset(page + 0x778, 0, 0x14);
+        return true;
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1167,6 +1305,20 @@ namespace
         if (hero && inv && pack && hero->health > 0)
         {
             stashHeld(pack);
+            {
+                // A combo wanted: none yet, 2 arts of one kind for it, gold for it and for potions, half an hour
+                // since the last try.
+                const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
+                uint32_t ids[4];
+                uint16_t levels[4];
+                const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+                const bool want = comboCount(st) == 0 && comboArts(st, ids, levels) && gold >= 3000 &&
+                                  (!g_comboTriedAt || GetTickCount() - g_comboTriedAt > 1800000);
+                if (want != g_wantCombo.exchange(want) && want)
+                {
+                    LOG("Gear: a combo to learn (none known, {} gold): off to a combo master", gold);
+                }
+            }
             if (g_canUse)
             {
                 const int foreign = countForeignRunes(hero, pack);
@@ -1179,7 +1331,10 @@ namespace
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
-            if (g_settings.runes && g_canUse && swapRunes(hero, pack))
+            if (g_wantCombo && makeCombo(hero))
+            {
+            }
+            else if (g_settings.runes && g_canUse && swapRunes(hero, pack))
             {
             }
             else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
@@ -1354,6 +1509,11 @@ bool Gear::packFull()
 int Gear::foreignRunes()
 {
     return g_ready ? g_foreignRunes.load() : 0;
+}
+
+bool Gear::wantsCombo()
+{
+    return g_ready && g_wantCombo;
 }
 
 bool Gear::wantsRuneSwap()
