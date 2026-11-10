@@ -1260,10 +1260,17 @@ namespace
             return;
         }
         s_at = now;
-        g_rideCode = code;
-        g_rideHorse = horse;
         LOG("AutoAttack: {} horse {:x} ({:.0f} tiles to the nearest enemy)", code == 0x209 ? "mounting" : "getting off", horse,
             nearest < 1e8 ? nearest / kTileSize : 99.0);
+        if (code == 0x209)
+        {
+            // Up as a player gets up: a click on the horse, the hero walks to it and mounts (the player, 2026-11-10:
+            // the event put the hero onto the horse wherever it stood, «se teleporta encima del caballo»).
+            attack(horse);
+            return;
+        }
+        g_rideCode = code;
+        g_rideHorse = horse;
         Inject::call(&sendRide, nullptr);
     }
 
