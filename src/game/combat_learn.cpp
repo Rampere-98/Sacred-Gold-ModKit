@@ -1,6 +1,7 @@
 #include "game/combat_learn.h"
 #include "game/combat_state.h"
 #include "game/gear.h"
+#include "game/hero_profile.h"
 #include "game/map_memory.h"
 #include "game/modkit_menu.h"
 #include "log.h"
@@ -92,6 +93,44 @@ namespace
     int g_blowSamples = 0;
     float g_lossBias = 0.0f, g_lossSpread = 0.7f;
     int g_lossSamples = 0;
+
+    // Each class its own agent (the player, 2026-11-10: «1 agente para cada personaje»): the forecast's bias and spread
+    // and the blows per second, kept per class and saved («class» lines); the enemies' kinds stay shared (what an
+    // enemy deals does not depend on who it fights). A class not seen yet starts from the shared «forecast2».
+    struct ClassLearn
+    {
+        bool known = false;
+        float bias = 0.0f, spread = 0.7f, blows = 1.0f;
+        int samples = 0, blowSamples = 0;
+    };
+    ClassLearn g_byClass[10];
+    int g_class = -1;
+
+    // Under g_lock.
+    void useClass(int cls, bool newHero)
+    {
+        if (cls < 0 || cls >= 10 || (cls == g_class && !newHero))
+        {
+            return;
+        }
+        if (g_class >= 0 && cls != g_class)
+        {
+            g_byClass[g_class] = {true, g_lossBias, g_lossSpread, g_blowsPerSecond, g_lossSamples, g_blowSamples};
+        }
+        g_class = cls;
+        const ClassLearn& c = g_byClass[cls];
+        if (c.known)
+        {
+            g_lossBias = c.bias;
+            g_lossSpread = c.spread;
+            g_lossSamples = c.samples;
+            g_blowsPerSecond = c.blows;
+            g_blowSamples = std::min(c.blowSamples, 10);     // its own, still open to this hero's gear
+        }
+        LOG("CombatLearn: class {} ({}): forecast bias {:.2f} spread {:.2f} from {} fights, {:.2f} blows/s", cls,
+            c.known ? "its own learning" : "new, from the shared one", g_lossBias, g_lossSpread, g_lossSamples,
+            g_blowsPerSecond);
+    }
     CombatLearn::Forecast g_forecast;
     std::unordered_map<uint32_t, int> g_killRank;
 
@@ -252,7 +291,16 @@ namespace
             unsigned type = 0;
             Kind k;
             char name[256] = {};
-            if (std::sscanf(line, "forecast2 %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
+            int cls = 0;
+            ClassLearn c;
+            if (std::sscanf(line, "class %d %f %f %d %f %d", &cls, &c.bias, &c.spread, &c.samples, &c.blows,
+                            &c.blowSamples) == 6 && cls >= 0 && cls < 10)
+            {
+                c.known = true;
+                c.spread = std::clamp(c.spread, 0.2f, 2.0f);
+                g_byClass[cls] = c;
+            }
+            else if (std::sscanf(line, "forecast2 %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
             {
                 g_lossSpread = std::clamp(g_lossSpread, 0.2f, 2.0f);
             }
@@ -286,6 +334,18 @@ namespace
                             "maxLevel killed name\n");
             std::fprintf(f, "model %.5f %.5f %.5f %.5f %d\n", g_w[0], g_w[1], g_w[2], g_w[3], g_samples);
             std::fprintf(f, "forecast2 %.5f %.5f %d\n", g_lossBias, g_lossSpread, g_lossSamples);
+            if (g_class >= 0)
+            {
+                g_byClass[g_class] = {true, g_lossBias, g_lossSpread, g_blowsPerSecond, g_lossSamples, g_blowSamples};
+            }
+            for (int cls = 0; cls < 10; ++cls)
+            {
+                if (const ClassLearn& c = g_byClass[cls]; c.known)
+                {
+                    std::fprintf(f, "class %d %.5f %.5f %d %.4f %d\n", cls, c.bias, c.spread, c.samples, c.blows,
+                                 c.blowSamples);
+                }
+            }
             for (const auto& [type, k] : g_kinds)
             {
                 std::fprintf(f, "kind %u %d %.5f %d %d %d %s\n", type, k.samples, k.logRate, k.minLevel, k.maxLevel,
@@ -555,6 +615,12 @@ void CombatLearn::observe(const Look& look)
         g_hirelingHealth.clear();
         g_blowsPerSecond = 1.0f;
         g_blowSamples = 0;
+        if (const HeroProfile::Data d = HeroProfile::current(); d.valid)
+        {
+            const int cls = d.cls == HeroProfile::Class::VampiressNight ? 6 : static_cast<int>(d.cls);
+            const std::lock_guard lock(g_lock);
+            useClass(cls, true);
+        }
     }
     const float dt = g_lastLook && now - g_lastLook < 1500 ? (now - g_lastLook) / 1000.0f : 0.0f;
     const bool potion = CombatState::within(CombatState::potionAt.load(), now, 600);
