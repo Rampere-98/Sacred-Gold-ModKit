@@ -918,7 +918,6 @@ namespace
     DWORD g_meleeAt = 0;                                    // the last look with an enemy in the melee
     DWORD g_unseenHitAt = 0;
     std::unordered_map<uint32_t, std::pair<int32_t, int32_t>> g_lastWorld;   // each enemy's world position, last look
-    constexpr DWORD kKeepTargetMs = 1200;   // a new target is kept at least this long (no back and forth)
     constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
     constexpr DWORD kUnreachableMs = 20000;
 
@@ -1167,7 +1166,7 @@ namespace
         bool threat = hurt;
         float enemyCost = 0.0f;
         uint32_t enemy = 0;
-        bool keepCurrent = false;
+        bool currentCandidate = false;      // the enemy fought now is still there to fight
         bool enemyEngaged = false, currentEngaged = false;
         // What an ordinary enemy's maximum health is here: one well above hits harder (a strong one).
         int typical = 0;
@@ -1217,8 +1216,10 @@ namespace
             // Engaged ones within the look's reach (kEngagedReach Range): an archer shooting from afar is gone after
             // too. Seeking fights, any other enemy within Range as well. The current one while it is engaged or
             // within 1.5 Range.
-            // On the way to the merchant with the backpack full: only those that attack (no fight sought).
-            const bool seek = Config::autoAttack.seek && !Gear::wantsShop();
+            // On the way to the merchant with the backpack full, or on a trip to a quest: only those that attack (no
+            // fight sought). Focus (the player's wish, 2026-11-10): a trip decided on is gone through to the end;
+            // only danger (one that attacks) stops it on the way.
+            const bool seek = Config::autoAttack.seek && !Gear::wantsShop() && !g_questTravel;
             if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
@@ -1284,7 +1285,7 @@ namespace
                 // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least
                 // a moment (no back and forth).
                 cost *= 0.4f;
-                keepCurrent = now - g_targetSince < kKeepTargetMs;
+                currentCandidate = true;
                 currentEngaged = striking;
             }
             // One that strikes always before one that does not, whatever the distance.
@@ -1372,10 +1373,18 @@ namespace
                 return false;
             }
         }
-        // Never off one that strikes for one that does not (the jumping from one to another).
-        if (keepCurrent || (currentEngaged && !enemyEngaged && g_target))
+        // Focus (the player's wish, 2026-11-10): the enemy taken is fought to the end (down, gone, or out of reach);
+        // only danger changes it: another one strikes the hero (or a hireling) while this one does not.
+        if (currentCandidate && g_target && enemy != g_target)
         {
-            enemy = g_target;
+            if (enemyEngaged && !currentEngaged)
+            {
+                LOG("AutoAttack: focus: {:x} left for {:x}, which strikes (danger)", g_target, enemy);
+            }
+            else
+            {
+                enemy = g_target;
+            }
         }
         CombatLearn::observe({now, heroObject, self, learnFoes.data(), static_cast<int>(learnFoes.size()),
                               g_hirelings.data(), static_cast<int>(g_hirelings.size())});
@@ -1385,7 +1394,8 @@ namespace
 
         bool chosen = false;
         g_lootInstead = false;
-        if (enemy && Config::autoAttack.pickup && Config::autoAttack.lootInFight)
+        // Loot before a fight only when the fight is a new decision: one under way is finished first (focus).
+        if (enemy && enemy != g_target && Config::autoAttack.pickup && Config::autoAttack.lootInFight)
         {
             AimAssist::Target loot;
             const auto it = distances.find(enemy);
