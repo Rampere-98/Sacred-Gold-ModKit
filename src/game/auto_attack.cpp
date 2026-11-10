@@ -1,6 +1,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
+#include "game/auto_start.h"
 #include "game/hero_build.h"
 #include "game/lore.h"
 #include "game/click_walk.h"
@@ -3539,6 +3540,7 @@ void AutoAttack::onFrame()
     // game's window) also plays on in the background ([AutoAttack] Background).
     const bool focused = Focus::foreground();
     const bool foreground = focused || Config::autoAttack.background;
+    AutoStart::onFrame();
     checkNewGame();
 
     // The toggle key, on its press and only while the game has the focus.
