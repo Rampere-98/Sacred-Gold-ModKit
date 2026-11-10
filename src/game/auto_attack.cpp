@@ -441,6 +441,7 @@ namespace
     // 14 min in a merchant's house, a Seraphim 10 min in a cave: each door click overridden 0.13-3.6 s later by the
     // roam's, the quest's or the shop's own walk, the door never reached).
     DWORD g_doorHoldUntil = 0;
+    DWORD g_craftHoldUntil = 0;     // by a craftsman until then: the roam and the stray dialog's Enter wait
     float g_doorRange = 12.0f * 53.66563f;
 
     bool acceptDoor(uint32_t id, void*)
@@ -3589,9 +3590,9 @@ namespace
         {
             return;
         }
-        if (static_cast<int>(now - g_doorHoldUntil) < 0)
+        if (static_cast<int>(now - g_doorHoldUntil) < 0 || static_cast<int>(now - g_craftHoldUntil) < 0)
         {
-            return;     // on the way to the door just clicked
+            return;     // on the way to the door just clicked, or by a craftsman whose window is being worked
         }
         // Shut in with a door that opens near (the player, 2026-11-10: «la cueva tiene puertas que el agente no sabe
         // abrir»; the cave was worth staying in, only the way on was shut): opened at once, the way on before the way
@@ -3729,8 +3730,11 @@ namespace
             const uint32_t npc = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x100);
             if (s_masterId && mode == 0xA && npc == s_masterId)
             {
-                LOG("AutoAttack: at combo master {:x} with {} runes of other classes: his window open", s_masterId,
+                LOG("AutoAttack: at craftsman {:x} ({} runes of other classes): his window open", s_masterId,
                     Gear::foreignRunes());
+                // The hero stays by him while Gear works his window (the live verifier, 2026-11-10: four stable
+                // visits, the hero back on its quest 6 s after the window opened and no «Gear: horse» line).
+                g_craftHoldUntil = now + 15000;
                 if (const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(0x17EEBBC))
                 {
                     for (int i = 0; i < 48; ++i)
@@ -5507,7 +5511,7 @@ void AutoAttack::onFrame()
     // Any other NPC dialog left open with the agent on (a quest's next page after the talk seemed over, a creature
     // clicked on the way): the first answer after 4 s, as the agent would otherwise stand there for good.
     static DWORD s_strayOpenAt = 0, s_strayAnswerAt = 0;
-    if (g_on && !s_answers && UiNav::npcDialogOpen())
+    if (g_on && !s_answers && UiNav::npcDialogOpen() && static_cast<int>(now - g_craftHoldUntil) >= 0)
     {
         if (!s_strayOpenAt)
         {

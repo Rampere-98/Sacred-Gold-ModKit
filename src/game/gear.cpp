@@ -424,6 +424,8 @@ namespace
         return done;
     }
 
+    std::atomic<uint32_t> g_socketBase{0};     // the item kept for the smith while a socketing is wanted
+
     // At a merchant: one item sold (worse than the worn one for every slot it fits, or not for this class).
     bool sellOne(cCreature* hero, uint8_t* pack)
     {
@@ -431,6 +433,12 @@ namespace
         bool done = false;
         eachItem(pack, [&](uint32_t id, int cell, int w, int h) {
             if (done || (flagsOf(id) & kQuestItem))
+            {
+                return;
+            }
+            // Not the item on its way to the smith (the live verifier, 2026-11-10: «589 has 1 free sockets … off to
+            // a smith», then «sold 589» at the merchant on the way).
+            if (id == g_socketBase.load())
             {
                 return;
             }
@@ -1665,6 +1673,7 @@ namespace
                     const uint32_t base = socketPlan(hero, pack, gems);
                     const bool socket = base && gold >= 1500 &&
                                         (!g_socketTriedAt || GetTickCount() - g_socketTriedAt > 1800000);
+                    g_socketBase = socket ? base : 0u;
                     if (socket != g_wantSocket.exchange(socket) && socket)
                     {
                         LOG("Gear: {:x} has {} free sockets and {} things fit them: off to a smith", base,
