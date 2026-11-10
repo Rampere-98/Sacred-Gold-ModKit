@@ -902,6 +902,18 @@ namespace
     constexpr size_t kAimId = 0x104, kAimX = 0x108, kAimY = 0x10C;
     constexpr int32_t kAimSlack = 400;     // world units, about 7 tiles
 
+    // Hostile creatures near the hero on the surface (40 tiles), from the world pass each second: the explorer keeps
+    // clear of those not after it yet (Manolito, block N: a creature fixes on the hero within 600 u, 11.2 tiles, and
+    // a pack (+0x24D its leader) comes as one; gives up beyond 1500 u, 27.9 tiles).
+    struct AggroFoe
+    {
+        uint32_t id;
+        int32_t x, y;
+        bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
+    };
+    std::vector<AggroFoe> g_aggroFoes;
+    constexpr double kAggroTiles = 13.0;
+
     // A creature with aggro on the hero (Manolito, block N): its AI target +0x251 the hero (or what it rides), an enemy
     // fixed (+0x1F4 bit 4), and no master (bit 0x100: then +0x251 is the master). Set from 11.2 tiles on, before the
     // first blow; dropped beyond 28 tiles (the pursuit's end). The player, 2026-11-10: «saber cuando un enemigo le
@@ -1239,6 +1251,30 @@ namespace
         }
         if (g_retreatUntil)
         {
+            // Really got away (the player, 2026-11-10: «saber cuándo realmente ha huido»): none has the hero as its
+            // aim any more, and none within its aggro reach (Manolito, block N: they give up beyond 1500 u). Then it
+            // rests out of their reach a while (health comes back without enemies near) before playing on.
+            bool chased = false;
+            double nearest = 1e9;
+            for (const AggroFoe& f : g_aggroFoes)
+            {
+                const double d = std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y));
+                nearest = std::min(nearest, d);
+                chased = chased || f.onHero;
+            }
+            if (!chased && nearest > 700.0 && g_retreatWalkAt && now - g_retreatWalkAt > 1500)
+            {
+                LOG("AutoAttack: got away: no enemy after the hero any more ({:.0f} tiles from the nearest), resting at "
+                    "{} of {} health", nearest < 1e8 ? nearest / kTileSize : 99.0, health, maximum);
+                remember(std::format("escapó: nadie le persigue ({} de {} de vida)", health, maximum));
+                g_retreatUntil = 0;
+                g_noRetreatUntil = now + kRetreatPauseMs;
+                if (health * 100 < maximum * 70)
+                {
+                    g_quietUntil = now + 15000;
+                }
+                return false;
+            }
             const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
             const bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
             if (recovered || !noPotions || !anyNear || tooLong)
@@ -1276,20 +1312,53 @@ namespace
             const double ex = cx / close, ey = cy / close;
             double bestScore = 0.0;
             int32_t bx = 0, by = 0;
-            for (const auto& [px, py] : g_fleeTrail)
+            int bestCrossed = 0;
+            const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            // Where to run (the player, 2026-11-10: «la idea de saber el aggro es identificar por donde huir o por donde
+            // no pasar»): the way back and 16 ways around, each weighed by how far it takes the hero from those after
+            // it, less what it costs to pass by the hostiles not after it yet (each within its aggro reach of the way
+            // would join: heavy), on walkable ground only.
+            std::vector<std::pair<int32_t, int32_t>> options(g_fleeTrail.begin(), g_fleeTrail.end());
+            for (int k = 0; k < 16; ++k)
+            {
+                const double a = k * 3.14159265 / 8.0;
+                for (const double tiles : {10.0, 16.0})
+                {
+                    options.emplace_back(static_cast<int32_t>(self->x + std::cos(a) * tiles * kTileSize),
+                                         static_cast<int32_t>(self->y + std::sin(a) * tiles * kTileSize));
+                }
+            }
+            const double heroFromFoes = std::hypot(self->x - ex, self->y - ey);
+            for (const auto& [px, py] : options)
             {
                 const double fromFoes = std::hypot(px - ex, py - ey), fromHero = std::hypot(px - self->x, py - self->y);
-                const double heroFromFoes = std::hypot(self->x - ex, self->y - ey);
-                if (fromHero < kRetreatWay || fromFoes < heroFromFoes + 4 * kTileSize)
+                if (fromHero < kRetreatWay || fromFoes < heroFromFoes + 4 * kTileSize ||
+                    ClickWalk::walkable(layer, static_cast<int>(px / kTileSize), static_cast<int>(py / kTileSize)) == 0)
                 {
                     continue;
                 }
-                const double score = fromFoes - 0.3 * fromHero;
+                int crossed = 0;
+                for (const AggroFoe& f : g_aggroFoes)
+                {
+                    if (f.onHero)
+                    {
+                        continue;
+                    }
+                    // Its distance to the way (the segment hero -> point).
+                    const double vx = px - self->x, vy = py - self->y, wx = f.x - self->x, wy = f.y - self->y;
+                    const double t = std::clamp((vx * wx + vy * wy) / std::max(vx * vx + vy * vy, 1.0), 0.0, 1.0);
+                    if (std::hypot(wx - t * vx, wy - t * vy) < kAggroTiles * kTileSize)
+                    {
+                        ++crossed;
+                    }
+                }
+                const double score = fromFoes - 0.3 * fromHero - crossed * 20.0 * kTileSize + 1.0 * kTileSize;
                 if (score > bestScore)
                 {
                     bestScore = score;
                     bx = px;
                     by = py;
+                    bestCrossed = crossed;
                 }
             }
             if (bestScore > 0.0)
@@ -1307,8 +1376,9 @@ namespace
             }
             if (!g_retreatWalkAt)
             {
-                LOG("AutoAttack: stepping back {} ({:.0f} tiles off)", bestScore > 0.0 ? "the way it came" : "straight away",
-                    std::hypot(g_walkX - self->x, g_walkY - self->y) / kTileSize);
+                LOG("AutoAttack: stepping back {} ({:.0f} tiles off, {} hostile not after it on that way)",
+                    bestScore > 0.0 ? "the safest way (aggro weighed)" : "straight away",
+                    std::hypot(g_walkX - self->x, g_walkY - self->y) / kTileSize, bestCrossed);
             }
             Inject::call(&walkThere, nullptr);
             g_retreatWalkAt = now;
@@ -2321,17 +2391,6 @@ namespace
         }
     }
 
-    // Hostile creatures near the hero on the surface (40 tiles), from the world pass each second: the explorer keeps
-    // clear of those not after it yet (Manolito, block N: a creature fixes on the hero within 600 u, 11.2 tiles, and
-    // a pack (+0x24D its leader) comes as one; gives up beyond 1500 u, 27.9 tiles).
-    struct AggroFoe
-    {
-        uint32_t id;
-        int32_t x, y;
-        bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
-    };
-    std::vector<AggroFoe> g_aggroFoes;
-    constexpr double kAggroTiles = 13.0;
 
     // The door or way in the agent heads for (an interior, a quest's house), for the overlay; 0 at none.
     int32_t g_doorX = 0, g_doorY = 0;

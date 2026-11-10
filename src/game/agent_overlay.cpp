@@ -182,15 +182,17 @@ void AgentOverlay::install()
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring ini = exe;
         ini = ini.substr(0, ini.find_last_of(L"\\/") + 1) + L"SacredBild.ini";
-        const auto read = [&](const wchar_t* key) {
-            return GetPrivateProfileIntW(L"AgentOverlay", key, 1, ini.c_str()) != 0;
+        const auto read = [&](const wchar_t* key, int fallback) {
+            return GetPrivateProfileIntW(L"AgentOverlay", key, fallback, ini.c_str()) != 0;
         };
-        g_settings.enabled = read(L"Enabled");
-        g_settings.intent = read(L"Intent");
-        g_settings.route = read(L"Route");
-        g_settings.target = read(L"Target");
-        g_settings.aggro = read(L"Aggro");
-        g_settings.doors = read(L"Doors");
+        // By default only the hostile enemies' aggro (the player, 2026-11-10: «quiero apenas los útiles, los que son
+        // de los enemigos hostiles»); the rest in the menu.
+        g_settings.enabled = read(L"Enabled", 1);
+        g_settings.intent = read(L"Intent", 0);
+        g_settings.route = read(L"Route", 0);
+        g_settings.target = read(L"Target", 0);
+        g_settings.aggro = read(L"Aggro", 1);
+        g_settings.doors = read(L"Doors", 0);
         ModkitMenu::add({"Overlays del agente", &drawMenu, &saveMenu});
         Overlay::addHud(&drawHud);
         LOG("AgentOverlay: {} (intent {}, route {}, target {}, aggro {}, doors {})", g_settings.enabled ? "on" : "off",
