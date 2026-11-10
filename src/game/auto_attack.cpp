@@ -911,6 +911,7 @@ namespace
     DWORD g_lastLookAt = 0;         // the last look at the situation
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
     std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
+    std::unordered_map<uint32_t, int> g_unreachableTimes;   // ... how many times so far (the wait grows each time)
     std::unordered_map<uint32_t, int> g_farAimLooks;        // looks in a row an enemy aimed at the hero from afar
     uint32_t g_lastShooter = 0;                             // the last one taken for the shooter (logged once)
     int g_unseenHits = 0;                                   // hits in a row with no enemy to answer
@@ -1135,11 +1136,24 @@ namespace
             }
             else if (now - g_targetBestAt > kStuckMs)
             {
-                LOG("AutoAttack: no nearer to {:x} in {} s ({:.0f} px away): out of reach, left for {} s", g_target,
-                    kStuckMs / 1000, currentDistance, kUnreachableMs / 1000);
-                Findings::note("unreachable", self->x, self->y, "enemy {:x} no nearer in {} s at {:.0f} px", g_target,
-                               kStuckMs / 1000, currentDistance);
-                g_unreachable[g_target] = now + kUnreachableMs;
+                // Each time again the same one, three times as long (20 s, 1 min, 3 min, then 10 min). Seen live
+                // (2026-11-10): an enemy across the water taken again every 20 s for three hours, the 4 s chase
+                // each time starting the stuck guard's watch again, so the hero never moved on.
+                const int times = ++g_unreachableTimes[g_target];
+                DWORD wait = kUnreachableMs;
+                for (int t = 1; t < times && wait < 600000; ++t)
+                {
+                    wait *= 3;
+                }
+                wait = std::min<DWORD>(wait, 600000);
+                LOG("AutoAttack: no nearer to {:x} in {} s ({:.0f} px away): out of reach, left for {} s (time {})",
+                    g_target, kStuckMs / 1000, currentDistance, wait / 1000, times);
+                if (times <= 2)
+                {
+                    Findings::note("unreachable", self->x, self->y, "enemy {:x} no nearer in {} s at {:.0f} px",
+                                   g_target, kStuckMs / 1000, currentDistance);
+                }
+                g_unreachable[g_target] = now + wait;
                 g_unreachableAt[g_target] = currentDistance;
                 g_playerTargets.erase(g_target);
                 g_target = 0;
@@ -3314,6 +3328,7 @@ namespace
         g_hirelings.clear();
         g_unreachable.clear();
         g_unreachableAt.clear();
+        g_unreachableTimes.clear();
         g_farAimLooks.clear();
         g_lastWorld.clear();
         g_lastDistance.clear();
