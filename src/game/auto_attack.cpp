@@ -1117,6 +1117,80 @@ namespace
     // The hero's last positions (one every 2 s while it moves, the last 2 minutes): the way back for a retreat.
     std::deque<std::pair<int32_t, int32_t>> g_fleeTrail;
 
+    // The game's tutorial (the player, 2026-11-10: «tienen que saber hacer todo el tutorial perfectamente»; «beneficia
+    // a los agentes que llevan buena conducta con el tutorial»). Manolito, block T/V3: the script variable «Tutorial»
+    // (the save's script variables, a vector [0xAACF80+0x7550..+0x7554] of 0x24-byte records, name char[0x20], u32
+    // value at +0x20) holds the step; 0x0D is over (or skipped). Each step taken is logged and remembered with how
+    // long it took; one standing over 3 minutes is logged once with what it asks for, to be seen and taught.
+    void watchTutorial(DWORD now)
+    {
+        static DWORD s_at = 0, s_stepAt = 0;
+        static const uint8_t* s_var = nullptr;
+        static uint32_t s_step = 0xFFFFFFFFu;
+        static bool s_stuckLogged = false;
+        static int s_taken = 0;
+        if (now - s_at < 2000)
+        {
+            return;
+        }
+        s_at = now;
+        const auto begin = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7550);
+        const auto end = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7554);
+        if (!begin || end <= begin || (end - begin) / 0x24 > 20000)
+        {
+            s_var = nullptr;
+            return;
+        }
+        if (!s_var || s_var < begin || s_var >= end || std::strncmp(reinterpret_cast<const char*>(s_var), "Tutorial", 0x20) != 0)
+        {
+            s_var = nullptr;
+            for (const uint8_t* r = begin; r + 0x24 <= end; r += 0x24)
+            {
+                if (std::strncmp(reinterpret_cast<const char*>(r), "Tutorial", 0x20) == 0)
+                {
+                    s_var = r;
+                    break;
+                }
+            }
+            if (!s_var)
+            {
+                return;
+            }
+        }
+        static const char* const kAsks[] = {
+            "no empezado", "bienvenida: abrir el cofre y hablar con el PNJ", "recoger objetos: abrir el cofre",
+            "equipo: equipar un objeto de la mochila", "combate: atacar", "experiencia: repartir los puntos",
+            "compañeros: aceptar al compañero", "brújula: seguirla", "misiones: hablar con el PNJ de «?!»",
+            "mercaderes: comprar o vender", "caballo: comprar o montar un caballo", "historia: seguir la misión principal",
+            "primeros pasos: abrir el cofre y hablar con el PNJ", "terminado", "recompensas: cobrar en el «!»",
+            "maestro de combos: crear un combo", "herrero: engarzar", "escaleras: subirlas", "paso 18"};
+        const uint32_t step = *reinterpret_cast<const uint32_t*>(s_var + 0x20);
+        const char* ask = step < std::size(kAsks) ? kAsks[step] : "paso desconocido";
+        if (step != s_step)
+        {
+            if (s_step != 0xFFFFFFFFu)
+            {
+                ++s_taken;
+                LOG("AutoAttack: tutorial: step {} -> {} ({}) after {} s, {} taken this session", s_step, step, ask,
+                    (now - s_stepAt) / 1000, s_taken);
+                remember(std::format("tutorial: paso {} cumplido en {} s; ahora {}", s_step, (now - s_stepAt) / 1000, ask));
+            }
+            else
+            {
+                LOG("AutoAttack: tutorial at step {} ({})", step, ask);
+            }
+            s_step = step;
+            s_stepAt = now;
+            s_stuckLogged = false;
+        }
+        else if (!s_stuckLogged && step != 0 && step != 0x0D && now - s_stepAt > 180000)
+        {
+            s_stuckLogged = true;
+            LOG("AutoAttack: tutorial: step {} ({}) standing for {} s", step, ask, (now - s_stepAt) / 1000);
+            remember(std::format("tutorial: atascado en el paso {} ({})", step, ask));
+        }
+    }
+
     void noteTrail(DWORD now, int32_t x, int32_t y, int layer)
     {
         static DWORD s_at = 0;
@@ -5195,6 +5269,7 @@ void AutoAttack::onFrame()
             const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
             MapMemory::visit(layer, self->x, self->y);
             noteTrail(now, self->x, self->y, layer);
+            watchTutorial(now);
             writeMind(now, self, layer,
                       *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,
