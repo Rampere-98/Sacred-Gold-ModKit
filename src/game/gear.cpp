@@ -752,10 +752,23 @@ namespace
     {
         const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
         float total = 0.0f;
-        for (int hand = 0; hand < 2; ++hand)
+        // The active slot: the hero's own weapon damage (st+0x86 min, st+0x76 max, the panel's «Arma»), which holds
+        // the skills' bonuses for that kind of weapon (a bow for the Wood Elf's ranged skill); the others only by
+        // their weapons. Seen live (2026-11-10): the Wood Elf's bow at 9 against a sword at 30 by the bare weapons.
+        const bool active = slot == *reinterpret_cast<const uint16_t*>(entry + kActiveSlot);
+        for (int hand = 0; hand < (active ? 1 : 2); ++hand)
         {
             float d[4] = {};
-            if (!damageOf(slotItem(entry, slot, hand), d))
+            if (active)
+            {
+                for (int k = 0; k < 4; ++k)
+                {
+                    const float lo = *reinterpret_cast<const float*>(st + 0x86 + 4 * k);
+                    const float hi = *reinterpret_cast<const float*>(st + 0x76 + 4 * k);
+                    d[k] = lo >= 0.0f && hi >= 0.0f && hi < 100000.0f ? (lo + hi) * 0.5f : 0.0f;
+                }
+            }
+            else if (!damageOf(slotItem(entry, slot, hand), d))
             {
                 continue;
             }
