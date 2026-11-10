@@ -2316,6 +2316,8 @@ namespace
     std::vector<Merchant> g_merchants;
     // The combo masters (creature +0x200 & 0x4000): where runes of other classes are swapped for the hero's own.
     std::vector<Merchant> g_masters;
+    // The smiths (+0x200 & 0x1000): where sockets are filled.
+    std::vector<Merchant> g_smiths;
 
     // Farming zones, from the same pass (the object list holds the whole world): living hostile creatures on the
     // surface counted per sector (64x64 tiles), the sector's level range from its block ([sector +0x17C] +0xD3 min,
@@ -2604,6 +2606,7 @@ namespace
         std::vector<MapMemory::QuestMark> marks;
         g_merchants.clear();
         g_masters.clear();
+        g_smiths.clear();
         g_farmBuilding.clear();
         g_chestBuilding = 0;
         g_chestBest = 0.0;
@@ -2679,6 +2682,13 @@ namespace
                         g_masters.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
                                              *reinterpret_cast<const int32_t*>(o + 0x1C),
                                              *reinterpret_cast<const int32_t*>(o + 0x20)});
+                    }
+                    if (o && (*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) &&
+                        (*reinterpret_cast<const uint32_t*>(o + 0x200) & 0x1000))
+                    {
+                        g_smiths.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), *(o + 0x24),
+                                            *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                            *reinterpret_cast<const int32_t*>(o + 0x20)});
                     }
                     if (!o || !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x80000) ||
                         (*reinterpret_cast<const uint32_t*>(o + 0x200) & (0x1000 | 0x2000 | 0x4000 | 0x4000000)))
@@ -3460,11 +3470,12 @@ namespace
                 s_leftAt = now;
                 s_masterId = 0;
             }
-            if ((Gear::wantsRuneSwap() || Gear::wantsCombo()) && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
+            const bool toMaster = Gear::wantsRuneSwap() || Gear::wantsCombo();
+            if ((toMaster || Gear::wantsSocket()) && !Gear::wantsShop() && (!s_leftAt || now - s_leftAt > 1800000))
             {
                 const Merchant* best = nullptr;
                 double bestDistance = 0.0;
-                for (const Merchant& m : g_masters)
+                for (const Merchant& m : toMaster ? g_masters : g_smiths)
                 {
                     const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
                     if ((m.layer == layer || d < 30.0 * kTileSize) && (!best || d < bestDistance))
@@ -3476,7 +3487,8 @@ namespace
                 if (best)
                 {
                     g_questTravel = true;
-                    setIntent(Intent::Shop, Gear::wantsCombo() ? "a combo to learn: to a combo master"
+                    setIntent(Intent::Shop, !toMaster            ? "something to socket: to a smith"
+                                            : Gear::wantsCombo() ? "a combo to learn: to a combo master"
                                                                : "runes of other classes: to a combo master to swap them");
                     if (best->id != s_masterId)
                     {

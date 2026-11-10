@@ -1307,6 +1307,197 @@ namespace
         return true;
     }
 
+    // Socketing at a smith (the tutorial's step 16; the player: «tienen que saber hacer todo el tutorial
+    // perfectamente»). Manolito, block V2: the smith's window cUI_Blacksmith (vtable 0x896288) is UI window 3
+    // ([[0x17EEBBC] + 0x8C], open while +0x10 & 1), opened by a use click on the smith as a merchant's. Its base item
+    // goes into its own inventory [bs + 0x154] (putItem, then refresh 0x6A2470 thiscall(bs, id), ret 4); the free
+    // sockets come to bs + 0x15C; what goes in, into 4 slots at bs + 0x4C4 + i*0x10C as a drag descriptor {u16 1,
+    // u16 0x1C, u32 id, 0, 0} (out of the backpack first); forge 0x6A2660 thiscall(bs), no arguments: it prices,
+    // pays with the game's addGold and sets each one. An item's sockets: 0x5BE9C0 thiscall(item) counts the
+    // non-zero bytes at item + 0x124..+0x12B; those used are the vector item + 0x100..+0x104 (0x82 bytes each); the
+    // item from the object table through __RTDynamicCast 0x84A961(obj, 0, 0x8EB648, 0x94EBC0, 0). What fits:
+    // 0x428780 thiscall([0xAAB5E4], type), ret 4, al 1. Backpack items only (the worn ones would have to come off).
+    constexpr uintptr_t kSmithVtable = 0x896288, kSmithRefresh = 0x6A2470, kForge = 0x6A2660;
+    constexpr uintptr_t kSocketCount = 0x5BE9C0, kSocketable = 0x428780, kDynamicCast = 0x84A961;
+    using SmithRefresh = void(__fastcall*)(uint8_t* bs, void*, uint32_t id);
+    using SocketCount = int(__fastcall*)(const uint8_t* item, void*);
+    using Socketable = uint8_t(__fastcall*)(void* types, void*, uint32_t type);
+    using DynamicCast = void*(__cdecl*)(void* object, long delta, void* from, void* to, int reference);
+    std::atomic<bool> g_wantSocket{false};
+    DWORD g_socketTriedAt = 0;
+
+    const uint8_t* itemBase(uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* o = objects ? objects->object(id) : nullptr;
+        return o ? static_cast<const uint8_t*>(fn<DynamicCast>(kDynamicCast)(o, 0, reinterpret_cast<void*>(0x8EB648),
+                                                                             reinterpret_cast<void*>(0x94EBC0), 0))
+                 : nullptr;
+    }
+
+    int freeSockets(uint32_t id)
+    {
+        const uint8_t* item = itemBase(id);
+        if (!item)
+        {
+            return 0;
+        }
+        const int sockets = fn<SocketCount>(kSocketCount)(item, nullptr);
+        const auto* begin = *reinterpret_cast<const uint8_t* const*>(item + 0x100);
+        const auto* end = *reinterpret_cast<const uint8_t* const*>(item + 0x104);
+        const int used = begin && end >= begin ? static_cast<int>((end - begin) / 0x82) : 0;
+        return sockets > 0 && sockets <= 8 ? std::max(0, sockets - used) : 0;
+    }
+
+    bool socketable(uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        const auto* o = objects ? reinterpret_cast<const uint8_t*>(objects->object(id)) : nullptr;
+        const uint32_t type = typeOf(id);
+        void* types = *reinterpret_cast<void* const*>(0xAAB5E4);
+        return o && type && types && *reinterpret_cast<const uintptr_t*>(o) != kRuneVtable && !(flagsOf(id) & kQuestItem) &&
+               fn<Socketable>(kSocketable)(types, nullptr, type) != 0;
+    }
+
+    // The base (a backpack item with free sockets, one the hero would wear first) and what goes in; 0 when none.
+    uint32_t socketPlan(cCreature* hero, uint8_t* pack, std::vector<uint32_t>& gems)
+    {
+        uint32_t base = 0;
+        bool baseWorn = false;
+        gems.clear();
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            if (flagsOf(id) & kQuestItem)
+            {
+                return;
+            }
+            if (socketable(id))
+            {
+                gems.push_back(id);
+                return;
+            }
+            if (freeSockets(id) > 0)
+            {
+                const bool worn = bestSlot(hero, id, 0.0f) >= 0;
+                if (!base || (worn && !baseWorn))
+                {
+                    base = id;
+                    baseWorn = worn;
+                }
+            }
+        });
+        return gems.empty() ? 0 : base;
+    }
+
+    uint8_t* smithWindow()
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        uint8_t* bs = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0x8C) : nullptr;
+        if (!bs || *reinterpret_cast<const uintptr_t*>(bs) != kSmithVtable || !(*reinterpret_cast<const uint32_t*>(bs + 0x10) & 1))
+        {
+            return nullptr;
+        }
+        return bs;
+    }
+
+    // One step a frame at the smith's window; true while it holds the agent.
+    bool socketAtSmith(cCreature* hero, uint8_t* pack)
+    {
+        static uint32_t s_base = 0;
+        static int s_steps = 0;
+        uint8_t* bs = smithWindow();
+        if (!bs || !g_wantSocket)
+        {
+            s_base = 0;
+            s_steps = 0;
+            return false;
+        }
+        const auto done = [&](const char* why) {
+            LOG("Gear: socketing: {}", why);
+            g_wantSocket = false;
+            g_socketTriedAt = GetTickCount();
+            return true;
+        };
+        uint8_t* inv = *reinterpret_cast<uint8_t* const*>(bs + 0x154);
+        if (!inv)
+        {
+            return done("the smith's window has no item place");
+        }
+        if (++s_steps > 12)
+        {
+            return done("given up after 12 steps");
+        }
+        if (!s_base)
+        {
+            std::vector<uint32_t> gems;
+            const uint32_t base = socketPlan(hero, pack, gems);
+            int w = 0, h = 0;
+            uint16_t cell = 0;
+            if (!base || !sizeOf(base, w, h) || !fn<FindFree>(g_findFree)(inv, nullptr, w, h, &cell, 0))
+            {
+                return done("nothing to socket here");
+            }
+            fn<RemoveItem>(g_removeItem)(pack, nullptr, base, 1);
+            fn<PutItem>(g_putItem)(inv, nullptr, cell, base, w, h, 1);
+            fn<SmithRefresh>(kSmithRefresh)(bs, nullptr, base);
+            s_base = base;
+            LOG("Gear: socketing: {:x} (type {:x}, {} free sockets) onto the smith's table", base, typeOf(base),
+                freeSockets(base));
+            return true;
+        }
+        const int before = freeSockets(s_base);
+        std::vector<uint32_t> gems;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            if (socketable(id))
+            {
+                gems.push_back(id);
+            }
+        });
+        int placed = 0;
+        for (int i = 0; i < 4 && i < before; ++i)
+        {
+            uint8_t* slot = bs + 0x4C4 + i * 0x10C;
+            if (*reinterpret_cast<const uint32_t*>(slot + 4))
+            {
+                ++placed;
+                continue;
+            }
+            if (gems.empty())
+            {
+                break;
+            }
+            const uint32_t gem = gems.back();
+            gems.pop_back();
+            fn<RemoveItem>(g_removeItem)(pack, nullptr, gem, 1);
+            std::memset(slot, 0, 0x14);
+            *reinterpret_cast<uint16_t*>(slot) = 1;
+            *reinterpret_cast<uint16_t*>(slot + 2) = 0x1C;
+            *reinterpret_cast<uint32_t*>(slot + 4) = gem;
+            ++placed;
+            LOG("Gear: socketing: {:x} (type {:x}) into socket {}", gem, typeOf(gem), i + 1);
+        }
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        if (placed)
+        {
+            fn<UiCall>(kForge)(bs, nullptr);
+        }
+        const int after = freeSockets(s_base);
+        const uint32_t left = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        // The item back into the backpack, whatever came of it; what is still in the slots is given back on closing.
+        int w = 0, h = 0;
+        uint16_t free = 0;
+        if (sizeOf(s_base, w, h) && fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+        {
+            fn<RemoveItem>(g_removeItem)(inv, nullptr, s_base, 1);
+            fn<PutItem>(g_putItem)(pack, nullptr, free, s_base, w, h, 1);
+            fn<SmithRefresh>(kSmithRefresh)(bs, nullptr, 0);
+        }
+        LOG("Gear: socketing {:x}: {} placed, free sockets {} -> {}, {} gold paid", s_base, placed, before, after,
+            gold - left);
+        s_base = 0;
+        fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(bs))[0x24 / 4])(bs, nullptr, 0);
+        return done(after < before ? "done" : "nothing set");
+    }
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1329,6 +1520,21 @@ namespace
                 {
                     LOG("Gear: a combo to learn (none known, {} gold): off to a combo master", gold);
                 }
+                // Something to socket: a backpack item with a free socket and a gem for it, gold for the smith.
+                static DWORD s_socketLookAt = 0;
+                if (!smithWindow() && GetTickCount() - s_socketLookAt > 10000)
+                {
+                    s_socketLookAt = GetTickCount();
+                    std::vector<uint32_t> gems;
+                    const uint32_t base = socketPlan(hero, pack, gems);
+                    const bool socket = base && gold >= 1500 &&
+                                        (!g_socketTriedAt || GetTickCount() - g_socketTriedAt > 1800000);
+                    if (socket != g_wantSocket.exchange(socket) && socket)
+                    {
+                        LOG("Gear: {:x} has {} free sockets and {} things fit them: off to a smith", base,
+                            freeSockets(base), gems.size());
+                    }
+                }
             }
             if (g_canUse)
             {
@@ -1343,6 +1549,9 @@ namespace
             const bool trip = shop && g_tripShop;
             bool acted = true;
             if (g_wantCombo && makeCombo(hero))
+            {
+            }
+            else if (g_wantSocket && socketAtSmith(hero, pack))
             {
             }
             else if (g_settings.runes && g_canUse && swapRunes(hero, pack))
@@ -1520,6 +1729,11 @@ bool Gear::packFull()
 int Gear::foreignRunes()
 {
     return g_ready ? g_foreignRunes.load() : 0;
+}
+
+bool Gear::wantsSocket()
+{
+    return g_ready && g_wantSocket;
 }
 
 bool Gear::wantsCombo()
