@@ -232,7 +232,7 @@ namespace
             unsigned type = 0;
             Kind k;
             char name[256] = {};
-            if (std::sscanf(line, "forecast %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
+            if (std::sscanf(line, "forecast2 %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
             {
                 g_lossSpread = std::clamp(g_lossSpread, 0.2f, 2.0f);
             }
@@ -424,7 +424,9 @@ namespace
             const float actual = std::max(g_fight.lostTotal / g_fight.heroMax, 0.005f);
             const float error = std::clamp(std::log(actual) - std::log(g_fight.forecast.loss), -4.0f, 4.0f);
             g_lossSamples = std::min(g_lossSamples + 1, 100);
-            const float a = 1.0f / static_cast<float>(g_lossSamples);
+            // A prior of 8 fights (bias 0, spread 0.7): one wild fight does not swing the chances (seen live: one
+            // 251 % fight made a 4-enemy fight 0 % to win, won with 11 % lost).
+            const float a = 1.0f / static_cast<float>(g_lossSamples + 8);
             const float before = g_lossBias;
             g_lossBias += a * (error - g_lossBias);
             const float var = g_lossSpread * g_lossSpread;
