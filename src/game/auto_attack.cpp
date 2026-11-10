@@ -2651,6 +2651,17 @@ namespace
                         ways.push_back(a);
                     }
                 }
+                else if (!in.start && layer == 0 && std::abs(in.outX - htx) <= Whereabouts::kRadius &&
+                         std::abs(in.outY - hty) <= Whereabouts::kRadius)
+                {
+                    // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
+                    // stairs anchors beside it.
+                    ways.emplace_back(in.outX, in.outY);
+                    for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
+                    {
+                        ways.push_back(a);
+                    }
+                }
             }
             for (const auto& [ex, ey] : ways)
             {
@@ -2871,6 +2882,29 @@ namespace
                 LOG("AutoAttack: backpack full and no merchant known on this layer");
             }
         }
+        // Held by the game: talking or trading with an NPC (the hero's +0xFC 0xA, the NPC at +0x100; Manolito, block
+        // M): no walk that would break the talk; a minute at most (a talk the agent left open).
+        {
+            static DWORD s_talkSince = 0;
+            const uint8_t mode = *(reinterpret_cast<const uint8_t*>(self) + 0xFC);
+            if (mode == 0xA)
+            {
+                if (!s_talkSince)
+                {
+                    s_talkSince = now;
+                    LOG("AutoAttack: the hero talks or trades (NPC {:x}): standing", *reinterpret_cast<const uint32_t*>(
+                                                                                   reinterpret_cast<const uint8_t*>(self) + 0x100));
+                }
+                if (now - s_talkSince < 60000)
+                {
+                    return;
+                }
+            }
+            else
+            {
+                s_talkSince = 0;
+            }
+        }
         // Quests: off to the quest's target (however far: ClickWalk routes it over the map memory), fighting only
         // what attacks on the way; there, the roaming looks around it.
         int32_t qx = 0, qy = 0;
@@ -2904,6 +2938,73 @@ namespace
         {
             questHere = true;
             setIntent(Intent::Quest, who ? "a quest creature to speak to" : "a quest's goal");
+            // A goal inside a house or cave: its interior lies far off on the map (HQ_HE_3_3_1's at 5859..5863,
+            // 3851..3886, its doors 3433,2697 and 3436,2735; Manolito): the hero outside goes to the door whose inside
+            // landing is nearest the goal, and steps on it (the game's own jump), not to the goal's tile.
+            static DWORD s_onDoorSince = 0;
+            if (layer == 0)
+            {
+                const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
+                const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+                const Teleports::Interior* door = nullptr;
+                double bestIn = 40.0;
+                for (const Teleports::Interior& in : Teleports::interiors())
+                {
+                    const double d = std::hypot(in.inX - gtx, in.inY - gty);
+                    if (d < bestIn && std::hypot(in.inX - htx, in.inY - hty) > 60.0)
+                    {
+                        bestIn = d;
+                        door = &in;
+                    }
+                }
+                if (door)
+                {
+                    int dx = door->outX, dy = door->outY;
+                    if (!door->start)
+                    {
+                        double bestA = 1e9;
+                        for (const auto& a : Teleports::anchorsNear(0, door->outX, door->outY, 6))
+                        {
+                            if (const double d = std::hypot(a.first - htx, a.second - hty); d < bestA)
+                            {
+                                bestA = d;
+                                dx = a.first;
+                                dy = a.second;
+                            }
+                        }
+                    }
+                    static int s_doorToldX = -1;
+                    if (s_doorToldX != dx)
+                    {
+                        s_doorToldX = dx;
+                        LOG("AutoAttack: the quest's goal {},{} lies inside (its landing {},{}): to its door at {},{}", gtx,
+                            gty, door->inX, door->inY, dx, dy);
+                    }
+                    setIntent(Intent::Quest, "the quest's goal inside a house: to its door");
+                    qx = static_cast<int32_t>((dx + 0.5) * kTileSize);
+                    qy = static_cast<int32_t>((dy + 0.5) * kTileSize);
+                    qr = 0.0;
+                    if (std::hypot(dx - htx, dy - hty) <= 1.0)
+                    {
+                        // On it and nothing yet: a step off, the next look steps on again.
+                        if (!s_onDoorSince)
+                        {
+                            s_onDoorSince = now;
+                        }
+                        else if (now - s_onDoorSince > 4000)
+                        {
+                            s_onDoorSince = 0;
+                            ClickWalk::walkTo(self->x + static_cast<int32_t>(2 * kTileSize), self->y, false);
+                            g_roamAt = 0;
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        s_onDoorSince = 0;
+                    }
+                }
+            }
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
             // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.
             const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
