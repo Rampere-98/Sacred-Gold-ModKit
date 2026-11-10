@@ -2651,6 +2651,27 @@ namespace
         {
             return;
         }
+        // Shut in with a door that opens near (the player, 2026-11-10: «la cueva tiene puertas que el agente no sabe
+        // abrir»; the cave was worth staying in, only the way on was shut): opened at once, the way on before the way
+        // out, every 8 s at most, each door once in 2 minutes.
+        static DWORD s_doorAt = 0;
+        if (self && hero && (!s_doorAt || now - s_doorAt > 8000) && Whereabouts::area().shutIn)
+        {
+            s_doorAt = now;
+            const float range = g_doorRange;
+            g_doorRange = 20.0f * kTileSize;
+            AimAssist::Target door;
+            const bool found = AimAssist::findObject(g_doorRange, &acceptDoor, nullptr, door);
+            g_doorRange = range;
+            if (found)
+            {
+                g_doorTried[door.id] = now;
+                LOG("AutoAttack: shut in, a door that opens near ({:x}): opened, the way on", door.id);
+                Findings::note("door", self->x, self->y, "shut in: door {:x} opened", door.id);
+                attack(door.id);
+                return;
+            }
+        }
         if (!self || !hero || now - g_quietSince < kRoamQuietMs || (g_roamAt && now - g_roamAt < kRoamStepMs) ||
             hero->health * 100 < hero->maxHealth * 60)
         {
