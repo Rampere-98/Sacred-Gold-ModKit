@@ -1,3 +1,4 @@
+#include "mind.h"
 #include "hero_profile.h"
 #include "game/gear.h"
 #include "game/map_memory.h"
@@ -495,7 +496,11 @@ namespace
         return type == 0x1433 || type == 0x1419 || type == 0x1414;
     }
     int g_healing = -1;     // in the backpack at the last look (-1: not counted yet)
-    constexpr int kWantHealing = 5;
+    // Healing potions kept, by the class's mind (8 for the melee classes, 5 for the Mage: docs/Mentalidades.md).
+    int wantHealing()
+    {
+        return Mind::now().potionStock;
+    }
 
     int countHealing(uint8_t* pack)
     {
@@ -506,7 +511,7 @@ namespace
 
     bool buyPotion(cCreature* hero, uint8_t* pack)
     {
-        if (countHealing(pack) >= kWantHealing)
+        if (countHealing(pack) >= wantHealing())
         {
             return false;
         }

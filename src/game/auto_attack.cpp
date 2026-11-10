@@ -1,3 +1,4 @@
+#include "mind.h"
 #include "hero_profile.h"
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
@@ -1313,7 +1314,9 @@ namespace
         {
             code = 0x209;
         }
-        else if (mounted && nearest < 12.0 * kTileSize && now - s_at > 1500)
+        // Casters and bows fight up there (Mind: the Seraphim, the Mage, the Wood Elf get off only with an enemy 3
+        // tiles off); the rest get off at 12.
+        else if (mounted && nearest < Mind::now().dismountTiles * kTileSize && now - s_at > 1500)
         {
             code = 0x20A;
         }
@@ -1474,9 +1477,14 @@ namespace
         // Without a healing potion, a big fight forecast lost is left early (the analyst, 2026-11-10 21:03: the
         // Gladiator, Dark Elf and Wood Elf below 20 % of health in 12-13 % of their fights, into 11-16 enemies with
         // the potions gone): at 85 % of health with five or more about.
+        // Each class by its own mind (Mind, docs/Mentalidades.md): the frail casters leave sooner; the player's own
+        // retreat percent, once changed in the menu from its 25, rules over the class's.
+        const Mind::Values& mind = Mind::now();
+        const int retreatPct = c.retreatPercent != 25 ? c.retreatPercent : mind.retreatPercent;
         const bool dry = Gear::healingLeft() == 0 && fc.foes >= 5;
-        const bool lost = fc.foes > 0 && fc.win < 0.5f && health * 100 <= maximum * (dry ? 85 : 60);
-        const bool low = health * 100 <= maximum * c.retreatPercent ||
+        const bool lost = fc.foes > 0 && fc.win < mind.lostWin &&
+                          health * 100 <= maximum * (dry ? mind.lostHealthDryPct : mind.lostHealthPct);
+        const bool low = health * 100 <= maximum * retreatPct ||
                          (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f) || lost;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
@@ -1534,7 +1542,8 @@ namespace
                 }
                 return false;
             }
-            const bool recovered = health * 100 >= maximum * std::min(c.retreatPercent + 20, 90);
+            const bool recovered =
+                health * 100 >= maximum * std::min((c.retreatPercent != 25 ? c.retreatPercent : Mind::now().retreatPercent) + 20, 90);
             const bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
             if (recovered || !noPotions || !anyNear || tooLong)
             {
@@ -2825,6 +2834,12 @@ namespace
             {
                 continue;
             }
+            // Not a zone well above the hero's level, by the class's mind (the class strategist, 2026-11-10: the
+            // Gladiator at level 1 sent to a zone of 19-32, the Daemon to one of 45-80).
+            if (lo > heroLevel + Mind::now().farmLevelSlack)
+            {
+                continue;
+            }
             // Of its level: full worth; below it less and less (little experience); well above it, risky.
             float fit = 1.0f;
             if (heroLevel > hi)
@@ -3904,7 +3919,7 @@ namespace
             const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
             int lo = 0, hi = 0;
             if (!world || !sectorLevels(world, static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), lo, hi) ||
-                lo <= heroLevel + 2)
+                lo <= heroLevel + Mind::now().questLevelSlack)
             {
                 return false;
             }
