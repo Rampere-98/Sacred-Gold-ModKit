@@ -3,6 +3,7 @@
 #include "game/gear.h"
 #include "game/auto_start.h"
 #include "game/teleports.h"
+#include "game/agent_overlay.h"
 #include "game/hero_build.h"
 #include "game/lore.h"
 #include "game/click_walk.h"
@@ -2104,11 +2105,23 @@ namespace
     // a pack (+0x24D its leader) comes as one; gives up beyond 1500 u, 27.9 tiles).
     struct AggroFoe
     {
+        uint32_t id;
         int32_t x, y;
         bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
     };
     std::vector<AggroFoe> g_aggroFoes;
     constexpr double kAggroTiles = 13.0;
+
+    // The door or way in the agent heads for (an interior, a quest's house), for the overlay; 0 at none.
+    int32_t g_doorX = 0, g_doorY = 0;
+    DWORD g_doorAt = 0;
+
+    void noteDoor(int tx, int ty)
+    {
+        g_doorX = static_cast<int32_t>((tx + 0.5) * kTileSize);
+        g_doorY = static_cast<int32_t>((ty + 0.5) * kTileSize);
+        g_doorAt = GetTickCount();
+    }
 
     void scanQuestMarks(DWORD now, int32_t heroX, int32_t heroY, int heroLevel, uint8_t heroLayer)
     {
@@ -2156,7 +2169,7 @@ namespace
                             {
                                 const int32_t target = *reinterpret_cast<const int32_t*>(o + 0x251);
                                 const uint32_t ai = *reinterpret_cast<const uint32_t*>(o + 0x1F4);
-                                g_aggroFoes.push_back({fx, fy, target >= 1 && target <= 0x10 && (ai & 4) && !(ai & 0x100)});
+                                g_aggroFoes.push_back({static_cast<uint32_t>(it - table), fx, fy, target >= 1 && target <= 0x10 && (ai & 4) && !(ai & 0x100)});
                             }
                             FarmCount& f = g_farmBuilding[(tx >> 6) * 1024 + (ty >> 6)];
                             ++f.count;
@@ -2981,6 +2994,7 @@ namespace
                             gty, door->inX, door->inY, dx, dy);
                     }
                     setIntent(Intent::Quest, "the quest's goal inside a house: to its door");
+                    noteDoor(dx, dy);
                     qx = static_cast<int32_t>((dx + 0.5) * kTileSize);
                     qy = static_cast<int32_t>((dy + 0.5) * kTileSize);
                     qr = 0.0;
@@ -3437,6 +3451,7 @@ namespace
                         }
                     }
                     const int32_t wx = static_cast<int32_t>((dx + 0.5) * kTileSize), wy = static_cast<int32_t>((dy + 0.5) * kTileSize);
+                    noteDoor(dx, dy);
                     if (std::hypot(dx - htx, dy - hty) > 1.5)
                     {
                         if (travel(now, self, wx, wy, g_questAskAt))
@@ -4125,10 +4140,86 @@ void AutoAttack::install()
     ModkitMenu::add({"Dónde está el héroe", &Whereabouts::drawMenu, nullptr});
     ModkitMenu::add({"Zona del agente", &drawZone, nullptr});
     ModkitMenu::add({"Teletransporte (solo jugador)", &drawTeleport, nullptr});
+    AgentOverlay::install();
     Teleports::install();
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);
+}
+
+// The agent's overlay over the world (AgentOverlay): what it is about, where it goes, what it fights, the aggro reach.
+static void publishOverlay(DWORD now, cCreature* self, float sx, float sy)
+{
+    using AgentOverlay::Layer;
+    AgentOverlay::begin(self->x, self->y, sx, sy);
+    cObjectManager* objects = cObjectManager::instance();
+    // The scale: the target, else the first foe on screen.
+    {
+        float tx = 0, ty = 0;
+        bool scaled = false;
+        if (g_target && objects)
+        {
+            if (cCreature* t = objects->creature(g_target); t && AimAssist::screenOf(g_target, tx, ty))
+            {
+                AgentOverlay::calibrate(t->x, t->y, tx, ty);
+                scaled = true;
+            }
+        }
+        for (size_t i = 0; i < g_aggroFoes.size() && !scaled && i < 12; ++i)
+        {
+            if (AimAssist::screenOf(g_aggroFoes[i].id, tx, ty))
+            {
+                AgentOverlay::calibrate(g_aggroFoes[i].x, g_aggroFoes[i].y, tx, ty);
+                scaled = true;
+            }
+        }
+    }
+    if (AgentOverlay::shown(Layer::Intent))
+    {
+        static const uint32_t colors[] = {IM_COL32(120, 200, 255, 255), IM_COL32(255, 200, 60, 255),
+                                          IM_COL32(120, 255, 120, 255), IM_COL32(255, 160, 255, 255),
+                                          IM_COL32(255, 120, 90, 255), IM_COL32(255, 80, 80, 255)};
+        AgentOverlay::heroText(std::string(intentName(g_intent)) + ": " + g_intentWhy,
+                               colors[std::clamp(static_cast<int>(g_intent), 0, 5)]);
+    }
+    if (AgentOverlay::shown(Layer::Aggro))
+    {
+        int drawn = 0;
+        for (const AggroFoe& f : g_aggroFoes)
+        {
+            if (std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) < 30.0 * kTileSize &&
+                ++drawn <= 24)
+            {
+                AgentOverlay::ring(f.x, f.y, 11.2f, f.onHero ? IM_COL32(255, 60, 60, 200) : IM_COL32(255, 160, 40, 110),
+                                   f.onHero ? 2.0f : 1.0f);
+            }
+        }
+    }
+    if (AgentOverlay::shown(Layer::Route))
+    {
+        if (g_questTravel && (g_questX || g_questY))
+        {
+            AgentOverlay::way(g_questX, g_questY, IM_COL32(120, 255, 120, 230),
+                              g_intent == Intent::Shop ? "tienda" : "misión");
+        }
+        else if (ClickWalk::walking() && (g_walkX || g_walkY))
+        {
+            AgentOverlay::way(g_walkX, g_walkY, IM_COL32(120, 200, 255, 200), intentName(g_intent));
+        }
+    }
+    if (AgentOverlay::shown(Layer::Doors) && g_doorAt && now - g_doorAt < 5000)
+    {
+        AgentOverlay::way(g_doorX, g_doorY, IM_COL32(200, 90, 255, 240), "puerta");
+        AgentOverlay::ring(g_doorX, g_doorY, 1.0f, IM_COL32(200, 90, 255, 240), 2.5f);
+    }
+    if (AgentOverlay::shown(Layer::Target) && g_target)
+    {
+        if (float tx = 0, ty = 0; AimAssist::screenOf(g_target, tx, ty))
+        {
+            AgentOverlay::around(tx, ty, 26.0f, g_collecting ? IM_COL32(255, 230, 60, 230) : IM_COL32(255, 60, 60, 230));
+        }
+    }
+    AgentOverlay::end(now);
 }
 
 bool AutoAttack::on()
@@ -4335,6 +4426,10 @@ void AutoAttack::onFrame()
             if (float sx, sy; AimAssist::hero(sx, sy))
             {
                 MapMemory::wantGround(layer, self->x, self->y, sx, sy);
+                if (g_on)
+                {
+                    publishOverlay(now, self, sx, sy);
+                }
             }
             if (!g_on)
             {

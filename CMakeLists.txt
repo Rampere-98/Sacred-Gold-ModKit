@@ -75,6 +75,7 @@ set(DDRAW_SOURCES
   src/game/gear.cpp
   src/game/auto_start.cpp
   src/game/teleports.cpp
+  src/game/agent_overlay.cpp
   src/game/hero_build.cpp
   src/game/gpu_skin.cpp
   src/game/world_passes.cpp

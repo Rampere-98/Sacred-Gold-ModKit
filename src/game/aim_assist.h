@@ -24,6 +24,8 @@ namespace AimAssist
 
     // The hero on the screen (center of its rect, else the screen center); false outside the game world.
     bool hero(float& x, float& y);
+    // An object's on-screen centre (the world view's pick list of the last frame); false if it is not on screen.
+    bool screenOf(uint32_t id, float& x, float& y);
     // The hero's health and maximum (Sacred::cCreature); false without a hero.
     bool heroHealth(int& health, int& maximum);
 

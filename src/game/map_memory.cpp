@@ -1465,3 +1465,18 @@ void MapMemory::endRadar()
     const std::lock_guard lock(g_lock);
     g_blips.swap(g_blipsBuilding);
 }
+
+bool& MapMemory::hudShown()
+{
+    return g_hud;
+}
+
+bool& MapMemory::foesShown()
+{
+    return g_showFoes;
+}
+
+bool& MapMemory::questsShown()
+{
+    return g_showQuests;
+}

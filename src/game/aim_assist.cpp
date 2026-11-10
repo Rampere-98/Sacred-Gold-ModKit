@@ -167,6 +167,19 @@ bool AimAssist::hero(float& x, float& y)
     return true;
 }
 
+bool AimAssist::screenOf(uint32_t id, float& x, float& y)
+{
+    cWorldView* view = worldView();
+    PickEntry e;
+    if (!view || !findEntry(view, id, e))
+    {
+        return false;
+    }
+    x = e.centerX();
+    y = e.centerY();
+    return true;
+}
+
 bool AimAssist::find(Kind kind, float dirX, float dirY, float range, float cone, Target& out)
 {
     cWorldView* view = worldView();

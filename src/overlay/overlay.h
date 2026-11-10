@@ -22,6 +22,8 @@ namespace Overlay
     // input. nullptr removes it.
     using HudFn = void (*)();
     void setHud(HudFn hud);
+    // Another HUD drawn after setHud's (up to 3), for good.
+    void addHud(HudFn hud);
 
     // The window's thread: while a screen is open, its keyboard and mouse messages go to ImGui; true if the game
     // must not see the message.

@@ -12,6 +12,7 @@
 #include <imgui_internal.h>
 
 #include <atomic>
+#include <iterator>
 #include <initializer_list>
 #include <mutex>
 #include <string>
@@ -23,6 +24,29 @@ namespace
 {
     std::atomic<Overlay::DrawFn> g_draw{nullptr};
     std::atomic<Overlay::HudFn> g_hud{nullptr};
+    // Each HUD drawn in turn (slot 0 the one setHud sets, the others addHud's); g_hud calls them while any is set.
+    std::atomic<Overlay::HudFn> g_huds[4] = {};
+
+    void callHuds()
+    {
+        for (const auto& slot : g_huds)
+        {
+            if (const Overlay::HudFn hud = slot.load(std::memory_order_acquire))
+            {
+                hud();
+            }
+        }
+    }
+
+    void updateHud()
+    {
+        bool any = false;
+        for (const auto& slot : g_huds)
+        {
+            any = any || slot.load(std::memory_order_acquire) != nullptr;
+        }
+        g_hud.store(any ? &callHuds : nullptr, std::memory_order_release);
+    }
     std::atomic<DWORD> g_lastPresent{0};            // presents pass by: the overlay can show
     std::atomic<bool> g_gamepadNavigation{true};
 
@@ -338,7 +362,28 @@ void Overlay::open(DrawFn draw)
 
 void Overlay::setHud(HudFn hud)
 {
-    g_hud.store(hud, std::memory_order_release);
+    g_huds[0].store(hud, std::memory_order_release);
+    updateHud();
+}
+
+void Overlay::addHud(HudFn hud)
+{
+    for (size_t i = 1; i < std::size(g_huds); ++i)
+    {
+        if (g_huds[i].load(std::memory_order_acquire) == hud)
+        {
+            return;
+        }
+    }
+    for (size_t i = 1; i < std::size(g_huds); ++i)
+    {
+        HudFn empty = nullptr;
+        if (g_huds[i].compare_exchange_strong(empty, hud, std::memory_order_acq_rel))
+        {
+            break;
+        }
+    }
+    updateHud();
 }
 
 bool Overlay::isOpen()

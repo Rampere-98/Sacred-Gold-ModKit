@@ -34,6 +34,11 @@ namespace MapMemory
     // Starts reading the map file on a thread of its own (once; install() calls it too).
     void preload();
     void install();
+
+    // The menus' switches: the radar on the screen's side, the enemies seen and the quests on the map.
+    bool& hudShown();
+    bool& foesShown();
+    bool& questsShown();
     void setHero(int layer, int32_t x, int32_t y);
 
     // The radar: what the agent sees now (world positions), and where it is heading (none: `route` false).
