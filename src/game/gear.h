@@ -21,7 +21,20 @@ namespace Gear
     bool wantsRuneSwap();
     bool wantsCombo();
     bool wantsSocket();
-    bool wantsHorse();         // no horse yet: one from a stable        // something to socket at a smith         // a combo to learn at a combo master
+    bool wantsHorse();
+    // A horse's worth, to compare two (Manolito, block H2b, seen live): its level (u16 +0x3FE, 1..25) first, its
+    // speed (the stats block +0x3A8, u16 +0x40, 140..220) to break ties. 0 for none.
+    inline int horseWorth(const void* creature)
+    {
+        if (!creature)
+        {
+            return 0;
+        }
+        const auto* c = static_cast<const unsigned char*>(creature);
+        return *reinterpret_cast<const unsigned short*>(c + 0x3FE) * 1000 + *reinterpret_cast<const unsigned short*>(c + 0x3A8 + 0x40);
+    }
+    // A stable near offers a horse clearly better than the hero's (two levels or more): a trip to buy it.
+    void setHorseUpgrade(bool better);         // no horse yet: one from a stable        // something to socket at a smith         // a combo to learn at a combo master
 
     // Healing potions in the backpack at the last look (-1 not counted yet).
     int healingLeft();

@@ -1239,6 +1239,15 @@ namespace
     // +0x570); destroyed by 0x416B30 thiscall(&ev). Mounted: creature +0x200 & 0x10. Mounted blows are split by the
     // riding skill (down to a third): on for the long walks with no enemy within 20 tiles, off once one comes within
     // 12; at most a change every 8 s.
+    // Free horses about (side 4, no owner at +0x570; Manolito, block H2: wild horses, taken by walking up and the ride
+    // event), within 25 tiles on the surface, with their worth (Gear::horseWorth).
+    struct WildHorse
+    {
+        uint32_t id;
+        int32_t x, y;
+        int worth;
+    };
+    std::vector<WildHorse> g_wildHorses;
     uint32_t g_rideCode = 0, g_rideHorse = 0;
 
     void sendRide(void*)
@@ -1265,7 +1274,91 @@ namespace
         static DWORD s_at = 0;
         // Walking up to the horse: since when (0: not), and when last told to walk.
         static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
-        const uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
+        uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
+        // A wild horse taken (the player, 2026-11-10: «existen caballos salvajes, son útiles cuando no tienes
+        // caballo»; Manolito, H2: walk up to it and send the ride event): one within 25 tiles when the hero has none,
+        // or one two levels better than his, on foot, no enemy within 15 tiles.
+        static uint32_t s_wildId = 0;
+        static DWORD s_wildSince = 0, s_wildStep = 0, s_wildSentAt = 0;
+        static std::unordered_map<uint32_t, DWORD> s_wildFailed;
+        if (HeroProfile::current().cls != HeroProfile::Class::Dwarf && !*(reinterpret_cast<const uint8_t*>(self) + 0x24) &&
+            !g_retreatUntil)
+        {
+            cObjectManager* om = cObjectManager::instance();
+            const cCreature* own = horse && om ? om->creature(horse) : nullptr;
+            if (s_wildSentAt)
+            {
+                if (horse == s_wildId)
+                {
+                    LOG("AutoAttack: wild horse {:x} taken", s_wildId);
+                    s_wildId = 0;
+                    s_wildSentAt = 0;
+                }
+                else if (now - s_wildSentAt > 3000)
+                {
+                    LOG("AutoAttack: wild horse {:x} not taken (riding skill?): left 10 min", s_wildId);
+                    s_wildFailed[s_wildId] = now;
+                    s_wildId = 0;
+                    s_wildSentAt = 0;
+                }
+                return;
+            }
+            const bool onFoot = !own || std::abs(own->x - self->x) > 3 || std::abs(own->y - self->y) > 3;
+            double nearestFoe = 1e9;
+            for (const AggroFoe& f : g_aggroFoes)
+            {
+                nearestFoe = std::min(nearestFoe, std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)));
+            }
+            const int bar = own ? Gear::horseWorth(own) + 2000 : 1;
+            const WildHorse* best = nullptr;
+            for (const WildHorse& w : g_wildHorses)
+            {
+                const auto failed = s_wildFailed.find(w.id);
+                if (w.worth >= bar && (failed == s_wildFailed.end() || now - failed->second > 600000) &&
+                    (!best || w.worth > best->worth))
+                {
+                    best = &w;
+                }
+            }
+            if (best && onFoot && nearestFoe > 15.0 * kTileSize)
+            {
+                const cCreature* wild = om ? om->creature(best->id) : nullptr;
+                const double off = wild ? std::hypot(static_cast<double>(wild->x - self->x), static_cast<double>(wild->y - self->y)) : 1e9;
+                if (best->id != s_wildId)
+                {
+                    s_wildId = best->id;
+                    s_wildSince = now;
+                    LOG("AutoAttack: wild horse {:x} (worth {}, the hero's {}) {:.1f} tiles off: going to take it", best->id,
+                        best->worth, own ? Gear::horseWorth(own) : 0, off / kTileSize);
+                }
+                if (!wild || now - s_wildSince > 20000)
+                {
+                    LOG("AutoAttack: wild horse {:x} not reached in 20 s: left 10 min", s_wildId);
+                    s_wildFailed[s_wildId] = now;
+                    s_wildId = 0;
+                    return;
+                }
+                if (off > 2.0 * kTileSize)
+                {
+                    g_doorHoldUntil = now + 1500;
+                    if (now - s_wildStep > 1000)
+                    {
+                        s_wildStep = now;
+                        g_walkX = wild->x;
+                        g_walkY = wild->y;
+                        Inject::call(&walkThere, nullptr);
+                    }
+                    return;
+                }
+                LOG("AutoAttack: mounting wild horse {:x}", s_wildId);
+                g_rideCode = 0x209;
+                g_rideHorse = s_wildId;
+                Inject::call(&sendRide, nullptr);
+                s_wildSentAt = now;
+                return;
+            }
+            s_wildId = 0;
+        }
         // The Dwarf does not ride (Builds.md; the player, 2026-11-10: «el enano no tiene animación montado»).
         if (!horse || *(reinterpret_cast<const uint8_t*>(self) + 0x24) ||
             HeroProfile::current().cls == HeroProfile::Class::Dwarf)
@@ -2907,6 +3000,7 @@ namespace
         g_masters.clear();
         g_smiths.clear();
         g_stables.clear();
+        g_wildHorses.clear();
         g_farmBuilding.clear();
         g_chestBuilding = 0;
         g_chestBest = 0.0;
@@ -2935,6 +3029,14 @@ namespace
                     {
                         const uint32_t side = *reinterpret_cast<const uint32_t*>(o + 0x1F0);
                         const auto* sides = reinterpret_cast<const uint8_t*>(0x8EB548);
+                        if (side == 4 && heroLayer == 0 && !*reinterpret_cast<const uint32_t*>(o + 0x570))
+                        {
+                            const int32_t hx = *reinterpret_cast<const int32_t*>(o + 0x1C), hy = *reinterpret_cast<const int32_t*>(o + 0x20);
+                            if (std::hypot(static_cast<double>(hx - heroX), static_cast<double>(hy - heroY)) < 25.0 * kTileSize)
+                            {
+                                g_wildHorses.push_back({*reinterpret_cast<const uint32_t*>(o + 0xC), hx, hy, Gear::horseWorth(o)});
+                            }
+                        }
                         if (side < 16 && side != 1 && sides[16 + side] == 0)
                         {
                             const int tx = static_cast<int>(*reinterpret_cast<const int32_t*>(o + 0x1C) / kTileSize);
@@ -3087,6 +3189,31 @@ namespace
         g_chestId = g_chestBest < 150.0 * kTileSize ? g_chestBuilding : 0;
         judgeZone(manager ? *reinterpret_cast<const uint8_t* const*>(manager) : nullptr, heroLevel, heroX, heroY, now);
         MapMemory::setQuestMarks(std::move(marks));
+        // A stable within 60 tiles selling a horse clearly better than the hero's (two levels or more): Gear goes to
+        // buy it (the player, 2026-11-10: compare before changing horses).
+        {
+            bool better = false;
+            cObjectManager* om = cObjectManager::instance();
+            const cCreature* hero = om ? om->hero() : nullptr;
+            const uint32_t ownId = hero ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) : 0;
+            const cCreature* own = ownId ? om->creature(ownId) : nullptr;
+            if (own)
+            {
+                const int ownWorth = Gear::horseWorth(own);
+                for (const Merchant& m : g_stables)
+                {
+                    const auto* man = reinterpret_cast<const uint8_t*>(om->object(m.id));
+                    const uint32_t sale = man ? *reinterpret_cast<const uint32_t*>(man + 0x570) : 0;
+                    const cCreature* h = sale ? om->creature(sale) : nullptr;
+                    if (h && std::hypot(static_cast<double>(m.x - heroX), static_cast<double>(m.y - heroY)) < 60.0 * kTileSize &&
+                        Gear::horseWorth(h) >= ownWorth + 2000)
+                    {
+                        better = true;
+                    }
+                }
+            }
+            Gear::setHorseUpgrade(better);
+        }
     }
 
     DWORD g_questAskAt = 0;

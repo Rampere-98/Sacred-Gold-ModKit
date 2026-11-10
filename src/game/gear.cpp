@@ -1552,6 +1552,7 @@ namespace
     using BindHorse = void(__fastcall*)(void* creature, void*, uint32_t id, int flag);
     using HorseSettle = void(__fastcall*)(void* creature, void*, int n, int flag);
     std::atomic<bool> g_wantHorse{false};
+    std::atomic<bool> g_horseUpgrade{false};    // a stable near has a clearly better horse than the hero's
     DWORD g_horseTriedAt = 0;
 
     bool buyHorse(cCreature* hero)
@@ -1629,6 +1630,18 @@ namespace
                 d[4], d[5], d[6], d[7], d[8]);
             return close("no horse offered");
         }
+        // The hero's own horse kept unless this one is clearly better (the player, 2026-11-10: «cada caballo tiene
+        // sus estadísticas… que el agente hiciera comparaciones antes de cambiar de caballo»): two levels or more.
+        const uint32_t ownId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
+        if (const cCreature* own = ownId && objects ? objects->creature(ownId) : nullptr)
+        {
+            const int ownWorth = horseWorth(own), newWorth = horseWorth(horse);
+            LOG("Gear: horse {:x} for sale (worth {}) against the hero's {:x} (worth {})", horseId, newWorth, ownId, ownWorth);
+            if (newWorth < ownWorth + 2000)
+            {
+                return close("not clearly better than the hero's own");
+            }
+        }
         // At most half the gold (potions come first).
         if (!price || price > 100000 || price * 2 > gold)
         {
@@ -1668,11 +1681,12 @@ namespace
                 // A horse wanted: none yet, gold enough to spare half on it.
                 // Never for the Dwarf: he does not ride (Builds.md; the player, 2026-11-10: no riding animation).
                 const bool horse = HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
-                                   *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 &&
+                                   (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 ||
+                                    g_horseUpgrade) &&
                                    gold >= 2000 && (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
                 if (horse != g_wantHorse.exchange(horse) && horse)
                 {
-                    LOG("Gear: no horse and {} gold: off to a stable", gold);
+                    LOG("Gear: {} and {} gold: off to a stable", g_horseUpgrade ? "a better horse there" : "no horse", gold);
                 }
                 // Something to socket: a backpack item with a free socket and a gem for it, gold for the smith.
                 static DWORD s_socketLookAt = 0;
@@ -1887,6 +1901,11 @@ bool Gear::packFull()
 int Gear::foreignRunes()
 {
     return g_ready ? g_foreignRunes.load() : 0;
+}
+
+void Gear::setHorseUpgrade(bool better)
+{
+    g_horseUpgrade = better;
 }
 
 bool Gear::wantsHorse()
