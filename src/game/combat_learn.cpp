@@ -1,5 +1,6 @@
 #include "game/combat_learn.h"
 #include "game/combat_state.h"
+#include "game/gear.h"
 #include "game/map_memory.h"
 #include "game/modkit_menu.h"
 #include "log.h"
@@ -85,6 +86,15 @@ namespace
     std::map<uint32_t, Kind> g_kinds;
     std::mutex g_lock;          // g_kinds and g_w: the menu draws on another thread
 
+    // The forecast's learned parts: the hero's effective blows per second (attack speed times hits; reset with the
+    // hero, since it is the build's), and the log error of the expected loss (bias, spread) over past fights.
+    float g_blowsPerSecond = 1.0f;
+    int g_blowSamples = 0;
+    float g_lossBias = 0.0f, g_lossSpread = 0.7f;
+    int g_lossSamples = 0;
+    CombatLearn::Forecast g_forecast;
+    std::unordered_map<uint32_t, int> g_killRank;
+
     struct Seen
     {
         uint32_t type = 0;
@@ -98,6 +108,7 @@ namespace
         DWORD lastSeen = 0;
         float predicted = 0.0f;
         bool learned = false;
+        float hit = -1.0f;              // the hero's expected blow against it
     };
     std::unordered_map<uint32_t, Seen> g_seen;
     std::unordered_map<uint32_t, float> g_relative;
@@ -116,6 +127,9 @@ namespace
         bool died = false;
         int kills = 0;
         float unexplained = 0.0f;   // health lost with nobody striking (poison, an archer unseen)
+        float lostTotal = 0.0f;     // all the health lost (potions hide it from start - end)
+        float dealt = 0.0f;         // health the enemies lost
+        CombatLearn::Forecast forecast; // at its start
         std::vector<std::pair<uint32_t, Seen>> foes;    // those of the fight that are gone
     };
     Fight g_fight;
@@ -218,7 +232,11 @@ namespace
             unsigned type = 0;
             Kind k;
             char name[256] = {};
-            if (std::sscanf(line, "model %f %f %f %f %d", &w[0], &w[1], &w[2], &w[3], &g_samples) == 5)
+            if (std::sscanf(line, "forecast %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
+            {
+                g_lossSpread = std::clamp(g_lossSpread, 0.2f, 2.0f);
+            }
+            else if (std::sscanf(line, "model %f %f %f %f %d", &w[0], &w[1], &w[2], &w[3], &g_samples) == 5)
             {
                 std::copy(w, w + kFeatures, g_w);
             }
@@ -247,6 +265,7 @@ namespace
             std::fprintf(f, "# SacredBild combat learning: model w0 w1 w2 w3 samples; kind id samples logRate minLevel "
                             "maxLevel killed name\n");
             std::fprintf(f, "model %.5f %.5f %.5f %.5f %d\n", g_w[0], g_w[1], g_w[2], g_w[3], g_samples);
+            std::fprintf(f, "forecast %.5f %.5f %d\n", g_lossBias, g_lossSpread, g_lossSamples);
             for (const auto& [type, k] : g_kinds)
             {
                 std::fprintf(f, "kind %u %d %.5f %d %d %d %s\n", type, k.samples, k.logRate, k.minLevel, k.maxLevel,
@@ -261,16 +280,20 @@ namespace
     void writeFight(DWORD now, int heroHealth, int heroLevel)
     {
         std::string line;
-        char head[512];
+        char head[1024];
         std::snprintf(head, sizeof(head),
                       "{\"time\":%lu,\"seconds\":%.1f,\"heroLevel\":%d,\"heroMax\":%d,\"heroStart\":%d,\"heroMin\":%d,"
                       "\"heroEnd\":%d,\"mounted\":%s,\"mountMin\":%d,\"mountMax\":%d,\"potions\":%d,\"kills\":%d,"
-                      "\"experience\":%d,\"hirelingDeaths\":%d,\"died\":%s,\"unexplained\":%.0f,\"foes\":[",
+                      "\"experience\":%d,\"hirelingDeaths\":%d,\"died\":%s,\"unexplained\":%.0f,"
+                      "\"lostTotal\":%.0f,\"dealt\":%.0f,\"forecast\":{\"foes\":%d,\"loss\":%.3f,\"seconds\":%.1f,"
+                      "\"win\":%.3f,\"blowsPerSecond\":%.2f,\"bias\":%.3f,\"spread\":%.3f},\"foes\":[",
                       static_cast<unsigned long>(now), (g_fight.lastAction - g_fight.start) / 1000.0f, heroLevel,
                       g_fight.heroMax, g_fight.heroStart, g_fight.heroMin, heroHealth,
                       g_fight.mounted ? "true" : "false", g_fight.mountMin, g_fight.mountMax, g_fight.potions,
                       g_fight.kills, g_fight.experience, g_fight.hirelingDeaths, g_fight.died ? "true" : "false",
-                      g_fight.unexplained);
+                      g_fight.unexplained, g_fight.lostTotal, g_fight.dealt, g_fight.forecast.foes,
+                      g_fight.forecast.loss, g_fight.forecast.seconds, g_fight.forecast.win, g_blowsPerSecond,
+                      g_lossBias, g_lossSpread);
         line = head;
         bool first = true;
         for (const auto& [id, s] : g_fight.foes)
@@ -281,10 +304,10 @@ namespace
             std::snprintf(foe, sizeof(foe),
                           "%s{\"kind\":\"%s\",\"level\":%d,\"maxHealth\":%d,\"left\":%d,\"ranged\":%s,"
                           "\"strikeSeconds\":%.1f,\"damage\":%.0f,\"percentPerSecond\":%.2f,\"predicted\":%.2f,"
-                          "\"toHirelings\":%d}",
+                          "\"toHirelings\":%d,\"hit\":%.1f}",
                           first ? "" : ",", typeName(s.type).c_str(), s.level, s.maxHealth, std::max(0, s.health),
                           s.ranged ? "true" : "false", s.strikeSeconds, s.damage, rate, s.predicted * 100.0f,
-                          s.toHirelings);
+                          s.toHirelings, s.hit);
             line += foe;
             first = false;
         }
@@ -297,6 +320,9 @@ namespace
         LOG("CombatLearn: fight over, {:.0f} s, {} enemies, {} killed, health {} -> {} (lowest {}), {} potions, "
             "{} experience", (g_fight.lastAction - g_fight.start) / 1000.0f, g_fight.foes.size(), g_fight.kills,
             g_fight.heroStart, heroHealth, g_fight.heroMin, g_fight.potions, g_fight.experience);
+        LOG("Forecast: foreseen {:.0f}% lost in {:.0f} s, {:.0f}% to win; it was {:.0f}% lost{}",
+            g_fight.forecast.loss * 100.0f, g_fight.forecast.seconds, g_fight.forecast.win * 100.0f,
+            g_fight.heroMax > 0 ? g_fight.lostTotal * 100.0f / g_fight.heroMax : 0.0f, g_fight.died ? ", died" : "");
     }
 
     // An enemy gone from the looks: down (killed) or out of sight.
@@ -324,6 +350,103 @@ namespace
         if (g_inFight && (s.strikeSeconds > 0.0f || s.firstHurtAt))
         {
             g_fight.foes.emplace_back(id, s);
+        }
+    }
+
+    float normalCdf(float z)
+    {
+        return 0.5f * std::erfc(-z / std::sqrt(2.0f));
+    }
+
+    // The forecast from the enemies seen at this look (those in a fight or aiming at the hero or its hirelings, else
+    // all around): Smith's rule on (rate, seconds to kill).
+    void computeForecast(const CombatLearn::Look& look, float heroFraction)
+    {
+        struct Item
+        {
+            uint32_t id;
+            float rate, seconds;
+        };
+        std::vector<Item> items;
+        bool anyEngaged = false;
+        for (int i = 0; i < look.count; ++i)
+        {
+            anyEngaged = anyEngaged || look.foes[i].atHero || look.foes[i].atHireling;
+        }
+        for (int i = 0; i < look.count; ++i)
+        {
+            const CombatLearn::Foe& f = look.foes[i];
+            const Seen& s = g_seen[f.id];
+            if (f.health <= 0 || (anyEngaged && !f.atHero && !f.atHireling && !s.firstHurtAt))
+            {
+                continue;
+            }
+            const float dps = s.hit > 0.0f ? s.hit * g_blowsPerSecond : 0.0f;
+            const float seconds = dps > 0.0f ? std::min(600.0f, f.health / dps) : 600.0f;
+            items.push_back({f.id, std::max(s.predicted, kFloor), seconds});
+        }
+        std::sort(items.begin(), items.end(),
+                  [](const Item& a, const Item& b) { return a.rate * b.seconds > b.rate * a.seconds; });
+        CombatLearn::Forecast fc;
+        fc.foes = static_cast<int>(items.size());
+        g_killRank.clear();
+        float clock = 0.0f;
+        for (size_t i = 0; i < items.size(); ++i)
+        {
+            clock += items[i].seconds;
+            fc.loss += items[i].rate * clock;
+            g_killRank[items[i].id] = static_cast<int>(i);
+        }
+        fc.seconds = clock;
+        fc.first = items.empty() ? 0 : items[0].id;
+        if (fc.loss > 1e-4f && heroFraction > 0.0f)
+        {
+            const float z = (std::log(heroFraction) - std::log(fc.loss) - g_lossBias) / g_lossSpread;
+            fc.win = normalCdf(z);
+        }
+        else
+        {
+            fc.win = heroFraction > 0.0f ? 1.0f : 0.0f;
+        }
+        g_forecast = fc;
+    }
+
+    // A fight over: its loss against the forecast made at its start (the bias and spread of the log error), and the
+    // hero's blows per second from the health the enemies lost.
+    void learnForecast(float seconds)
+    {
+        if (g_fight.heroMax <= 0)
+        {
+            return;
+        }
+        if (g_fight.forecast.loss > 0.01f && seconds >= 3.0f)
+        {
+            const float actual = std::max(g_fight.lostTotal / g_fight.heroMax, 0.005f);
+            const float error = std::clamp(std::log(actual) - std::log(g_fight.forecast.loss), -4.0f, 4.0f);
+            g_lossSamples = std::min(g_lossSamples + 1, 100);
+            const float a = 1.0f / static_cast<float>(g_lossSamples);
+            const float before = g_lossBias;
+            g_lossBias += a * (error - g_lossBias);
+            const float var = g_lossSpread * g_lossSpread;
+            g_lossSpread = std::clamp(std::sqrt(var + a * ((error - before) * (error - g_lossBias) - var)), 0.2f, 2.0f);
+            g_dirty = true;
+        }
+        float hitSum = 0.0f;
+        int hitCount = 0;
+        for (const auto& [id, foe] : g_fight.foes)
+        {
+            if (foe.firstHurtAt && foe.hit > 0.0f)
+            {
+                hitSum += foe.hit;
+                ++hitCount;
+            }
+        }
+        if (hitCount > 0 && g_fight.dealt > 0.0f && seconds >= 3.0f)
+        {
+            const float meanHit = hitSum / hitCount;
+            const float sample = std::clamp(g_fight.dealt / seconds / meanHit, 0.05f, 10.0f);
+            g_blowSamples = std::min(g_blowSamples + 1, 20);
+            g_blowsPerSecond += (sample - g_blowsPerSecond) / static_cast<float>(g_blowSamples);
         }
     }
 
@@ -407,6 +530,8 @@ void CombatLearn::observe(const Look& look)
         g_inFight = false;
         g_lastLook = 0;
         g_hirelingHealth.clear();
+        g_blowsPerSecond = 1.0f;
+        g_blowSamples = 0;
     }
     const float dt = g_lastLook && now - g_lastLook < 1500 ? (now - g_lastLook) / 1000.0f : 0.0f;
     const bool potion = CombatState::within(CombatState::potionAt.load(), now, 600);
@@ -422,6 +547,10 @@ void CombatLearn::observe(const Look& look)
         int32_t x, y;
     };
     std::vector<Sighting> sightings;    // enemies met for the first time: on the agent's map (outside g_lock)
+    for (int i = 0; i < look.count; ++i)
+    {
+        g_seen[look.foes[i].id].hit = Gear::expectedHit(look.foes[i].id);
+    }
     {
         const std::lock_guard lock(g_lock);
         for (int i = 0; i < look.count; ++i)
@@ -440,6 +569,10 @@ void CombatLearn::observe(const Look& look)
             if (f.health < s.health && !s.firstHurtAt)
             {
                 s.firstHurtAt = now;
+            }
+            if (s.lastSeen && f.health < s.health && g_inFight)
+            {
+                g_fight.dealt += static_cast<float>(s.health - f.health);
             }
             s.maxHealth = f.maxHealth;
             s.health = f.health;
@@ -488,6 +621,7 @@ void CombatLearn::observe(const Look& look)
         g_relative[look.foes[i].id] = middle > 0.0f ? p / middle : 1.0f;
     }
     g_heroFraction = static_cast<float>(heroHealth) / static_cast<float>(heroMax);
+    computeForecast(look, g_heroFraction);
 
     // The hirelings: health they lost to those aiming at them, and deaths.
     int hirelingLost = 0;
@@ -534,6 +668,18 @@ void CombatLearn::observe(const Look& look)
             g_fight.heroMin = heroHealth;
             g_fight.experience = experience;
             g_fight.mountMin = mounted ? look.self->health : 0;
+            g_fight.forecast = g_forecast;
+            LOG("Forecast: a fight with {} enemies, {:.0f}% of health to be lost in {:.0f} s, {:.0f}% to win "
+                "(first {:x})", g_forecast.foes, g_forecast.loss * 100.0f, g_forecast.seconds, g_forecast.win * 100.0f,
+                g_forecast.first);
+        }
+        // More come in: the forecast taken again if it is grimmer.
+        if (g_forecast.foes > g_fight.forecast.foes && g_forecast.loss > g_fight.forecast.loss)
+        {
+            g_fight.forecast.foes = g_forecast.foes;
+            g_fight.forecast.loss = g_forecast.loss;
+            g_fight.forecast.seconds = std::max(g_fight.forecast.seconds, g_forecast.seconds);
+            g_fight.forecast.win = std::min(g_fight.forecast.win, g_forecast.win);
         }
         g_fight.lastAction = now;
     }
@@ -557,6 +703,10 @@ void CombatLearn::observe(const Look& look)
         if (lost > 0.0f && weights <= 0.0f)
         {
             g_fight.unexplained += lost;
+        }
+        if (dt > 0.0f && !potion)
+        {
+            g_fight.lostTotal += static_cast<float>(std::max(0, g_lastHealth - heroHealth));
         }
     }
 
@@ -587,6 +737,7 @@ void CombatLearn::observe(const Look& look)
         }
         g_fight.experience = experience - g_fight.experience;
         writeFight(now, heroHealth, heroLevel);
+        learnForecast((g_fight.lastAction - g_fight.start) / 1000.0f);
         g_inFight = false;
         for (auto& [id, s] : g_seen)
         {
@@ -637,4 +788,15 @@ float CombatLearn::relativeDanger(uint32_t id)
 float CombatLearn::secondsToDie()
 {
     return g_incoming > 1e-4f ? g_heroFraction / g_incoming : 1e6f;
+}
+
+const CombatLearn::Forecast& CombatLearn::forecast()
+{
+    return g_forecast;
+}
+
+int CombatLearn::killRank(uint32_t id)
+{
+    const auto it = g_killRank.find(id);
+    return it != g_killRank.end() ? it->second : -1;
 }

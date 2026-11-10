@@ -1087,6 +1087,29 @@ bool Gear::shopOpen()
     return inv && *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
 }
 
+float Gear::expectedHit(uint32_t targetId)
+{
+    if (!g_ready)
+    {
+        return -1.0f;
+    }
+    cObjectManager* objects = cObjectManager::instance();
+    cCreature* hero = objects ? objects->hero() : nullptr;
+    cCreature* target = objects ? objects->creature(targetId) : nullptr;
+    const uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
+    if (!hero || !target || !pack)
+    {
+        return -1.0f;
+    }
+    const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+    if (active < 0 || active >= 5)
+    {
+        return -1.0f;
+    }
+    const float d = slotDamage(hero, pack, active, target);
+    return d > 0.0f ? d : -1.0f;
+}
+
 bool Gear::chooseWeaponFor(uint32_t targetId)
 {
     if (!g_ready || !g_slotsReady || !g_settings.weaponSlots)

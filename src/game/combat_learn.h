@@ -51,6 +51,26 @@ namespace CombatLearn
     // At the rate those striking the hero now hit, seconds until its health is gone (a large number for none).
     float secondsToDie();
 
+    // The forecast (the player's wish, 2026-11-10: foresee each fight's outcome from the build against the enemies).
+    // Each enemy around: how fast the hero kills it (the active slot's expected blow through its resistances, times the
+    // hero's effective blows per second, learned fight by fight) and how hard it hits (the learned rate). Killed in the
+    // order that loses the least health (Smith's rule: the highest rate per second needed to kill it first), the
+    // expected loss is the sum of each one's rate over the time it lives; against the health the hero has, with the
+    // spread learned from the past forecasts against what happened, the chance to win. Written into each fight's line
+    // of SacredBild-combat.log («forecast») to be measured.
+    struct Forecast
+    {
+        int foes = 0;
+        float loss = 0.0f;          // expected health lost, a share of the maximum
+        float seconds = 0.0f;       // until all are down
+        float win = 1.0f;           // chance the hero's health lasts (0..1)
+        uint32_t first = 0;         // the enemy to kill first
+    };
+    // At the last look.
+    const Forecast& forecast();
+    // The rank of enemy `id` in the forecast's kill order (0: first; -1: not in it).
+    int killRank(uint32_t id);
+
     // Its ModKit menu section (the encyclopedia); once.
     void install();
 }
