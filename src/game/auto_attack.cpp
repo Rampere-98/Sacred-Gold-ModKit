@@ -5925,7 +5925,16 @@ void AutoAttack::onFrame()
     {
         if (id != g_target)
         {
-            LOG("AutoAttack: target {:x}", id);
+            // One left as too strong or out of reach is taken again only once it came into the melee: said so (the
+            // live verifier, 2026-11-10: «too strong for now» then «target» 2 min on, the log not telling why).
+            if (g_unreachable.count(id))
+            {
+                LOG("AutoAttack: target {:x} (left for now, but it came into the melee)", id);
+            }
+            else
+            {
+                LOG("AutoAttack: target {:x}", id);
+            }
             targetTaken(now);
         }
         g_target = id;

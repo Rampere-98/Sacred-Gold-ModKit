@@ -575,7 +575,8 @@ namespace
                     *reinterpret_cast<uint32_t*>(info + 4) &= ~0x200000u;
                 }
                 fn<PutItem>(g_putItem)(pack, nullptr, free, id, w, h, 1);
-                LOG("Gear: bought healing potion {:x} (type {:x}) for {} gold (of {})", id, typeOf(id), price, gold);
+                LOG("Gear: bought healing potion {:x} (type {:x}) for {} gold (of {}); potions: have {}, want {}", id,
+                    typeOf(id), price, gold, countHealing(pack), wantHealing());
                 done = true;
                 s_lastBuy = now;
             });
