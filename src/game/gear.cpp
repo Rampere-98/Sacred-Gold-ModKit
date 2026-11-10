@@ -1380,7 +1380,7 @@ namespace
             {
                 LOG("Gear: merchant trip done (backpack {})", g_full ? "still full: nothing more to sell" : "has room");
                 g_tripDone = true;
-                if (g_full || g_healing == 0)   // no potion sold there either: not straight back
+                if (g_full || g_healing <= 2)   // no potion sold there either (or gold short): not straight back
                 {
                     g_noTripUntil = GetTickCount() + 600000;
                 }
@@ -1541,7 +1541,9 @@ bool Gear::wantsShop()
     // A full backpack, or no healing potion left with gold to buy some (and buying on).
     const cCreature* hero = cObjectManager::instance() ? cObjectManager::instance()->hero() : nullptr;
     const uint32_t gold = hero ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold) : 0;
-    const bool potions = g_settings.buy && g_healing == 0 && gold >= 200;
+    // Before they run out (the analyst, 2026-11-10 18:17: 9 of 137 fights below 20 % of health once the last
+    // potion was gone, 11-15 enemies at level 4): at 2 left.
+    const bool potions = g_settings.buy && g_healing >= 0 && g_healing <= 2 && gold >= 200;
     return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0);
 }
 
