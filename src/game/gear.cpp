@@ -819,11 +819,6 @@ namespace
     constexpr size_t kHeroLevel = 0x3FE;
     bool g_slotsReady = false;
 
-    // The slots the agent fills itself: the first two only (A2, 2026-11-11: four crashes at Sacred.exe+4502ae, each
-    // 8-35 s after a bow went into weapon slot 3 at level 8, a texture of garbage size asked first; whether that slot
-    // is open at 8 is not known).
-    constexpr int kFillSlots = 2;
-
     int slotsOpen(const cCreature* hero)
     {
         const int level = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + kHeroLevel);
@@ -1001,7 +996,7 @@ namespace
             return false;
         }
         const HeroProfile::Data profile = HeroProfile::current();
-        const int open = std::min(slotsOpen(hero), kFillSlots);
+        const int open = slotsOpen(hero);
         if (!HeroProfile::prefersRanged(profile.cls) && open < 3)
         {
             return false;
@@ -1129,7 +1124,7 @@ namespace
         {
             return false;
         }
-        const int open = std::min(slotsOpen(hero), kFillSlots);
+        const int open = slotsOpen(hero);
         const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
         int empty = -1;
         bool have[4] = {};
@@ -1828,6 +1823,8 @@ namespace
         return close("bought");
     }
 
+    std::atomic<bool> g_slotsDue{false};    // work() found nothing else to do: the slots, on the game's thread
+
     void work(void*)
     {
         cObjectManager* objects = cObjectManager::instance();
@@ -1920,15 +1917,13 @@ namespace
             else if (g_calm && !shop && g_settings.scrolls && g_useItem && readScroll(hero, pack))
             {
             }
-            else if (g_calm && !shop && g_settings.weaponSlots && fillRangedSlot(hero, pack))
-            {
-            }
-            else if (g_calm && !shop && g_settings.weaponSlots && fillWeaponSlot(hero, pack))
-            {
-            }
             else
             {
                 acted = false;
+                // The weapon slots are filled on the game's own thread instead (Gear::onFrame): setSlotHand loads the
+                // weapon's model and textures where it is called (Manolito, block Z), and from this window thread it
+                // raced the drawing thread over the model cache (A2, 2026-11-11: four crashes in sprintf("%s.TGA")).
+                g_slotsDue = g_calm && !shop && g_settings.weaponSlots;
             }
             g_full = packFull(pack);
             g_healing = countHealing(pack);
@@ -2050,6 +2045,17 @@ void Gear::onFrame(DWORD now, bool calm)
             MapMemory::mark(MapMemory::Mark::Merchant, *(reinterpret_cast<const uint8_t*>(hero) + 0x24), hero->x, hero->y);
         }
         lastMerchant = merchant;
+    }
+    // The weapon slots on this, the game's thread, never while work() runs on the window's.
+    if (g_ready && !g_working && g_slotsDue.exchange(false) && calm)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        uint8_t* pack = hero && hero->health > 0 ? entryOf(static_cast<int>(hero->id)) : nullptr;
+        if (pack && !fillRangedSlot(hero, pack))
+        {
+            fillWeaponSlot(hero, pack);
+        }
     }
     static DWORD nextAt = 0;
     if (!g_ready || !(g_settings.equip || g_settings.sell || g_settings.buy || g_settings.trips || g_settings.runes ||
@@ -2190,7 +2196,7 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     {
         return false;
     }
-    const int open = std::min(slotsOpen(hero), kFillSlots);
+    const int open = slotsOpen(hero);
     const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
     if (active < 0 || active >= 5)
     {
