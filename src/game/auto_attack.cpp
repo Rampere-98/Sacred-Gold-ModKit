@@ -1178,9 +1178,18 @@ namespace
     constexpr DWORD kUnreachableMs = 20000;
 
     DWORD g_lastTargetAt = 0;       // the last enemy taken for target
-    void targetTaken(DWORD now)
+    void targetTaken(DWORD now, uint32_t id)
     {
+        // The same one taken again moments after a dodge or a look away (the player, 2026-11-11: the Vampiress after
+        // archers across a river, «target 5d4» every 2 s between the dodges): the time without getting nearer goes on.
+        static uint32_t s_lastId = 0;
+        const bool again = id == s_lastId && g_lastTargetAt && now - g_lastTargetAt < 6000;
+        s_lastId = id;
         g_lastTargetAt = now;
+        if (again)
+        {
+            return;
+        }
         g_targetSince = now;
         g_targetBest = 0.0f;
         g_targetBestAt = now;
@@ -2103,9 +2112,19 @@ namespace
         // aggro. Seen live (2026-11-10): the Dark Elf and the Wood Elf at their start chased the enemies beyond the
         // fence by turns, 4 s each, for up to 3 minutes; their aggro made them strike, so the focus kept switching.
         const auto walledOff = [&](const cObject* o, float d) {
-            if (!o || d < melee || !Whereabouts::area().shutIn)
+            if (!o || d < melee)
             {
                 return false;
+            }
+            if (!Whereabouts::area().shutIn)
+            {
+                // Across water or a cliff (the player, 2026-11-11: «no detecta colisión ni casilla no pisable», the
+                // Vampiress at archers over a river): no walk there, or one far longer than the line to it.
+                const float way = MapMemory::routeTiles(*(reinterpret_cast<const uint8_t*>(self) + 0x24), static_cast<int>(self->x / kTileSize),
+                                                        static_cast<int>(self->y / kTileSize),
+                                                        static_cast<int>(o->x / kTileSize), static_cast<int>(o->y / kTileSize));
+                const float line = d / static_cast<float>(kTileSize);
+                return way == -2.0f || (way >= 0.0f && way > line * 3.0f + 12.0f);
             }
             const int tx = static_cast<int>(o->x / kTileSize), ty = static_cast<int>(o->y / kTileSize);
             for (int dy = -1; dy <= 1; ++dy)
@@ -6335,7 +6354,7 @@ void AutoAttack::onFrame()
             {
                 LOG("AutoAttack: target {:x}", id);
             }
-            targetTaken(now);
+            targetTaken(now, id);
         }
         g_target = id;
         g_sentAt = now;
