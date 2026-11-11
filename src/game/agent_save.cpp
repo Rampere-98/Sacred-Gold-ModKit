@@ -112,6 +112,9 @@ namespace
     }
 
     // The copy's slot by its folder: ...\SacredA<n>\Sacred.exe -> 9 + n; anything else none.
+    void setAside();
+    bool slotFileExists();
+
     void findSlot()
     {
         g_slot = 0;
@@ -152,6 +155,23 @@ namespace
         readDeaths();
         std::snprintf(g_name, sizeof(g_name), "Agente A%d", n);
         LOG("AgentSave: the copy's slot is GAME{:02d}", g_slot);
+        // Deaths kept from a build without this rule: the slot is set aside before the menu loads it.
+        if (g_deathsSinceSave >= 10 && slotFileExists())
+        {
+            setAside();
+        }
+    }
+
+    // A save with no way on (the player, 2026-11-11: «sí, desde 10»): the hero starts again from the start, as a
+    // player would. The slot is kept aside as GAMEnn.OLD (not deleted); the new game's first quest done writes it anew.
+    void setAside()
+    {
+        const std::wstring old = g_path.substr(0, g_path.size() - 4) + L".OLD";
+        MoveFileExW(g_path.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);
+        g_deathsSinceSave = 0;
+        g_spots.clear();
+        writeDeaths();
+        LOG("AgentSave: 10 deaths from the same save: it is set aside as GAME{:02d}.OLD, a new game from the start", g_slot);
     }
 
     bool slotFileExists()
@@ -367,17 +387,7 @@ void AgentSave::onFrame()
             LOG("AgentSave: death {} since the last save", g_deathsSinceSave);
             if (g_deathsSinceSave >= 10)
             {
-                // A save with no way on (the player, 2026-11-11: «sí, desde 10»): the hero starts again from the start,
-                // as a player would. The slot is kept aside as GAMEnn.OLD (not deleted); the new game's first quest
-                // done writes the slot anew.
-                const std::wstring old = g_path.substr(0, g_path.size() - 4) + L".OLD";
-                MoveFileExW(g_path.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);
-                g_deathsSinceSave = 0;
-                g_spots.clear();
-                writeDeaths();
-                LOG("AgentSave: 10 deaths from the same save: it is set aside as GAME{:02d}.OLD, the game quits, a new one "
-                    "from the start",
-                    g_slot);
+                setAside();
                 ExitProcess(0);
             }
             writeDeaths();
