@@ -1562,7 +1562,7 @@ namespace
         }
         else if (mounted && onFoot && now - s_at > 1500)
         {
-            LOG("AutoAttack: the walk got no nearer on horseback: off, on foot a minute");
+            LOG("AutoAttack: on foot a minute (a walk that got no nearer, or a quest creature to speak to): off the horse");
             code = 0x20A;
         }
         // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
@@ -5159,6 +5159,14 @@ namespace
             }
             if (talkNow)
             {
+                // Spoken to on foot: a rider never got a word out of one (the stuck solver, 2026-11-11: only the Dwarf
+                // and the Daemon, who never ride, spoke to quest creatures; the riders ringed them for hours).
+                if (std::max(std::abs(static_cast<double>(npc->x - self->x)), std::abs(static_cast<double>(npc->y - self->y))) <
+                        12.0 * kTileSize &&
+                    HeroProfile::current().mounted)
+                {
+                    g_onFootUntil = now + 60000;
+                }
                 if (who != g_talkId)
                 {
                     g_talkId = who;

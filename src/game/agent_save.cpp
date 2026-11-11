@@ -47,6 +47,8 @@ namespace
     int g_deathsSinceSave = 0;  // deaths since the slot was last written (kept across its loads)
     int32_t g_lastHealth = 1;
     DWORD g_actionAt = 0;       // the last save or load asked for
+    bool g_actionSave = false;
+    DWORD s_noHealthSince = 0;  // the hero's health read 0 since (a death the edge missed, lain in)  // ... and it was a save (the hero stays in the world, so a death still counts)
     int g_sub = 0;              // the event's kind for the window's thread
     alignas(8) uint8_t g_event[0x40] = {};
     // Kept beside the slot across the copy's restarts (the live verifier, 2026-11-11: an install restarts all 8
@@ -211,6 +213,7 @@ namespace
         LOG("AgentSave: {}: loading GAME{:02d}", why, g_slot);
         g_sub = 1;
         g_actionAt = now;
+        g_actionSave = false;
         g_saveWanted = false;
         g_diedSince = false;
         Inject::call(&sendEvent, nullptr);
@@ -347,6 +350,7 @@ bool AgentSave::loadFromMenu()
     g_loadedOnce = true;
     g_sub = 1;
     g_actionAt = GetTickCount();
+    g_actionSave = false;
     LOG("AgentSave: loading GAME{:02d} from the start menu", g_slot);
     return true;
 }
@@ -393,16 +397,36 @@ void AgentSave::onFrame()
         }
         LOG("AgentSave: no GAME{:02d} yet: this new game is the copy's", g_slot);
     }
-    if (g_actionAt && now - g_actionAt < 15000)
+    // After a load the hero is settling in (its health read anew); after a save it stays in the world, and a death
+    // then is one (the live verifier, 2026-11-11: A5 saved at 21:20:59, died at 21:21:01, the death missed in the
+    // save's 15 s, the game's own respawn went on with no load, the hero «bugged» for 17 min).
+    if (g_actionAt && now - g_actionAt < 15000 && !(g_actionSave && hero->health <= 0 && g_lastHealth > 0))
     {
         g_lastHealth = hero->health;
+        s_noHealthSince = 0;
         return;
     }
     // Died: its last save loaded (the player: «los que mueren tienen que cargar la partida anterior»). A quest failed
     // is a death too (the player, 2026-11-11).
     const int32_t health = hero->health;
     const bool failedQuest = g_failedQuest.exchange(false);
-    const bool died = (health <= 0 && g_lastHealth > 0) || failedQuest;
+    // Lying with no health and no death seen (the player, 2026-11-11: A5 «no está muerto, está bugueado», health 0
+    // for 17 min after a death the save's grace missed): 20 s of it are a death too.
+    if (health > 0)
+    {
+        s_noHealthSince = 0;
+    }
+    else if (!s_noHealthSince)
+    {
+        s_noHealthSince = now;
+    }
+    const bool lying = s_noHealthSince && now - s_noHealthSince > 20000;
+    if (lying)
+    {
+        s_noHealthSince = 0;
+        LOG("AgentSave: the hero has lain with no health for 20 s: counted as a death");
+    }
+    const bool died = (health <= 0 && g_lastHealth > 0) || failedQuest || lying;
     if (failedQuest)
     {
         LOG("AgentSave: a quest failed: counted as a death");
@@ -472,6 +496,7 @@ void AgentSave::onFrame()
     writeDeaths();
     g_sub = 2;
     g_actionAt = now;
+    g_actionSave = true;
     Inject::call(&sendEvent, nullptr);
 }
 

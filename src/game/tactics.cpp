@@ -926,6 +926,37 @@ namespace
         const char* why = "";
         bool wantedButRecharging = false, gameRecharging = false;
         const bool readable = heroArtsReadable();
+        // What each slot holds and whether it may be cast, logged when the slots change (the player, 2026-11-11: the
+        // Vampiress «tiene equipadas habilidades que sí se pueden usar a caballo … no las usa ni a pie», and no Tactics
+        // line said why).
+        {
+            static uint64_t s_seen = 0;
+            uint64_t sig = mounted ? 1 : 0;
+            for (int slot = 0; slot < kSlots; ++slot)
+            {
+                const SlotArt sa = slotArt(player, slot);
+                sig = sig * 1000003u + sa.kind * 65599u + sa.art;
+            }
+            if (sig != s_seen)
+            {
+                s_seen = sig;
+                std::string list;
+                for (int slot = 0; slot < kSlots; ++slot)
+                {
+                    const SlotArt sa = slotArt(player, slot);
+                    if (!sa.kind && !sa.art)
+                    {
+                        continue;
+                    }
+                    const bool listed = sa.kind == 2 || sa.kind == 3 || sa.kind == 4;
+                    const HeroArt ha = readable ? heroArt(sa.kind, sa.art) : HeroArt{};
+                    list += std::format(" | {}: kind {} art {:x} learned {} mounted-ok {} use {}", slot + 1, sa.kind,
+                                        sa.art, !readable || !listed || ha.found, castMounted(sa.kind, sa.art, hero),
+                                        static_cast<int>(slotUse(slot, sa.art)));
+                }
+                LOG("Tactics: slots{}{}", mounted ? " (mounted)" : "", list.empty() ? " empty" : list);
+            }
+        }
         for (int slot = 0; slot < kSlots; ++slot)
         {
             const SlotArt sa = slotArt(player, slot);
