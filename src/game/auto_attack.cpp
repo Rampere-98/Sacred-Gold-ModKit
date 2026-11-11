@@ -1483,14 +1483,13 @@ namespace
         }
         const bool longWalk = ClickWalk::routing() || g_questTravel;
         uint32_t code = 0;
-        // Up again once the nearest enemy is 15 tiles off (20 kept the hero on foot 80 % of the time among
-        // enemies all about, the live verifier).
-        if (!mounted && longWalk && nearest > 15.0 * kTileSize && (s_approachSince || !gated))
+        // Up again once the nearest enemy is 5 tiles off: the saddle is the better place to fight from (the player,
+        // 2026-11-11), so only an enemy at hand puts the walk to the horse off.
+        if (!mounted && longWalk && nearest > 5.0 * kTileSize && (s_approachSince || !gated))
         {
             code = 0x209;
         }
-        // Casters and bows fight up there (Mind: the Seraphim, the Mage, the Wood Elf get off only with an enemy 3
-        // tiles off); the rest get off at 12.
+        // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
         else if (mounted && nearest < Mind::now().dismountTiles * kTileSize && now - s_at > 1500)
         {
             code = 0x20A;

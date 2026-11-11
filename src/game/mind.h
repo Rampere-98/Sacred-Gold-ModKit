@@ -18,8 +18,10 @@ namespace Mind
         int lostHealthDryPct;   // the same with no potion and five or more about
         float lostWin;          // the forecast's win below which a fight is lost
         int potionStock;        // healing potions to keep
-        bool fightMounted;      // stays up with an enemy near (casters, bows)
-        float dismountTiles;    // gets off with an enemy this near
+        // Everyone fights from the saddle (the player, 2026-11-11: «montado a caballo puede pegar más rápido y
+        // resiste mejor todos los golpes; solo tiene la desventaja de recoger más lentamente»): 0 never gets off.
+        bool fightMounted;      // stays up with an enemy near
+        float dismountTiles;    // gets off with an enemy this near (0: never)
     };
 
     inline const Values& of(HeroProfile::Class cls)
@@ -28,15 +30,15 @@ namespace Mind
         //                                   quest farm retr lost dry  win    pots mounted off
         // Farming zones a level nearer the hero's (the live verifier, 2026-11-11: the Seraphim, level 2-3, sent to
         // zones of 4-7 three times and dead there three times).
-        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   3.0f};
-        static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   3.0f};
-        static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   3.0f};
-        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kDaemon    {3,    2,   25,  60,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kUnknown   {2,    2,   25,  60,  85,  0.5f,  5,   false, 12.0f};
+        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   0.0f};
+        static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f};
+        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f};
+        static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   0.0f};
+        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f};
+        static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   true,   0.0f};
+        static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   true,   0.0f};
+        static constexpr Values kDaemon    {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f};
+        static constexpr Values kUnknown   {2,    2,   25,  60,  85,  0.5f,  5,   true,   0.0f};
         switch (cls)
         {
         case C::Seraphim: return kSeraphim;
