@@ -175,12 +175,14 @@ namespace
     // player would. The slot is kept aside as GAMEnn.OLD (not deleted); the new game's first quest done writes it anew.
     void setAside()
     {
-        const std::wstring old = g_path.substr(0, g_path.size() - 4) + L".OLD";
+        // One backup per hero only (the player, 2026-11-11: «apenas 1 backup por personaje, que sería el savegame
+        // anterior siempre»): the save set aside becomes the .BAK, over the one there.
+        const std::wstring old = g_path.substr(0, g_path.size() - 4) + L".BAK";
         MoveFileExW(g_path.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);
         g_deathsSinceSave = 0;
         g_spots.clear();
         writeDeaths();
-        LOG("AgentSave: the save is set aside as GAME{:02d}.OLD, a new game from the start", g_slot);
+        LOG("AgentSave: the save is set aside as GAME{:02d}.BAK, a new game from the start", g_slot);
     }
 
     bool slotFileExists()
