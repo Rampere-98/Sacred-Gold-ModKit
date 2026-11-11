@@ -923,7 +923,7 @@ namespace
             // A well, a hiding place: used on foot (the horse uses nothing; the reviewer, 2026-11-12).
             if (riding)
             {
-                footFor(15000);
+                AutoAttack::footFor(15000);
                 return true;
             }
             if (rider)
@@ -970,7 +970,7 @@ namespace
         // a door, a chest or anything else is used on foot (the reviewer: the A key opens none of them).
         else if (riding && !target->asCreature() && lootOf(target) != Loot::Item)
         {
-            footFor(15000);
+            AutoAttack::footFor(15000);
             return true;
         }
         else if (riding && !target->asCreature())
