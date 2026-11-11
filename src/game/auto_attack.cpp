@@ -3213,6 +3213,12 @@ namespace
             {
                 continue;
             }
+            // Careful (2+ deaths from the same save): only ground whose enemies the hero tops or matches (the analyst,
+            // 2026-11-11: the Mage, level 3 with 102 health, sent to a zone of levels 4-7 and dead 15 times running).
+            if (AgentSave::deathsSinceSave() >= 2 && hi > heroLevel + 1)
+            {
+                continue;
+            }
             // Of its level: full worth; below it less and less (little experience); well above it, risky.
             float fit = 1.0f;
             if (heroLevel > hi)
