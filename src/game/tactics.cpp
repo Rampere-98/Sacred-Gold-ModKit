@@ -1195,8 +1195,16 @@ namespace
                 const cCreature* h = objects->creature(s.hirelings[i]);
                 // Badly hurt only (35 %), and the hero's own kept: the analyst, 2026-11-10, counted 12 potions given
                 // to hirelings against 7 bought, the hero then with none (stepping back at 26 of 124).
-                if (h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 35 &&
-                    Gear::healingLeft() >= 3 && s.health * 2 >= s.maxHealth)
+                // The last potions too once the hero is well (the player, 2026-11-11: A4 let a mercenary die, «tiene
+                // que proteger a sus compañeros»; the rule above had kept every potion from 17:17 on, the hero rarely
+                // holding 3): at 80 % health or more the hero gives one even when it is the last, and below 20 % the
+                // hireling gets it at 60 %.
+                const int left = Gear::healingLeft();
+                const bool low = h && h->maxHealth > 0 && h->health > 0 && h->health * 100 < h->maxHealth * 35;
+                const bool dying = low && h->health * 100 < h->maxHealth * 20;
+                if (low && left >= 1 &&
+                    ((left >= 3 && s.health * 2 >= s.maxHealth) || s.health * 10 >= s.maxHealth * 8 ||
+                     (dying && s.health * 10 >= s.maxHealth * 6)))
                 {
                     hurtHireling = true;
                 }

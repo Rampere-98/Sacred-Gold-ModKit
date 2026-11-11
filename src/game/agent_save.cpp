@@ -510,6 +510,20 @@ void AgentSave::onFrame()
         }
         return;
     }
+    // Not on horseback (the player, 2026-11-11: «el elfo oscuro lo veo muriendo encima del caballo»): A5 saved mounted
+    // 0.3 s after a level gained, and every load of it showed the hero at 0 health on the horse, dying there, then
+    // standing again without it. Off the horse first, then saved.
+    if (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0)
+    {
+        AutoAttack::footFor(20000);
+        static DWORD s_mountTold = 0;
+        if (now - s_mountTold > 30000)
+        {
+            s_mountTold = now;
+            LOG("AgentSave: the save waits for the hero to get off the horse");
+        }
+        return;
+    }
     // The last save kept beside it first (a bad game is not carried on with nothing to go back to).
     const std::wstring backup = g_path.substr(0, g_path.size() - 4) + L".BAK";
     if (slotFileExists())

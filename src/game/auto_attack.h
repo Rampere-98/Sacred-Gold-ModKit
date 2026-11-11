@@ -24,4 +24,7 @@ namespace AutoAttack
     // Tiles from the hero to the nearest living hostile creature on the surface (read with the quest marks, every
     // few seconds; 99 with none within 40 tiles).
     double nearestHostileTiles();
+
+    // The hero kept on foot (off the horse) for the given ms: a save waits for it.
+    void footFor(unsigned long ms);
 }

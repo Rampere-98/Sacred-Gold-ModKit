@@ -1148,6 +1148,12 @@ namespace
                     const cCreature* c = objects ? objects->creature(id) : nullptr;
                     if (!c || c->health <= 0)
                     {
+                        // A companion lost (the player, 2026-11-11: A4 let a mercenary die): told once.
+                        static std::unordered_set<uint32_t> s_lost;
+                        if (c && std::find(g_hirelings.begin(), g_hirelings.end(), id) != g_hirelings.end() && s_lost.insert(id).second)
+                        {
+                            LOG("AutoAttack: companion {:x} died ({} of {} health)", id, c->health, c->maxHealth);
+                        }
                         continue;
                     }
                     listed.push_back(id);
@@ -1562,7 +1568,7 @@ namespace
         }
         else if (mounted && onFoot && now - s_at > 1500)
         {
-            LOG("AutoAttack: on foot a minute (a walk that got no nearer, or a quest creature to speak to): off the horse");
+            LOG("AutoAttack: on foot a while (a walk that got no nearer, a quest creature to speak to, or a save): off the horse");
             code = 0x20A;
         }
         // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
@@ -7048,6 +7054,11 @@ void AutoAttack::onFrame()
     {
         g_target = 0;
     }
+}
+
+void AutoAttack::footFor(unsigned long ms)
+{
+    g_onFootUntil = GetTickCount() + ms;
 }
 
 double AutoAttack::nearestHostileTiles()
