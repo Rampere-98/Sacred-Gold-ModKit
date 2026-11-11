@@ -223,7 +223,7 @@ namespace
 
     // A* with 8 neighbours (no corner cutting) from the hero's tile to the goal's, or to the nearest walkable tile
     // around it. Fills g_route.cells.
-    bool plan(Cell start, Cell goal)
+    bool planUnguarded(Cell start, Cell goal)
     {
         // No grid of the live sectors while a game loads (a crash in here 14 s after a load, the analyst 2026-11-11).
         if (AgentSave::worldChanging())
@@ -427,6 +427,42 @@ namespace
 
     // The next leg's end: the furthest route tile after the one nearest the hero that stays within kLegTiles of
     // him. False if the hero is off the route.
+    // The sectors are read on this (the window's) thread while the render thread loads and unloads them: one gone
+    // under the plan (A3 2026-11-11 23:49, c0000005 in Grid::load reading the middle sector's origin) is no plan
+    // this time, not a crash. The SEH frame in a function of its own, with no C++ objects to unwind.
+    int planFaults = 0;
+
+    bool planGuarded(Cell start, Cell goal)
+    {
+        __try
+        {
+            return planUnguarded(start, goal);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            ++planFaults;
+            return false;
+        }
+    }
+
+    bool plan(Cell start, Cell goal)
+    {
+        const int before = planFaults;
+        if (planGuarded(start, goal))
+        {
+            return true;
+        }
+        if (planFaults != before)
+        {
+            g_route.cells.clear();
+            if (planFaults <= 10)
+            {
+                LOG("Click walk: a sector went away under the plan (unloaded meanwhile): no route this time");
+            }
+        }
+        return false;
+    }
+
     bool nextLeg(Cell hero, Cell& end)
     {
         const auto& cells = g_route.cells;
