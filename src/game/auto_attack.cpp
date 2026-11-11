@@ -4014,6 +4014,48 @@ namespace
         return true;
     }
 
+    // A shut door or gate near the goal, whichever way it lies from the hero (Manolito, block AB, 2026-11-11: the yard
+    // at 3049,2711 has its gate DOOR_GATE01_A in the south wall, and the agent walked straight into the east wall; the
+    // door on the way looks only ahead). Used when the walk got no nearer: the door within 8 tiles of the goal and 30
+    // of the hero.
+    struct DoorNearGoal
+    {
+        int32_t goalX, goalY;
+    };
+
+    bool acceptDoorNearGoal(uint32_t id, void* context)
+    {
+        if (!acceptDoor(id, nullptr))
+        {
+            return false;
+        }
+        const auto* g = static_cast<const DoorNearGoal*>(context);
+        cObjectManager* objects = cObjectManager::instance();
+        const cObject* o = objects ? objects->object(id) : nullptr;
+        return o && std::hypot(static_cast<double>(o->x - g->goalX), static_cast<double>(o->y - g->goalY)) <= 8.0 * kTileSize;
+    }
+
+    bool doorNearGoal(DWORD now, int32_t x, int32_t y)
+    {
+        DoorNearGoal goal{x, y};
+        const float range = g_doorRange;
+        g_doorRange = 30.0f * kTileSize;
+        AimAssist::Target door;
+        const bool found = AimAssist::findObject(g_doorRange, &acceptDoorNearGoal, &goal, door);
+        g_doorRange = range;
+        if (!found)
+        {
+            return false;
+        }
+        g_doorTried[door.id] = now;
+        g_doorHoldUntil = now + 1500;
+        LOG("AutoAttack: no nearer to tile {},{}: the shut door {:x} near it used", static_cast<int>(x / kTileSize),
+            static_cast<int>(y / kTileSize), door.id);
+        remember("usa la puerta cerca del destino");
+        attack(door.id);
+        return true;
+    }
+
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
         if (doorOnTheWay(now, self, x, y))
@@ -4075,6 +4117,12 @@ namespace
         if (now - t.bestAt > 20000)
         {
             ClickWalk::cancel();
+            if (doorNearGoal(now, x, y))
+            {
+                t.detourUntil = now + 8000;
+                t.bestAt = now;
+                return true;
+            }
             if (++t.fails >= 3)
             {
                 // Each time again no way, left longer (the player, 2026-11-11: the Daemon «no está teniendo mucha
