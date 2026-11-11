@@ -415,7 +415,7 @@ void AgentSave::onFrame()
     // is a death too (the player, 2026-11-11).
     const int32_t health = hero->health;
     const bool failedQuest = g_failedQuest.exchange(false);
-    // Stuck in one place for minutes (AutoAttack's watchStuck): the last save, no death counted (the stuck solver,
+    // Stuck in one place for minutes (AutoAttack's watchStuck): the last save, counted as a death (the stuck solver,
     // 2026-11-11: A3 35 min still on open ground, alive, after buying a horse).
     if (g_reloadWanted.exchange(false) && slotFileExists())
     {
@@ -442,6 +442,17 @@ void AgentSave::onFrame()
             setAside();
             ExitProcess(0);
         }
+        // Counted as a death (the player, 2026-11-11: «que atasco cuente como muerte»): the place shunned a while
+        // (AutoAttack notes the spot on the count going up) and 10 of them set the save aside. CombatLearn is not
+        // told: no fight was lost.
+        ++g_deathsSinceSave;
+        LOG("AgentSave: stuck 5 min: counted as death {} since the last save", g_deathsSinceSave);
+        if (g_deathsSinceSave >= 10)
+        {
+            setAside();
+            ExitProcess(0);
+        }
+        writeDeaths();
         load(now, "the hero stuck in one place for 5 min");
         return;
     }
