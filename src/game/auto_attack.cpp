@@ -4800,8 +4800,13 @@ namespace
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
             // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.
             const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
-            const bool zone = qr >= 8.0 * kTileSize;
-            if (qd > (zone ? qr + 10.0 * kTileSize : qr))
+            // A creature to speak to that is not loaded yet: its spot is gone to (3 tiles), not the zone's edge (the
+            // stuck solver, 2026-11-11: «hablar con X» goals ringed at 29-35 tiles from the journal's centre, 1450 of
+            // 1586 «going to look», the creature at 3091,2783 never spoken to by any copy). Once loaded, the talk below.
+            const bool speakTo = who && who != 0xFFFFFFFFu;
+            const bool speakerFar = speakTo && !(objects && objects->object(who));
+            const bool zone = qr >= 8.0 * kTileSize && !speakerFar;
+            if (qd > (zone ? qr + 10.0 * kTileSize : speakerFar ? std::min(qr, 3.0 * kTileSize) : qr))
             {
                 g_questTravel = true;
                 if (qx != g_questX || qy != g_questY)
