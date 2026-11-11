@@ -1177,8 +1177,10 @@ namespace
     constexpr DWORD kStuckMs = 4000;        // no nearer to the target in this long, not fighting: out of reach
     constexpr DWORD kUnreachableMs = 20000;
 
+    DWORD g_lastTargetAt = 0;       // the last enemy taken for target
     void targetTaken(DWORD now)
     {
+        g_lastTargetAt = now;
         g_targetSince = now;
         g_targetBest = 0.0f;
         g_targetBestAt = now;
@@ -2717,6 +2719,8 @@ namespace
     }
     std::vector<QuestGoal> g_questBook;     // rebuilt by questTarget, nearest first
     int g_questsDone = 0, g_questsFailed = 0;
+    DWORD g_questsDoneAt = 0;           // when the count of quests done last changed
+    DWORD g_questPauseUntil = 0;        // quests left a while for farming (a long spell of neither fights nor quests)
     // The yellow "?!" / "!" signs of the last pass (creatures the hero can speak to now), on the hero's layer.
     struct Sign
     {
@@ -2787,6 +2791,7 @@ namespace
                 forgetTalks();
             }
             g_questsDone = done;
+            g_questsDoneAt = GetTickCount();
             g_questsFailed = failed;
         }
         for (const Sign& sign : g_signs)
@@ -4330,7 +4335,18 @@ namespace
                                                 heroLevel));
             return true;
         };
-        if (Config::autoAttack.quests && questTarget(self->x, self->y, qx, qy, qr, who) &&
+        // Neither a fight nor a quest done in 8 min while seeing to quests (the analyst, 2026-11-11: A5 «looking around»
+        // its goals with 16 under way, 3 fights in 19 min, 8 of 9 half hours under 1600 experience): farming 10 min
+        // first, a player gains levels before going on.
+        if (g_intent == Intent::Quest && g_farmKnown && Config::autoAttack.farm && g_lastTargetAt &&
+            now - g_lastTargetAt > 480000 && (!g_questsDoneAt || now - g_questsDoneAt > 480000) &&
+            (!g_questPauseUntil || static_cast<int>(now - g_questPauseUntil) >= 0))
+        {
+            g_questPauseUntil = now + 600000;
+            LOG("AutoAttack: 8 min with neither a fight nor a quest done: the quests left 10 min, farming");
+        }
+        if (Config::autoAttack.quests && !(g_questPauseUntil && static_cast<int>(now - g_questPauseUntil) < 0) &&
+            questTarget(self->x, self->y, qx, qy, qr, who) &&
             (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize) &&
             !(Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
         {
