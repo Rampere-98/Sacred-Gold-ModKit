@@ -2195,12 +2195,17 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     // the others against an enemy out of the melee's reach; less for them against one at hand.
     const bool prefers = HeroProfile::prefersRanged(HeroProfile::current().cls);
     const float tiles = std::hypot(static_cast<float>(target->x - hero->x), static_cast<float>(target->y - hero->y)) / 53.66563f;
+    // The player, 2026-11-11: «las armas a distancia no son eficientes a corta distancia, y viceversa».
     const auto weigh = [&](int slot, float damage) {
         if (!slotRanged(pack, slot))
         {
-            return prefers ? damage * 0.8f : damage;
+            return tiles <= 2.0f ? damage * 1.2f : tiles > 5.0f ? damage * 0.8f : damage * (prefers ? 0.8f : 1.0f);
         }
-        return prefers ? damage * 1.8f : tiles > 5.0f ? damage * 1.25f : damage * 0.7f;
+        if (tiles <= 2.0f)
+        {
+            return damage * (prefers ? 0.9f : 0.6f);
+        }
+        return tiles > 5.0f ? damage * (prefers ? 1.8f : 1.25f) : damage * (prefers ? 1.5f : 0.9f);
     };
     const float current = weigh(active, slotDamage(hero, pack, active, target));
     int best = active;
@@ -2223,8 +2228,8 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         s_toldAt = GetTickCount();
         LOG("Gear: weapon slots against {:x}: {}(active {})", targetId, each, active + 1);
     }
-    // Only for a clear gain (15 %), and not within 20 s of the last switch: no switching back and forth.
-    if (best == active || bestDamage < current * 1.15f + 0.5f || GetTickCount() - g_slotSwitchAt < 20000)
+    // Only for a clear gain (15 %), and not within 10 s of the last switch: no switching back and forth.
+    if (best == active || bestDamage < current * 1.15f + 0.5f || GetTickCount() - g_slotSwitchAt < 10000)
     {
         return false;
     }

@@ -6199,8 +6199,18 @@ static bool keepDistance(DWORD now, uint32_t id)
     {
         recent += at && now - at < 30000;
     }
+    // Cornered (no more steps back, or no way back below): the weapon for the close fight, if a slot has one.
+    static DWORD s_closeAt = 0;
+    const auto closeIn = [&] {
+        if (now - s_closeAt > 3000 && Gear::chooseWeaponFor(id))
+        {
+            s_closeAt = now;
+            LOG("AutoAttack: cornered {:.1f} tiles from an enemy: the close weapon", nearest);
+        }
+    };
     if (recent >= 4)
     {
+        closeIn();
         return false;
     }
     // Away from them, turned aside up to 90 degrees when that way is a wall or a fence.
@@ -6231,6 +6241,7 @@ static bool keepDistance(DWORD now, uint32_t id)
             hero.weaponKind, nearest, tx, ty, id);
         return true;
     }
+    closeIn();
     return false;
 }
 
