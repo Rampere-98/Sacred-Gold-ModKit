@@ -319,18 +319,7 @@ namespace
             }
             LOG("Main window: {}", g_framed ? "framed" : "borderless");
         }
-        // NoActivate: created hidden and shown without activation (a window created visible takes the foreground
-        // when Windows lets the new process have it: three copies of eight still did, 6-12 s each).
-        const bool quiet = mainWindow && Config::display.noActivate && (style & WS_VISIBLE);
-        if (quiet)
-        {
-            style &= ~WS_VISIBLE;
-        }
         HWND window = g_origCreateWindowExA(exStyle, cls, name, style, x, y, w, h, parent, menu, inst, param);
-        if (quiet && window)
-        {
-            ShowWindow(window, SW_SHOWNOACTIVATE);
-        }
         if (mainWindow && window)
         {
             g_mainWindow = window;
