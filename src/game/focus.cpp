@@ -236,6 +236,72 @@ namespace
     }
 }
 
+namespace
+{
+    // [Display] NoActivate: the window shown, moved and given the focus without ever taking the foreground.
+    using SetForegroundWindowFn = BOOL(WINAPI*)(HWND);
+    using SetActiveWindowFn = HWND(WINAPI*)(HWND);
+    using BringWindowToTopFn = BOOL(WINAPI*)(HWND);
+    using ShowWindowFn = BOOL(WINAPI*)(HWND, int);
+    using SetWindowPosFn = BOOL(WINAPI*)(HWND, HWND, int, int, int, int, UINT);
+    using SetFocusFn = HWND(WINAPI*)(HWND);
+    ShowWindowFn g_origShowWindow = nullptr;
+    SetWindowPosFn g_origSetWindowPos = nullptr;
+    SetFocusFn g_origSetFocus = nullptr;
+
+    BOOL WINAPI quietSetForegroundWindow(HWND)
+    {
+        return TRUE;
+    }
+
+    HWND WINAPI quietSetActiveWindow(HWND)
+    {
+        return GetActiveWindow();
+    }
+
+    BOOL WINAPI quietBringWindowToTop(HWND)
+    {
+        return TRUE;
+    }
+
+    BOOL WINAPI quietShowWindow(HWND window, int command)
+    {
+        switch (command)
+        {
+        case SW_SHOWNORMAL:
+        case SW_SHOW:
+        case SW_SHOWDEFAULT:
+            command = SW_SHOWNOACTIVATE;
+            break;
+        case SW_SHOWMINIMIZED:
+            command = SW_SHOWMINNOACTIVE;
+            break;
+        case SW_RESTORE:
+        case SW_SHOWMAXIMIZED:
+            command = SW_SHOWNA;
+            break;
+        default:
+            break;
+        }
+        return g_origShowWindow(window, command);
+    }
+
+    BOOL WINAPI quietSetWindowPos(HWND window, HWND after, int x, int y, int cx, int cy, UINT flags)
+    {
+        if (after == HWND_TOPMOST || after == HWND_TOP)
+        {
+            flags |= SWP_NOZORDER;
+        }
+        return g_origSetWindowPos(window, after, x, y, cx, cy, flags | SWP_NOACTIVATE);
+    }
+
+    // Given only while one of the game's windows is in the foreground already: in the background it would activate.
+    HWND WINAPI quietSetFocus(HWND window)
+    {
+        return active() ? g_origSetFocus(window) : GetFocus();
+    }
+}
+
 void Focus::install()
 {
     g_origGetAsyncKeyState = static_cast<GetAsyncKeyStateFn>(
@@ -249,6 +315,29 @@ void Focus::install()
     if (!g_origGetKeyboardState)
     {
         g_origGetKeyboardState = &GetKeyboardState;
+    }
+    if (Config::display.noActivate)
+    {
+        Patch::iat("USER32.dll", "SetForegroundWindow", reinterpret_cast<void*>(&quietSetForegroundWindow));
+        Patch::iat("USER32.dll", "SetActiveWindow", reinterpret_cast<void*>(&quietSetActiveWindow));
+        Patch::iat("USER32.dll", "BringWindowToTop", reinterpret_cast<void*>(&quietBringWindowToTop));
+        g_origShowWindow = static_cast<ShowWindowFn>(Patch::iat("USER32.dll", "ShowWindow", reinterpret_cast<void*>(&quietShowWindow)));
+        if (!g_origShowWindow)
+        {
+            g_origShowWindow = &ShowWindow;
+        }
+        g_origSetWindowPos =
+            static_cast<SetWindowPosFn>(Patch::iat("USER32.dll", "SetWindowPos", reinterpret_cast<void*>(&quietSetWindowPos)));
+        if (!g_origSetWindowPos)
+        {
+            g_origSetWindowPos = &SetWindowPos;
+        }
+        g_origSetFocus = static_cast<SetFocusFn>(Patch::iat("USER32.dll", "SetFocus", reinterpret_cast<void*>(&quietSetFocus)));
+        if (!g_origSetFocus)
+        {
+            g_origSetFocus = &SetFocus;
+        }
+        LOG("Focus: NoActivate: the game never takes the foreground");
     }
     LOG("Focus: input only in the foreground, ClipCursor={}", Config::display.clipCursor);
 

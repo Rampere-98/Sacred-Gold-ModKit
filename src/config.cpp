@@ -99,6 +99,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::display.clipCursor = readInt(ini, L"Display", L"ClipCursor", Config::display.clipCursor) != 0;
     Config::display.fpsLimit = readInt(ini, L"Display", L"FpsLimit", Config::display.fpsLimit);
     Config::display.fpsLimitInactive = readInt(ini, L"Display", L"FpsLimitInactive", Config::display.fpsLimitInactive);
+    Config::display.noActivate = readInt(ini, L"Display", L"NoActivate", 0) != 0;
     Config::display.vsync = readInt(ini, L"Display", L"VSync", Config::display.vsync) != 0;
     Config::display.maxFrameLatency = readInt(ini, L"Display", L"MaxFrameLatency", Config::display.maxFrameLatency);
     Config::ui.scale = static_cast<float>(_wtof(readString(ini, L"UI", L"Scale", L"0").c_str()));
