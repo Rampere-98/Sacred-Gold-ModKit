@@ -6395,6 +6395,21 @@ static void watchStuck(DWORD now, const cCreature* self)
         s_quests = g_questsDoneAt;
         return;
     }
+    // Escalated (the stuck solver, 2026-11-11, A3 35 min and A2 10 min still on open ground after taking a horse): at
+    // 90 s on horseback off it, at 5 min the last save loaded.
+    static DWORD s_offFor = 0, s_reloadFor = 0;
+    if (now - s_since >= 90000 && s_offFor != s_since && HeroProfile::current().mounted)
+    {
+        s_offFor = s_since;
+        g_onFootUntil = now + 60000;
+        LOG("AgentStuck: 90 s in one place on horseback: off the horse");
+    }
+    if (now - s_since >= 300000 && s_reloadFor != s_since)
+    {
+        s_reloadFor = s_since;
+        LOG("AgentStuck: 5 min in one place: the last save loaded");
+        AgentSave::reloadStuck();
+    }
     if (now - s_since < 150000)
     {
         return;

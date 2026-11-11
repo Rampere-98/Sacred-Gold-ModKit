@@ -48,7 +48,8 @@ namespace
     int32_t g_lastHealth = 1;
     DWORD g_actionAt = 0;       // the last save or load asked for
     bool g_actionSave = false;
-    DWORD s_noHealthSince = 0;  // the hero's health read 0 since (a death the edge missed, lain in)  // ... and it was a save (the hero stays in the world, so a death still counts)
+    DWORD s_noHealthSince = 0;
+    std::atomic<bool> g_reloadWanted{false};  // the hero's health read 0 since (a death the edge missed, lain in)  // ... and it was a save (the hero stays in the world, so a death still counts)
     int g_sub = 0;              // the event's kind for the window's thread
     alignas(8) uint8_t g_event[0x40] = {};
     // Kept beside the slot across the copy's restarts (the live verifier, 2026-11-11: an install restarts all 8
@@ -410,6 +411,13 @@ void AgentSave::onFrame()
     // is a death too (the player, 2026-11-11).
     const int32_t health = hero->health;
     const bool failedQuest = g_failedQuest.exchange(false);
+    // Stuck in one place for minutes (AutoAttack's watchStuck): the last save, no death counted (the stuck solver,
+    // 2026-11-11: A3 35 min still on open ground, alive, after buying a horse).
+    if (g_reloadWanted.exchange(false) && slotFileExists())
+    {
+        load(now, "the hero stuck in one place for 5 min");
+        return;
+    }
     // Lying with no health and no death seen (the player, 2026-11-11: A5 «no está muerto, está bugueado», health 0
     // for 17 min after a death the save's grace missed): 20 s of it are a death too.
     if (health > 0)
@@ -529,4 +537,9 @@ bool AgentSave::nearDeathSpot(int x, int y)
         }
     }
     return deaths > 0 && now - newest < 1800LL << (std::min(deaths, 4) - 1);
+}
+
+void AgentSave::reloadStuck()
+{
+    g_reloadWanted = true;
 }
