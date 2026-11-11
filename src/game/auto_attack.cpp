@@ -3736,7 +3736,12 @@ namespace
         static DWORD s_since = 0;
         static std::unordered_map<uint64_t, DWORD> s_left;
         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx)) << 32) | static_cast<uint32_t>(wy);
-        if (const auto it = s_left.find(key); it != s_left.end() && now - it->second < 120000)
+        // Each time again no nearer, left longer (the analyst, 2026-11-11: 333 «no nearer» in 3 h over the 8 copies,
+        // ~1.9 h lost, the same tiles again and again, 3174,2794 39 times in one copy): 2, 10, 30 min, then an hour.
+        static std::unordered_map<uint64_t, int> s_times;
+        static const DWORD kLeftMs[] = {120000, 600000, 1800000, 3600000};
+        if (const auto it = s_left.find(key);
+            it != s_left.end() && now - it->second < kLeftMs[std::min(s_times[key], 4) - 1])
         {
             return true;
         }
@@ -3758,8 +3763,10 @@ namespace
         }
         if (now - s_since > 20000)
         {
-            LOG("AutoAttack: no nearer to tile {},{} in 20 s ({:.0f} tiles): left 2 min, playing on from here",
-                static_cast<int>(wx / kTileSize), static_cast<int>(wy / kTileSize), distance / kTileSize);
+            const int times = ++s_times[key];
+            LOG("AutoAttack: no nearer to tile {},{} in 20 s ({:.0f} tiles, time {}): left {} min, playing on from here",
+                static_cast<int>(wx / kTileSize), static_cast<int>(wy / kTileSize), distance / kTileSize, times,
+                kLeftMs[std::min(times, 4) - 1] / 60000);
             s_left[key] = now;
             s_key = 0;
             return true;
