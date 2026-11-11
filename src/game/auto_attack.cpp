@@ -2124,7 +2124,25 @@ namespace
                                                         static_cast<int>(self->y / kTileSize),
                                                         static_cast<int>(o->x / kTileSize), static_cast<int>(o->y / kTileSize));
                 const float line = d / static_cast<float>(kTileSize);
-                return way == -2.0f || (way >= 0.0f && way > line * 3.0f + 12.0f);
+                if (way == -2.0f || (way >= 0.0f && way > line * 3.0f + 12.0f))
+                {
+                    return true;
+                }
+                // Seen only over walkable ground (the player, 2026-11-11: «que la visión del agente se anulara al
+                // intentar pasar por una casilla no pisable»): a fence, water or a wall on the straight line hides it,
+                // unless a short way round is known.
+                const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+                const double sx = self->x / kTileSize, sy = self->y / kTileSize;
+                const double ex = o->x / kTileSize, ey = o->y / kTileSize;
+                const int steps = static_cast<int>(std::ceil(std::max(std::abs(ex - sx), std::abs(ey - sy)) * 2.0));
+                bool blocked = false;
+                for (int k = 2; k < steps - 1 && !blocked; ++k)
+                {
+                    const double t = static_cast<double>(k) / steps;
+                    blocked = ClickWalk::walkable(layer, static_cast<int>(sx + (ex - sx) * t),
+                                                  static_cast<int>(sy + (ey - sy) * t)) == 0;
+                }
+                return blocked && !(way >= 0.0f && way <= line * 1.5f + 5.0f);
             }
             const int tx = static_cast<int>(o->x / kTileSize), ty = static_cast<int>(o->y / kTileSize);
             for (int dy = -1; dy <= 1; ++dy)
