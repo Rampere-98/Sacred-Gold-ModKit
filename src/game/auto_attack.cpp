@@ -808,6 +808,7 @@ namespace
         order.mode = cOrder::walk;
         order.x = g_walkX;
         order.y = g_walkY;
+        order.layer = reinterpret_cast<const uint8_t*>(self)[0x24];     // the walker's layer (Manolito, block AF)
         // The path-finding walk to the spot a click gives (follow 0). follow 1 is hold-to-walk: it heads for the
         // cursor and ends within a tenth of a second unless the left button is held (seen live: walking, then 2,
         // then standing, not a pixel moved).
@@ -6484,12 +6485,12 @@ static void watchStuck(DWORD now, const cCreature* self)
     {
         s_offFor = s_since;
         g_onFootUntil = now + 60000;
-        LOG("AgentStuck: 90 s in one place on horseback: off the horse");
+        LOG("AgentStuck: 90 s in one place on horseback (layer {}): off the horse", reinterpret_cast<const uint8_t*>(self)[0x24]);
     }
     if (now - s_since >= 300000 && s_reloadFor != s_since)
     {
         s_reloadFor = s_since;
-        LOG("AgentStuck: 5 min in one place: the last save loaded");
+        LOG("AgentStuck: 5 min in one place (layer {}): the last save loaded", reinterpret_cast<const uint8_t*>(self)[0x24]);
         AgentSave::reloadStuck();
     }
     if (now - s_since < 150000)

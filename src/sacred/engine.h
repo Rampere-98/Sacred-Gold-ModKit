@@ -21,7 +21,8 @@ namespace Sacred
         uint32_t mode = 0;
         int32_t x = 0, y = 0;       // world target
         uint32_t follow = 0;
-        uint8_t _24[0x44 - 0x24] = {};
+        uint8_t layer = 0;          // the target's layer (Manolito, block AF: the snap 0x616AD0 keeps it on layer >= 1)
+        uint8_t _25[0x44 - 0x25] = {};
 
         static constexpr uint32_t move = 4;     // type
         static constexpr uint32_t walk = 2;     // mode; 0 = stop

@@ -654,6 +654,7 @@ namespace
         order.mode = cOrder::walk;
         order.x = x;
         order.y = y;
+        order.layer = layerOf(hero);    // left 0, a hero on layer 1-2 had its order snapped to layer 0 and never set off
         g_ours = true;
         engine->sendOrder(hero, order);
         g_ours = false;
@@ -788,6 +789,7 @@ namespace
         order.mode = cOrder::walk;
         order.x = g_askX;
         order.y = g_askY;
+        order.layer = layerOf(hero);
         LOG("Click walk: to {},{} from the agent's map ({:.0f} tiles)", order.x, order.y,
             std::max(std::abs(static_cast<double>(order.x) - hero->x), std::abs(static_cast<double>(order.y) - hero->y)) /
                 kTileSize);
