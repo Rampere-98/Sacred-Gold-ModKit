@@ -5091,6 +5091,51 @@ namespace
             g_homeX = self->x;
             g_homeY = self->y;
             g_roamStuck = 0;
+            // Hemmed in again and again on the same spot (the player, 2026-11-11: the Dwarf on the arena's tiers above
+            // its fence, «no way on» every 4.5 s for minutes, the quest's goal below): the steps straight out fail, so
+            // a routed walk to ground 12 tiles off (stairs found by the route), and the quest's goal left 10 min.
+            static int s_hemmed = 0;
+            static DWORD s_hemmedAt = 0;
+            static int32_t s_hemmedX = 0, s_hemmedY = 0;
+            if (now - s_hemmedAt < 30000 &&
+                std::hypot(static_cast<double>(self->x - s_hemmedX), static_cast<double>(self->y - s_hemmedY)) < 6.0 * kTileSize)
+            {
+                ++s_hemmed;
+            }
+            else
+            {
+                s_hemmed = 1;
+                s_hemmedX = self->x;
+                s_hemmedY = self->y;
+            }
+            s_hemmedAt = now;
+            if (s_hemmed >= 3)
+            {
+                s_hemmed = 0;
+                if (g_questX || g_questY)
+                {
+                    g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(g_questX / kTileSize)) << 32) |
+                                    static_cast<uint32_t>(g_questY / kTileSize)] = now + 600000;
+                }
+                if (!g_questBook.empty())
+                {
+                    const QuestGoal& g = g_questBook.front();
+                    g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(g.x / kTileSize)) << 32) |
+                                    static_cast<uint32_t>(g.y / kTileSize)] = now + 600000;
+                }
+                const double a = (std::rand() % 360) * 3.14159265358979 / 180.0;
+                int nx = static_cast<int>((self->x + std::cos(a) * 12.0 * kTileSize) / kTileSize);
+                int ny = static_cast<int>((self->y + std::sin(a) * 12.0 * kTileSize) / kTileSize);
+                Whereabouts::nearestReachable(nx, ny, nx, ny);
+                const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize), wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
+                LOG("AutoAttack: hemmed in 3 times here: a routed walk to tile {},{} and the quest's goal left 10 min", nx, ny);
+                ClickWalk::walkTo(wx, wy, false);
+                MapMemory::setRoute(true, wx, wy);
+                g_homeX = wx;
+                g_homeY = wy;
+                g_roamAt = now;
+                return;
+            }
         }
         // Of 16 directions, the one toward the ground least seen (a few cells ahead, nearer ones counting more), not
         // known blocked, keeping roughly the way it goes (no back and forth), and back toward home beyond the leash.
