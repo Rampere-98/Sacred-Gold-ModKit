@@ -4669,6 +4669,16 @@ namespace
         // A quest whose ground is more than 2 levels above the hero: farming first, where the enemies fit, until the
         // hero has the levels (the player: «si pretende farmear, el foco no es ir a la quest»).
         auto questTooHard = [&](int32_t x, int32_t y) {
+            // Where the hero died lately, the goal waits too, however near (the analyst, 2026-11-11: A3, a level 4
+            // Battle Mage, loaded beside an archers' camp at 3148,2722 on its quest's way and died there 5 times in
+            // 32 min, out of potions each time): farming elsewhere first, as long as the place stays shunned (30 min
+            // after one death, longer after more).
+            if (nearDeathSpot(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize)) ||
+                nearDeathSpot(static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize)))
+            {
+                setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
+                return true;
+            }
             // A goal at hand is no trip into hard ground: the Daemon's start (a tutorial yard, region 59 marked
             // levels 45-80, its main quest 8 tiles off behind a script's blocker) farmed instead, shut in, 14 min.
             if (std::hypot(static_cast<double>(x - self->x), static_cast<double>(y - self->y)) < 60.0 * kTileSize)
