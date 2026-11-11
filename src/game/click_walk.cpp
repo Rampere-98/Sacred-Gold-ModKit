@@ -206,6 +206,11 @@ namespace
     // around it. Fills g_route.cells.
     bool plan(Cell start, Cell goal)
     {
+        // No grid of the live sectors while a game loads (a crash in here 14 s after a load, the analyst 2026-11-11).
+        if (AgentSave::worldChanging())
+        {
+            return false;
+        }
         const DWORD t0 = GetTickCount();
         if (!g_grid.load() || !g_grid.inside(start.x, start.y))
         {
