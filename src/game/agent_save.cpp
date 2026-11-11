@@ -201,8 +201,10 @@ void AgentSave::onFrame()
         }
         else
         {
-            g_diedSince = true;
-            LOG("AgentSave: the hero died with no save yet: no save until a quest done after it");
+            // No save yet: from the start again (the player: «o desde 0 si no tiene partida»). The game quits
+            // without saving (its exit saves nothing, block S) and the launcher starts it anew, AutoStart a new game.
+            LOG("AgentSave: the hero died with no save yet: the game quits, a new one from the start");
+            ExitProcess(0);
         }
         return;
     }
