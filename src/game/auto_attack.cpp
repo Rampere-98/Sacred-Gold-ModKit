@@ -4572,6 +4572,37 @@ namespace
             }
             else
             {
+            // At the goal and nothing comes of it (the analyst, 2026-11-11: A5 «looking around it» 25 min, 3 fights
+            // in 28 min, the creature not speaking): after 6 min there the goal is left 15 min, a player goes and
+            // does something else before coming back.
+            static int32_t s_atGoalX = 0, s_atGoalY = 0;
+            static DWORD s_atGoalSince = 0;
+            if (std::abs(qx - s_atGoalX) > 3 * kTileSize || std::abs(qy - s_atGoalY) > 3 * kTileSize || !s_atGoalSince ||
+                now - s_atGoalSince > 900000)
+            {
+                s_atGoalX = qx;
+                s_atGoalY = qy;
+                s_atGoalSince = now;
+            }
+            else if (now - s_atGoalSince > 360000)
+            {
+                const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
+                                     static_cast<uint32_t>(qy / kTileSize);
+                g_travelBlocked[key] = now + 900000;
+                if (!g_questBook.empty())
+                {
+                    // The book's own goal (qx, qy may be a door or the reachable tile nearest it).
+                    const QuestGoal& g = g_questBook.front();
+                    g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(g.x / kTileSize)) << 32) |
+                                    static_cast<uint32_t>(g.y / kTileSize)] = now + 900000;
+                }
+                LOG("AutoAttack: 6 min at the quest's goal {},{} and nothing came of it: left 15 min",
+                    static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize));
+                s_atGoalSince = 0;
+                questHere = false;
+                g_roamAt = 0;
+                return;
+            }
             g_homeX = qx;
             g_homeY = qy;
             // A fixed destination (no creature): the journal's radius is wide (the arena's 22 tiles) but the script
