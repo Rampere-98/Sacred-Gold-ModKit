@@ -10,6 +10,7 @@
 
 #include <windows.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -88,7 +89,7 @@ namespace
         long long at = 0;
         while (std::fscanf(f, "%d %d %lld", &x, &y, &at) == 3)
         {
-            if (now - at < 1800)
+            if (now - at < 14400)
             {
                 g_spots.push_back({x, y, static_cast<std::time_t>(at)});
             }
@@ -428,20 +429,25 @@ int AgentSave::deathsSinceSave()
 void AgentSave::noteDeathSpot(int x, int y)
 {
     const std::time_t now = std::time(nullptr);
-    std::erase_if(g_spots, [now](const DeathSpot& d) { return now - d.at >= 1800; });
+    std::erase_if(g_spots, [now](const DeathSpot& d) { return now - d.at >= 14400; });
     g_spots.push_back({x, y, now});
     writeDeaths();
 }
 
 bool AgentSave::nearDeathSpot(int x, int y)
 {
+    // Died there again and again (the live verifier, 2026-11-11: A3 back at 3223,2664 each time the 30 min ran out,
+    // dead there since 07:50): shunned 30 min after one death, 60 after two, 120 after three, 240 after more.
     const std::time_t now = std::time(nullptr);
+    int deaths = 0;
+    std::time_t newest = 0;
     for (const DeathSpot& d : g_spots)
     {
-        if (now - d.at < 1800 && (x - d.x) * (x - d.x) + (y - d.y) * (y - d.y) < 400)
+        if (now - d.at < 14400 && (x - d.x) * (x - d.x) + (y - d.y) * (y - d.y) < 400)
         {
-            return true;
+            ++deaths;
+            newest = std::max(newest, d.at);
         }
     }
-    return false;
+    return deaths > 0 && now - newest < 1800LL << (std::min(deaths, 4) - 1);
 }

@@ -25,7 +25,7 @@ namespace AgentSave
     // Deaths since this copy's slot was last written: the same game loaded again and again (kept across the loads).
     int deathsSinceSave();
 
-    // Where the hero died (tiles) within the last 30 min, kept on disk across the copy's restarts.
+    // Where the hero died (tiles) within the last 4 h (shunned 30 min to 4 h by how often), kept on disk across the copy's restarts.
     struct DeathSpot
     {
         int x, y;
