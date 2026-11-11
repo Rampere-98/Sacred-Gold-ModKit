@@ -4057,6 +4057,63 @@ namespace
         return true;
     }
 
+    // A goal no walk gets nearer to and no shut door beside it: a way into another layer near it (stairs, a house's
+    // door, a cave: what MapMemory marked where the hero once changed layer, or a house's landing from the world
+    // files) walked onto, each tried once in 3 min. The solver, 2026-11-12: A3 and A8 «no way found (8 tiles)» to a
+    // goal inside a house at 3174,2794; A8 had been inside (layer 1) through the marks at 3171,2796..2797.
+    bool entranceNearGoal(DWORD now, const cCreature* self, int32_t x, int32_t y)
+    {
+        static std::unordered_map<uint64_t, DWORD> s_tried;
+        const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+        const int gx = static_cast<int>(x / kTileSize), gy = static_cast<int>(y / kTileSize);
+        const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+        std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10);
+        for (const Teleports::Interior& in : Teleports::interiors())
+        {
+            if (!in.start && layer == 0 && std::abs(in.outX - gx) <= 10 && std::abs(in.outY - gy) <= 10)
+            {
+                ways.emplace_back(in.outX, in.outY);
+            }
+        }
+        int bx = 0, by = 0;
+        double best = 1e18;
+        for (const auto& [ex, ey] : ways)
+        {
+            const uint64_t k = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
+            if (const auto t = s_tried.find(k); t != s_tried.end() && now - t->second < 180000)
+            {
+                continue;
+            }
+            const double d = std::hypot(ex - gx, ey - gy);
+            if (d < best)
+            {
+                best = d;
+                bx = ex;
+                by = ey;
+            }
+        }
+        if (best > 1e17)
+        {
+            return false;
+        }
+        s_tried[(static_cast<uint64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by)] = now;
+        if (std::hypot(bx - htx, by - hty) <= 1.5)
+        {
+            // On it already: a step off, the next try walks back onto it (a way in fires on stepping on).
+            const double a = now * 0.001;
+            ClickWalk::walkTo(static_cast<int32_t>(self->x + std::cos(a) * 3 * kTileSize),
+                              static_cast<int32_t>(self->y + std::sin(a) * 3 * kTileSize), false);
+            s_tried.erase((static_cast<uint64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by));
+            LOG("AutoAttack: no nearer to tile {},{}: on the way in at {},{}: a step off to step on again", gx, gy, bx, by);
+            return true;
+        }
+        LOG("AutoAttack: no nearer to tile {},{}: to the way in at {},{} ({:.0f} tiles from the goal)", gx, gy, bx, by, best);
+        Findings::note("door", self->x, self->y, "goal {},{}: to the way in at {},{}", gx, gy, bx, by);
+        remember("usa la entrada cerca del destino");
+        ClickWalk::walkTo(static_cast<int32_t>((bx + 0.5) * kTileSize), static_cast<int32_t>((by + 0.5) * kTileSize), false);
+        return true;
+    }
+
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
         if (doorOnTheWay(now, self, x, y))
@@ -4121,6 +4178,12 @@ namespace
             if (doorNearGoal(now, x, y))
             {
                 t.detourUntil = now + 8000;
+                t.bestAt = now;
+                return true;
+            }
+            if (entranceNearGoal(now, self, x, y))
+            {
+                t.detourUntil = now + 10000;
                 t.bestAt = now;
                 return true;
             }
