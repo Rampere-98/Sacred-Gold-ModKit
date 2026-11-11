@@ -3584,6 +3584,12 @@ namespace
         }
         if (!lag)
         {
+            // Caught up: a while on before waiting again (the live verifier, 2026-11-11: A5 47 waits in 19 min,
+            // a fight now and then; a player does not stop every few steps for the hireling).
+            if (s_waitSince)
+            {
+                s_goOnUntil = now + 45000;
+            }
             s_waitSince = 0;
             return false;
         }
@@ -3592,11 +3598,11 @@ namespace
             s_waitSince = now;
             LOG("AutoAttack: a companion is {:.0f} tiles behind: waiting for it", farthest);
         }
-        if (now - s_waitSince > 20000)
+        if (now - s_waitSince > 8000)
         {
-            LOG("AutoAttack: the companion did not come up in 20 s ({:.0f} tiles): going on", farthest);
+            LOG("AutoAttack: the companion did not come up in 8 s ({:.0f} tiles): going on", farthest);
             s_waitSince = 0;
-            s_goOnUntil = now + 30000;
+            s_goOnUntil = now + 60000;
             return false;
         }
         if (farthest > 18.0)
