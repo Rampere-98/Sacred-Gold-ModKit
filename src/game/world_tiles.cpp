@@ -201,10 +201,11 @@ static int tileByte(int layer, int tileX, int tileY)
 
 void WorldTiles::fill(int tileX, int tileY, int w, int h, int8_t* out)
 {
-    // One lock for the whole box (the code reviewer: a lock a tile, three a tile, held up a big route by 100 ms).
-    std::lock_guard<std::mutex> lock(g_lock);
+    // One lock a row (the code reviewer: a lock a tile held up a big route by 100 ms; one for the whole box held the
+    // other tile tests for seconds on a far route).
     for (int y = 0; y < h; ++y)
     {
+        std::lock_guard<std::mutex> lock(g_lock);
         for (int x = 0; x < w; ++x)
         {
             const int b = tileByteLocked(0, tileX + x, tileY + y);

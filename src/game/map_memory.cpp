@@ -1169,7 +1169,10 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
     {
         return false;
     }
-    const std::lock_guard lock(g_lock);
+    // The lock only while the agent's own map is copied (the player, 2026-11-11: «ya empiezan a dar tirones»: the
+    // world files read for the roads and the search over up to 1100x1100 tiles held it for seconds, and the frame's
+    // drawing waited on it, 2-3 s without a frame).
+    std::unique_lock lock(g_lock);
     ensureLoaded();
     // Per tile, the step's cost: walked or walkable by the tile test 10, never seen 22 (may be anything), not
     // walkable or blocked again and again: no way.
@@ -1205,6 +1208,7 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
             }
         }
     }
+    lock.unlock();
     // The roads first (the player, 2026-11-10: «las carreteras mapeadas y el agente se moviera por ellas»): on the
     // surface, by the world files (Manolito, block R2), a road tile costs 6, so far walks follow them; ground never
     // seen is judged by the files too (walkable 14, not walkable no way), unknown stays 22.
