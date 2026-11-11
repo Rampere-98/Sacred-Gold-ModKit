@@ -2649,7 +2649,10 @@ namespace
                 const float lootDistance = std::hypot(loot.x - hx, loot.y - hy);
                 const bool calm = !enemyEngaged && !hurt;
                 const bool safe = maximum > 0 && health * 10 >= maximum * 6 && !hurt;
-                if (calm || safe || lootDistance < it->second)
+                // Mounted, loot is taken slowly (the player, 2026-11-11): left on the ground while enemies strike, all of
+                // it gathered once the fight is over («mapea los objetos del suelo para recoger después de batallar»).
+                const bool saddle = HeroProfile::current().mounted;
+                if (calm || (!saddle && (safe || lootDistance < it->second)))
                 {
                     LOG("AutoAttack: loot {:x} first ({:.0f} px; enemy {:x} at {:.0f} px; {})", loot.id, lootDistance,
                         enemy, it->second, calm ? "nobody attacks" : safe ? "no danger" : "nearer");
