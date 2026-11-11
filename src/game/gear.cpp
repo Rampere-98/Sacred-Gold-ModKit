@@ -819,6 +819,11 @@ namespace
     constexpr size_t kHeroLevel = 0x3FE;
     bool g_slotsReady = false;
 
+    // The slots the agent fills itself: the first two only (A2, 2026-11-11: four crashes at Sacred.exe+4502ae, each
+    // 8-35 s after a bow went into weapon slot 3 at level 8, a texture of garbage size asked first; whether that slot
+    // is open at 8 is not known).
+    constexpr int kFillSlots = 2;
+
     int slotsOpen(const cCreature* hero)
     {
         const int level = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + kHeroLevel);
@@ -996,7 +1001,7 @@ namespace
             return false;
         }
         const HeroProfile::Data profile = HeroProfile::current();
-        const int open = slotsOpen(hero);
+        const int open = std::min(slotsOpen(hero), kFillSlots);
         if (!HeroProfile::prefersRanged(profile.cls) && open < 3)
         {
             return false;
@@ -1124,7 +1129,7 @@ namespace
         {
             return false;
         }
-        const int open = slotsOpen(hero);
+        const int open = std::min(slotsOpen(hero), kFillSlots);
         const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
         int empty = -1;
         bool have[4] = {};
@@ -2185,7 +2190,7 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     {
         return false;
     }
-    const int open = slotsOpen(hero);
+    const int open = std::min(slotsOpen(hero), kFillSlots);
     const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
     if (active < 0 || active >= 5)
     {
