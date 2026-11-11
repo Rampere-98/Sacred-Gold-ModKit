@@ -1,4 +1,5 @@
 #include "game/focus.h"
+#include "game/agent_cursor.h"
 #include "game/controller.h"
 #include "game/sacred_addr.h"
 #include "input/inject.h"
@@ -74,7 +75,7 @@ namespace
     // funcionar de forma independiente»): the game never moves the real mouse then; its clicks go in-process.
     BOOL WINAPI hookSetCursorPos(int x, int y)
     {
-        return active() && !Controller::ownsCursor() && !Config::autoAttack.enabled ? g_origSetCursorPos(x, y) : TRUE;
+        return active() && !Controller::ownsCursor() && !AgentCursor::owns() && !Config::autoAttack.enabled ? g_origSetCursorPos(x, y) : TRUE;
     }
 
     // The player's own input (never the controller's injected messages): who is in charge, the controller or the

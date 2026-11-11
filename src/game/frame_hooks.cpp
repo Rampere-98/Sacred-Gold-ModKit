@@ -1,5 +1,6 @@
 #include "game/frame_hooks.h"
 #include "game/map_memory.h"
+#include "game/agent_cursor.h"
 #include "game/auto_attack.h"
 #include "game/click_walk.h"
 #include "game/auto_potion.h"
@@ -219,6 +220,7 @@ namespace
         Focus::onFrame();
         Controller::onFrame();
         HeroProfile::onFrame();
+        AgentCursor::onFrame();
         AutoAttack::onFrame();
         ClickWalk::onFrame();
         AutoPotion::onFrame();

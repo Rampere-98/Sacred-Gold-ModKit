@@ -1,4 +1,5 @@
 #include "game/ui_canvas.h"
+#include "game/agent_cursor.h"
 #include "game/controller.h"
 #include "game/device_proxy.h"
 #include "game/resolution.h"
@@ -120,7 +121,7 @@ namespace
     void __cdecl hookGetClientCursorPos(HWND hwnd, POINT* pt)
     {
         POINT controller;
-        if (pt && Controller::cursor(controller))
+        if (pt && (Controller::cursor(controller) || AgentCursor::cursor(controller)))
         {
             *pt = controller;
         }

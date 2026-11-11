@@ -6,6 +6,7 @@
 #include "game/auto_start.h"
 #include "game/agent_save.h"
 #include "game/teleports.h"
+#include "game/agent_cursor.h"
 #include "game/agent_overlay.h"
 #include "game/hero_build.h"
 #include "game/lore.h"
@@ -814,6 +815,16 @@ namespace
         engine->sendOrder(self, order);
     }
 
+    // The agent's walk order, once the game's cursor is on the spot (AgentCursor; at once with the option off).
+    void fireWalk(void*)
+    {
+        Inject::call(&walkThere, nullptr);
+    }
+    void sendWalk()
+    {
+        AgentCursor::act({0, g_walkX, g_walkY}, &fireWalk, nullptr);
+    }
+
     // True if `self` is too far from (x, y) for the use order: a walk order went out instead.
     bool walkFirst(cCreature* self, int32_t x, int32_t y)
     {
@@ -838,7 +849,7 @@ namespace
         }
         g_walkX = x;
         g_walkY = y;
-        Inject::call(&walkThere, nullptr);
+        sendWalk();
         return true;
     }
 
@@ -865,6 +876,28 @@ namespace
 
     // Orders the creature the mouse commands (the hero, or its mount) to attack, pick up or open `id`, as a click
     // on it does.
+    bool attack(uint32_t id);
+    bool g_cursorFiring = false;    // attack() called back by AgentCursor, the cursor on the target
+    void fireAttack(void* id)
+    {
+        g_cursorFiring = true;
+        attack(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(id)));
+        g_cursorFiring = false;
+    }
+    // The use order (a left click on `id`), once the game's cursor is on it; at once with the option off.
+    bool clickOn(cCreature* self, UseOrder& order)
+    {
+        if (!g_cursorFiring && AgentCursor::active())
+        {
+            AgentCursor::act({order.target, order.x, order.y}, &fireAttack,
+                             reinterpret_cast<void*>(static_cast<uintptr_t>(order.target)));
+            return true;
+        }
+        const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
+        handler(self, nullptr, &order);
+        return true;
+    }
+
     bool attack(uint32_t id)
     {
         cEngine* engine = FrameHooks::engine();
@@ -899,9 +932,7 @@ namespace
             order.target = id;
             order.x = x;
             order.y = y;
-            const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
-            handler(self, nullptr, &order);
-            return true;
+            return clickOn(self, order);
         }
         cObject* target = objects->object(id);
         if (!self || !target)
@@ -935,9 +966,7 @@ namespace
         order.target = id;
         order.x = target->x;
         order.y = target->y;
-        const auto handler = reinterpret_cast<const OrderHandler*>(self->vtable)[6];
-        handler(self, nullptr, &order);
-        return true;
+        return clickOn(self, order);
     }
 
     // Natural pace: a look at the situation every so often, a moment before acting on a new aim, orders repeated at
@@ -1397,7 +1426,7 @@ namespace
                         s_wildStep = now;
                         g_walkX = wild->x;
                         g_walkY = wild->y;
-                        Inject::call(&walkThere, nullptr);
+                        sendWalk();
                     }
                     return;
                 }
@@ -1501,7 +1530,7 @@ namespace
                     s_approachStep = now;
                     g_walkX = steed->x;
                     g_walkY = steed->y;
-                    Inject::call(&walkThere, nullptr);
+                    sendWalk();
                 }
                 return;
             }
@@ -1846,7 +1875,7 @@ namespace
                     bestScore > 0.0 ? "the safest way (aggro weighed)" : "straight away",
                     std::hypot(g_walkX - self->x, g_walkY - self->y) / kTileSize, bestCrossed);
             }
-            Inject::call(&walkThere, nullptr);
+            sendWalk();
             g_retreatWalkAt = now;
         }
         return true;
@@ -2061,7 +2090,7 @@ namespace
                 bestT / kTileSize, sign > 0 ? "away from its line" : "the other way", g_dodge.dodged, g_dodge.hits);
             g_walkX = px;
             g_walkY = py;
-            Inject::call(&walkThere, nullptr);
+            sendWalk();
             return true;
         }
         return false;
@@ -2530,7 +2559,7 @@ namespace
                 const int tiles = s_spotTimes >= 3 ? 40 : s_spotTimes == 2 ? 25 : 10;
                 g_walkX = static_cast<int32_t>(self->x + ax * tiles * kTileSize);
                 g_walkY = static_cast<int32_t>(self->y + ay * tiles * kTileSize);
-                Inject::call(&walkThere, nullptr);
+                sendWalk();
                 g_quietUntil = now + 4000 + 1500 * (tiles / 10);
                 g_unseenHits = 0;
                 LOG("AutoAttack: hurt again with no enemy to answer ({} seen): off {} tiles away (time {} here)", seen,
@@ -5275,7 +5304,7 @@ namespace
         g_roamFromY = self->y;
         g_walkX = bestX;
         g_walkY = bestY;
-        Inject::call(&walkThere, nullptr);
+        sendWalk();
         MapMemory::setRoute(true, g_walkX, g_walkY);
         if (!g_roamAt || now - g_roamAt > 10000)
         {
@@ -5670,6 +5699,10 @@ namespace
         ImGui::SliderInt("Paso al explorar (casillas)", &c.roamStep, 1, 20);
         ImGui::SetItemTooltip("Lo lejos que va en cada paso al explorar: más largo, explora más rápido; "
                               "el buscador de caminos rodea lo que no se puede pisar.");
+        ImGui::Checkbox("Usar el cursor del juego, como un jugador", &c.humanCursor);
+        ImGui::SetItemTooltip("Cada acción espera a que el cursor del juego llegue a su objetivo, movido como la mano de "
+                              "un buen jugador: reacción, movimiento rápido y alguna corrección. El ratón de Windows no "
+                              "se mueve.");
         ImGui::Checkbox("Ir a la misión activa", &c.quests);
         ImGui::SetItemTooltip("Sin combate cerca, va al destino de la misión (la principal primero, si no la más "
                               "cercana), sin límite de distancia; allí explora alrededor.");
@@ -5719,6 +5752,7 @@ namespace
         ModkitMenu::write(ini, L"AutoAttack", L"Roam", c.roam);
         ModkitMenu::write(ini, L"AutoAttack", L"RoamStep", c.roamStep);
         ModkitMenu::write(ini, L"AutoAttack", L"Quests", c.quests);
+        ModkitMenu::write(ini, L"AutoAttack", L"HumanCursor", c.humanCursor);
         ModkitMenu::write(ini, L"AutoAttack", L"Background", c.background);
         ModkitMenu::write(ini, L"AutoAttack", L"Farm", c.farm);
         ModkitMenu::write(ini, L"AutoAttack", L"Chests", c.chests);

@@ -1,4 +1,5 @@
 #include "game/click_walk.h"
+#include "game/agent_cursor.h"
 #include "game/agent_save.h"
 #include "config/debug.h"
 #include "game/frame_hooks.h"
@@ -880,7 +881,8 @@ void ClickWalk::install()
 
 void ClickWalk::onFrame()
 {
-    if (g_askPending)
+    // The agent's own walk waits for the game's cursor on the spot (AgentCursor), the player's does not.
+    if (g_askPending && (g_askByPlayer || AgentCursor::reach({0, g_askX, g_askY})))
     {
         Inject::call(&askedWalk, nullptr);
     }

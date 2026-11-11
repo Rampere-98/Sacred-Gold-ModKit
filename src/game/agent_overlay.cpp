@@ -227,6 +227,11 @@ void AgentOverlay::begin(int32_t heroX, int32_t heroY, float heroScreenX, float 
     g_hsy = heroScreenY;
 }
 
+float AgentOverlay::scale()
+{
+    return g_scale;
+}
+
 void AgentOverlay::calibrate(int32_t x, int32_t y, float screenX, float screenY)
 {
     const double dx = x - g_hx, dy = y - g_hy;

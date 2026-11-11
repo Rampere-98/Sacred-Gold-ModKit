@@ -24,6 +24,7 @@ namespace Config
         bool lootInFight = true;    // loot nearer than the enemy fought is taken first, enemies about or not
         bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on
         int lootRange = 1600;    // ... within this many screen pixels of the hero
+        bool humanCursor = false;   // the agent acts through the game's cursor, moved as a quick player's hand (AgentCursor)
         int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
     };
     inline AutoAttack autoAttack;

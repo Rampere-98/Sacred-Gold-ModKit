@@ -30,6 +30,8 @@ namespace AgentOverlay
     void begin(int32_t heroX, int32_t heroY, float heroScreenX, float heroScreenY);
     // Another object seen on screen: its world position and on-screen centre (the scale from it).
     void calibrate(int32_t x, int32_t y, float screenX, float screenY);
+    // Pixels per isometric world unit, as last measured (0: not yet), for AgentCursor's world-to-screen.
+    float scale();
     // A circle on the ground (radius in tiles).
     void ring(int32_t x, int32_t y, float tiles, uint32_t color, float thickness = 1.5f);
     // A line on the ground from the hero to (x, y), with a mark at its end and an optional label.

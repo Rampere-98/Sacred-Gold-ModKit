@@ -1,4 +1,5 @@
 #include "game/tactics.h"
+#include "game/agent_cursor.h"
 #include "game/gear.h"
 #include "config.h"
 #include "config/tactics.h"
@@ -1382,6 +1383,11 @@ void Tactics::onFrame(DWORD now)
             return;
         }
         learned(g_art).unselected = 0;
+        // The game's cursor onto the target first (AgentCursor), as the right click of a player's would be.
+        if (!AgentCursor::reach({g_castTarget ? g_castTarget : (heroCreature() ? heroCreature()->id : 0u), 0, 0}))
+        {
+            return;
+        }
         if (!sendArt(g_castTarget))
         {
             learned(g_art).readyAt = now + 5000;
