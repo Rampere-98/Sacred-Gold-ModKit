@@ -365,6 +365,21 @@ void AgentSave::onFrame()
         {
             ++g_deathsSinceSave;
             LOG("AgentSave: death {} since the last save", g_deathsSinceSave);
+            if (g_deathsSinceSave >= 10)
+            {
+                // A save with no way on (the player, 2026-11-11: «sí, desde 10»): the hero starts again from the start,
+                // as a player would. The slot is kept aside as GAMEnn.OLD (not deleted); the new game's first quest
+                // done writes the slot anew.
+                const std::wstring old = g_path.substr(0, g_path.size() - 4) + L".OLD";
+                MoveFileExW(g_path.c_str(), old.c_str(), MOVEFILE_REPLACE_EXISTING);
+                g_deathsSinceSave = 0;
+                g_spots.clear();
+                writeDeaths();
+                LOG("AgentSave: 10 deaths from the same save: it is set aside as GAME{:02d}.OLD, the game quits, a new one "
+                    "from the start",
+                    g_slot);
+                ExitProcess(0);
+            }
             writeDeaths();
             load(now, "the hero died");
         }
