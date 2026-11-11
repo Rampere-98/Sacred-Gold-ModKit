@@ -6110,7 +6110,12 @@ static void watchStuck(DWORD now, const cCreature* self)
     static DWORD s_since = 0, s_hurt = 0, s_loot = 0, s_quests = 0, s_toldAt = 0;
     static int32_t s_toldX = 0, s_toldY = 0;
     const bool moved = std::hypot(static_cast<double>(self->x - s_x), static_cast<double>(self->y - s_y)) > 6 * kTileSize;
-    const bool busy = AgentSave::worldChanging() || Gear::shopOpen() || !heroAlive();
+    // A shop open over 3 min is no business of a player's (A1, 2026-11-11: its trade flag left set by a death in the
+    // shop kept this from ever telling).
+    static DWORD s_shopSince = 0;
+    const bool shop = Gear::shopOpen();
+    s_shopSince = shop ? (s_shopSince ? s_shopSince : now) : 0;
+    const bool busy = AgentSave::worldChanging() || (shop && now - s_shopSince < 180000) || !heroAlive();
     if (!s_since || moved || busy || g_lastHurtAt != s_hurt || g_lootCount != s_loot || g_questsDoneAt != s_quests)
     {
         s_x = self->x;
@@ -6332,6 +6337,12 @@ void AutoAttack::onFrame()
             g_aggroFoes.clear();
             g_shotBy.clear();
             g_target = 0;
+            // A shop trip and a walk of the game left (A1, 2026-11-11: dead with a shop open, then 27 min with no
+            // order and no stuck report after the load).
+            g_pending = 0;
+            g_shopId = 0;
+            g_shopTold = false;
+            ClickWalk::cancel();
         }
         s_wasChanging = changing;
     }

@@ -218,14 +218,28 @@ bool AgentCursor::reach(const Aim& aim)
     {
         return true;
     }
+    // Two askers with different aims (a walk and a strike) each reset the other's clock: held this long in all,
+    // whatever the aim, the order goes out (A1, 2026-11-11: 27 min with no order at all after a load). A second
+    // with no asker starts the count anew.
+    static DWORD s_heldSince = 0;
+    const DWORD tick = GetTickCount();
+    if (tick - g_lastRequest > 1000)
+    {
+        s_heldSince = 0;
+    }
     setAim(aim);
     double x = 0, y = 0;
     if (!screenPoint(aim, x, y))
     {
         return true;    // nowhere to put it on the screen (no scale yet): not held
     }
-    if (GetTickCount() - g_aimAt > kGiveUpMs)
+    if (!s_heldSince)
     {
+        s_heldSince = tick;
+    }
+    if (tick - g_aimAt > kGiveUpMs || tick - s_heldSince > 2 * kGiveUpMs)
+    {
+        s_heldSince = 0;
         static DWORD s_told = 0;
         if (GetTickCount() - s_told > 60000)
         {
@@ -235,7 +249,12 @@ bool AgentCursor::reach(const Aim& aim)
         }
         return true;
     }
-    return on() && g_onSince > 0 && nowMs() - g_onSince >= kClickMinMs;
+    const bool ready = on() && g_onSince > 0 && nowMs() - g_onSince >= kClickMinMs;
+    if (ready)
+    {
+        s_heldSince = 0;
+    }
+    return ready;
 }
 
 void AgentCursor::act(const Aim& aim, void (*fn)(void*), void* context)
