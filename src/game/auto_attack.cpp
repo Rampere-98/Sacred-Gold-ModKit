@@ -3903,6 +3903,39 @@ namespace
         }
         if (s_stage == 1)
         {
+            // Stuck again near where the marks were last forgotten (seen live 2026-11-11, A3: 20 min looping at 24 tiles
+            // from a quest creature behind a fence): forgetting would send it back to the same goal, so the goal it
+            // was going for is left 10 min instead.
+            static DWORD s_forgotAt = 0;
+            static int32_t s_forgotX = 0, s_forgotY = 0;
+            if (s_forgotAt && now - s_forgotAt < 600000 &&
+                std::hypot(static_cast<double>(self->x - s_forgotX), static_cast<double>(self->y - s_forgotY)) <
+                    30.0 * kTileSize)
+            {
+                const auto leave = [&](int32_t gx, int32_t gy) {
+                    if (!gx && !gy)
+                    {
+                        return;
+                    }
+                    const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(gx / kTileSize)) << 32) |
+                                         static_cast<uint32_t>(gy / kTileSize);
+                    g_travelBlocked[key] = now + 600000;
+                };
+                leave(g_questX, g_questY);
+                leave(g_travel.x, g_travel.y);
+                LOG("AutoAttack: stuck guard: stuck again where it was {} s ago: the goal at tile {},{} left 10 min",
+                    (now - s_forgotAt) / 1000, static_cast<int>(g_questX / kTileSize),
+                    static_cast<int>(g_questY / kTileSize));
+                Findings::note("stuck", self->x, self->y, "stuck again: the goal at tile {},{} left 10 min",
+                               static_cast<int>(g_questX / kTileSize), static_cast<int>(g_questY / kTileSize));
+                g_questX = g_questY = 0;
+                g_travel = Travel{};
+                s_forgotAt = 0;
+                return false;
+            }
+            s_forgotAt = now;
+            s_forgotX = self->x;
+            s_forgotY = self->y;
             LOG("AutoAttack: stuck guard: 60 s within 16 tiles out of the fights: the marks «left for now» forgotten");
             Findings::note("stuck", self->x, self->y, "60 s within a box of 16 tiles out of the fights: marks forgotten");
             forgetTalks();
