@@ -48,4 +48,8 @@ namespace Tactics
 
     // The auto attack stopped (off, a click of the player's, a menu): drops the art under way.
     void reset();
+
+    // Arts in the hero's slots, learned, that the game does not let him cast on horseback (the player, 2026-11-11:
+    // «no todas las habilidades pueden ser usadas a caballo»): a hard fight is fought on foot then.
+    int artsBarredMounted();
 }

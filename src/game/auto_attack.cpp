@@ -1482,16 +1482,30 @@ namespace
             nearest = std::min(nearest, std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)));
         }
         const bool longWalk = ClickWalk::routing() || g_questTravel;
+        int close = 0;
+        for (const AggroFoe& f : g_aggroFoes)
+        {
+            close += std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) < 8.0 * kTileSize;
+        }
+        const bool hardOnFoot = close >= 3 && Config::tactics.arts && Tactics::artsBarredMounted() > 0;
         uint32_t code = 0;
         // Up again once the nearest enemy is 5 tiles off: the saddle is the better place to fight from (the player,
         // 2026-11-11), so only an enemy at hand puts the walk to the horse off.
-        if (!mounted && longWalk && nearest > 5.0 * kTileSize && (s_approachSince || !gated))
+        if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && (s_approachSince || !gated))
         {
             code = 0x209;
         }
         // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
         else if (mounted && nearest < Mind::now().dismountTiles * kTileSize && now - s_at > 1500)
         {
+            code = 0x20A;
+        }
+        // But a hard fight (three or more within 8 tiles) is fought on foot when arts in the slots cannot be cast up
+        // there (the player, 2026-11-11: «no todas las habilidades pueden ser usadas a caballo»): an easy one the
+        // saddle's quicker blows end anyway.
+        else if (mounted && hardOnFoot && now - s_at > 1500)
+        {
+            LOG("AutoAttack: {} enemies near and arts barred on horseback: fighting on foot", close);
             code = 0x20A;
         }
         if (!code)

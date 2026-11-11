@@ -1532,6 +1532,36 @@ void Tactics::onFrame(DWORD now)
     }
 }
 
+int Tactics::artsBarredMounted()
+{
+    const uint8_t* player = playerData();
+    const cCreature* hero = heroCreature();
+    if (!g_ready || !player || !hero)
+    {
+        return 0;
+    }
+    const bool readable = heroArtsReadable();
+    int barred = 0;
+    for (int slot = 0; slot < kSlots; ++slot)
+    {
+        const SlotArt sa = slotArt(player, slot);
+        if (!sa.kind || !sa.art)
+        {
+            continue;
+        }
+        const bool listed = sa.kind == 2 || sa.kind == 3 || sa.kind == 4;
+        if (readable && listed && !heroArt(sa.kind, sa.art).found)
+        {
+            continue;   // not learned: no loss either way
+        }
+        if (!castMounted(sa.kind, sa.art, hero))
+        {
+            ++barred;
+        }
+    }
+    return barred;
+}
+
 bool Tactics::busy(DWORD)
 {
     // From the slot key until the art is done: any other order would cut it short.
