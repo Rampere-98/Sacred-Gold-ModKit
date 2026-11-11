@@ -3785,6 +3785,41 @@ namespace
                 }
                 std::fclose(f);
             }
+            // What the other copies learnt too (Skiller, 2026-11-11, from «IA que juega»: «lo que aprende una lo usan
+            // todas»): their parked tiles from ..\SacredA*\, counted at most twice (10 min), since a gate shut for one
+            // hero may stand open for another further on.
+            const std::wstring self = s_file.substr(0, s_file.find_last_of(L"\\/"));
+            const std::wstring games = self.substr(0, self.find_last_of(L"\\/") + 1);
+            WIN32_FIND_DATAW fd{};
+            if (HANDLE h = FindFirstFileW((games + L"SacredA*").c_str(), &fd); h != INVALID_HANDLE_VALUE)
+            {
+                int shared = 0;
+                do
+                {
+                    const std::wstring dir = games + fd.cFileName;
+                    if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || _wcsicmp(dir.c_str(), self.c_str()) == 0)
+                    {
+                        continue;
+                    }
+                    if (FILE* f = _wfopen((dir + L"\\SacredBild-parked.txt").c_str(), L"rb"))
+                    {
+                        unsigned long long k = 0;
+                        int n = 0;
+                        while (std::fscanf(f, "%llu %d", &k, &n) == 2)
+                        {
+                            if (!s_times.count(k) && n > 0)
+                            {
+                                s_times[k] = std::min(n, 2);
+                                s_left[k] = now;
+                                ++shared;
+                            }
+                        }
+                        std::fclose(f);
+                    }
+                } while (FindNextFileW(h, &fd));
+                FindClose(h);
+                LOG("AutoAttack: {} parked tiles taken from the other copies", shared);
+            }
         }
         static const DWORD kLeftMs[] = {120000, 600000, 1800000, 3600000};
         if (const auto it = s_left.find(key);
