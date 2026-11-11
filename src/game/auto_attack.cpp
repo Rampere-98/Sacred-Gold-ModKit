@@ -1947,7 +1947,11 @@ namespace
         {
             return false;
         }
-        if (now - s_at < g_dodge.wait)
+        // Not a dodge every half second (the live log, 2026-11-11: 71 dodges in a fight against archers, the hero
+        // hardly striking, dead): 1.5 s at least between two, none with an enemy in the melee (its blows first), and
+        // none on the way to the one shooting (it is the answer).
+        if (now - s_at < std::max<DWORD>(g_dodge.wait, 1500) || (g_meleeAt && now - g_meleeAt < 1500) ||
+            (g_target && shotAtHero(g_target, now)))
         {
             return false;
         }
