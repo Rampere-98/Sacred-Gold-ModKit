@@ -1159,6 +1159,7 @@ namespace
     float g_targetBest = 0.0f;      // its nearest distance since, pixels (0: none yet)
     DWORD g_targetBestAt = 0;       // ... reached then
     DWORD g_lastLookAt = 0;         // the last look at the situation
+    bool g_retreatDoomed = false;   // the retreat is from a hopeless fight (not for health or potions)
     int g_retreatExtended = 0;      // times the retreat went on with little health and no potion
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
     std::unordered_map<uint32_t, float> g_unreachableAt;    // ... and how far they were then (pixels)
@@ -1617,6 +1618,10 @@ namespace
         const bool low = health * 100 <= maximum * retreatPct ||
                          (health * 100 <= maximum * 40 && CombatLearn::secondsToDie() < 2.5f) || lost;
         const bool noPotions = CombatState::noPotionsAt.load() != 0;
+        // A group the fight with is foreseen hopeless is left at once, potions or not, health full or not (the
+        // player, 2026-11-11: «la vampiresa siempre tiene la costumbre de morir en el mismo lugar»: into 8 at 18 % to
+        // win, the potions drunk one by one, then dead; twice at the same spot).
+        const bool doomed = fc.foes >= 4 && fc.win < 0.25f && fc.loss > 1.0f;
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
         // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
         // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
@@ -1685,11 +1690,18 @@ namespace
                 LOG("AutoAttack: stepping back on: {} of {} health and no potion ({} of 3)", health, maximum, g_retreatExtended);
                 tooLong = false;
             }
-            else if (recovered || !noPotions || !anyNear || tooLong)
+            else if ((recovered && !g_retreatDoomed) || (!noPotions && !g_retreatDoomed) || !anyNear || tooLong)
             {
                 g_retreatExtended = 0;
             }
-            if (recovered || !noPotions || !anyNear || tooLong)
+            if (g_retreatDoomed && !doomed && !tooLong && anyNear)
+            {
+                LOG("AutoAttack: stepping back over (the fight no longer foreseen hopeless)");
+                g_retreatUntil = 0;
+                g_retreatDoomed = false;
+                return false;
+            }
+            if ((recovered && !g_retreatDoomed) || (!noPotions && !g_retreatDoomed) || !anyNear || tooLong)
             {
                 LOG("AutoAttack: stepping back over ({})", recovered    ? "health back up"
                                                            : !noPotions ? "a potion turned up"
@@ -1703,7 +1715,7 @@ namespace
                 return false;
             }
         }
-        else if (!c.retreat || !low || !noPotions || !close ||
+        else if (!c.retreat || (!low && !doomed) || (!noPotions && !doomed) || !close ||
                  (g_noRetreatUntil && static_cast<int>(now - g_noRetreatUntil) < 0))
         {
             return false;
@@ -1713,13 +1725,19 @@ namespace
             g_retreatUntil = now + kRetreatMaxMs;
             g_retreatWalkAt = 0;
             g_retreatExtended = 0;
+            g_retreatDoomed = doomed && !(low && noPotions);
+            if (g_retreatDoomed)
+            {
+                LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health",
+                    fc.foes, fc.win * 100.0f, health, maximum);
+            }
             setIntent(Intent::Recover, "low on health, no healing potion or a fight foreseen lost: stepping back");
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
                 close);
             // Down below a quarter by them: those close are not gone back to for 3 min, fought only if they come
             // into the melee (the analyst, 2026-11-10: an Orc Warrior of level 5 brought the Seraphim to 5-15 of 158
             // five times in 8 min, the hero healed and went back to it each time).
-            if (health * 4 < maximum)
+            if (health * 4 < maximum || g_retreatDoomed)
             {
                 for (int i = 0; i < count; ++i)
                 {
