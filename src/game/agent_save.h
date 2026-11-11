@@ -15,6 +15,9 @@ namespace AgentSave
     // A level gained (the player, 2026-11-11: «sí, al subir»; each restart lost the levels gained since the last
     // quest): a save is due too, on the same terms.
     void levelUp();
+    // A quest failed (the player, 2026-11-11: «prohíbe al agente fracasar misiones, el fracaso cuenta como muerte»):
+    // as a death, counted toward the 10 and the last save loaded.
+    void questFailed();
     // In the start menu: the copy's saved game loaded straight from there, as the menu's Load does (Manolito, block S
     // 2b); false with none (a new game then). Asked once a start.
     bool loadFromMenu();

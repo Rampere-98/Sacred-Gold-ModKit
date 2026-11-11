@@ -1,4 +1,6 @@
 #include "game/agent_save.h"
+
+#include <atomic>
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/frame_hooks.h"
@@ -225,6 +227,16 @@ void AgentSave::questDone()
     g_saveWanted = true;
 }
 
+namespace
+{
+    std::atomic<bool> g_failedQuest{false};
+}
+
+void AgentSave::questFailed()
+{
+    g_failedQuest = true;
+}
+
 void AgentSave::levelUp()
 {
     LOG("AgentSave: a level gained: a save is due");
@@ -386,9 +398,15 @@ void AgentSave::onFrame()
         g_lastHealth = hero->health;
         return;
     }
-    // Died: its last save loaded (the player: «los que mueren tienen que cargar la partida anterior»).
+    // Died: its last save loaded (the player: «los que mueren tienen que cargar la partida anterior»). A quest failed
+    // is a death too (the player, 2026-11-11).
     const int32_t health = hero->health;
-    const bool died = health <= 0 && g_lastHealth > 0;
+    const bool failedQuest = g_failedQuest.exchange(false);
+    const bool died = (health <= 0 && g_lastHealth > 0) || failedQuest;
+    if (failedQuest)
+    {
+        LOG("AgentSave: a quest failed: counted as a death");
+    }
     g_lastHealth = health;
     if (died)
     {

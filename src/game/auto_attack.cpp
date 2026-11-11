@@ -2964,6 +2964,9 @@ namespace
             // A step done or failed (the journal moved on): who was spoken to lately may have the next one at once.
             // Seen live (2026-11-09): the arena won, Julius' next quest waited out the 2 min of «spoken to lately»
             // with the hero roaming the yard.
+            static bool s_journalRead = false;  // this run read the journal before (a failure is a change since)
+            const bool readBefore = s_journalRead;
+            s_journalRead = true;
             if ((done != g_questsDone || failed != g_questsFailed) && (g_questsDone || g_questsFailed || done || failed))
             {
                 LOG("AutoAttack: the journal moved on ({} done, {} failed): anyone may be spoken to again", done, failed);
@@ -2973,11 +2976,24 @@ namespace
                 {
                     AgentSave::questDone();
                 }
+                // A quest failed: a death (the player, 2026-11-11: «el fracaso cuenta como muerte»). Only one more
+                // than this run read before, not the first read of a run nor right after a load.
+                if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging())
+                {
+                    LOG("AutoAttack: a quest failed ({} failed now): as a death, the last save loaded", failed);
+                    remember("falló una misión: cuenta como muerte");
+                    AgentSave::questFailed();
+                }
                 Findings::note("quest", heroX, heroY, "the journal moved on: {} done, {} failed", done, failed);
                 forgetTalks();
             }
+            // When a quest was last done: set at each read of the journal it was every few seconds, so neither the
+            // stuck report (AgentStuck: «no quest done») nor the 8 min with no fight nor quest ever came.
+            if (done > g_questsDone && readBefore)
+            {
+                g_questsDoneAt = GetTickCount();
+            }
             g_questsDone = done;
-            g_questsDoneAt = GetTickCount();
             g_questsFailed = failed;
         }
         for (const Sign& sign : g_signs)
@@ -4583,10 +4599,19 @@ namespace
                                                 heroLevel));
             return true;
         };
+        // A quest with its time running: never failed for a detour (the player, 2026-11-11: «prohíbe al agente
+        // fracasar misiones, el fracaso cuenta como muerte»): no farming pause, no «farming first» for its ground.
+        const bool deadline = std::any_of(g_questBook.begin(), g_questBook.end(),
+                                          [](const QuestGoal& g) { return g.minutesLeft > 0; });
+        if (deadline && g_questPauseUntil)
+        {
+            g_questPauseUntil = 0;
+            LOG("AutoAttack: a quest's time is running: the farming pause dropped");
+        }
         // Neither a fight nor a quest done in 8 min while seeing to quests (the analyst, 2026-11-11: A5 «looking around»
         // its goals with 16 under way, 3 fights in 19 min, 8 of 9 half hours under 1600 experience): farming 10 min
         // first, a player gains levels before going on.
-        if (g_intent == Intent::Quest && g_farmKnown && Config::autoAttack.farm && g_lastTargetAt &&
+        if (!deadline && g_intent == Intent::Quest && g_farmKnown && Config::autoAttack.farm && g_lastTargetAt &&
             now - g_lastTargetAt > 480000 && (!g_questsDoneAt || now - g_questsDoneAt > 480000) &&
             (!g_questPauseUntil || static_cast<int>(now - g_questPauseUntil) >= 0))
         {
@@ -4596,7 +4621,7 @@ namespace
         if (Config::autoAttack.quests && !(g_questPauseUntil && static_cast<int>(now - g_questPauseUntil) < 0) &&
             questTarget(self->x, self->y, qx, qy, qr, who) &&
             (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize) &&
-            !(Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
+            !(!deadline && Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
         {
             questHere = true;
             setIntent(Intent::Quest, who && who != 0xFFFFFFFFu ? "a quest creature to speak to" : "a quest's goal");
