@@ -1858,6 +1858,16 @@ namespace
     };
     DodgeLearn g_dodge;
 
+    // Who shot at the hero lately, by its object index (an arrow's shooter at +0x208): the player, 2026-11-11: «el
+    // agente ignora a los que le atacan de lejos, y son los que más molestan» (their aim is not always read).
+    std::unordered_map<uint32_t, DWORD> g_shotBy;
+
+    bool shotAtHero(uint32_t id, DWORD now)
+    {
+        const auto it = g_shotBy.find(id & 0xFFFF);
+        return it != g_shotBy.end() && now - it->second < 8000;
+    }
+
     void noteArrowHits(DWORD now, const cCreature* self, const uint8_t* const* table, size_t entries)
     {
         struct Seen
@@ -1918,6 +1928,10 @@ namespace
             if (t > -1.0 * kTileSize && t < 25.0 * kTileSize && std::hypot(wx - t * dx, wy - t * dy) < 1.5 * kTileSize)
             {
                 s_coming[static_cast<uint32_t>(i)] = {std::abs(t) / kTileSize, now};
+                if (const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208) & 0xFFFF)
+                {
+                    g_shotBy[shooter] = now;
+                }
             }
         }
     }
@@ -1932,15 +1946,6 @@ namespace
         if (g_retreatUntil || CombatState::casting(self))
         {
             return false;
-        }
-        if (const auto m = *reinterpret_cast<const uint8_t* const*>(0xAD5C40))
-        {
-            const auto tb = *reinterpret_cast<const uint8_t* const* const*>(m + 4);
-            const auto te = *reinterpret_cast<const uint8_t* const* const*>(m + 8);
-            if (tb && te > tb && te - tb < 0x40000)
-            {
-                noteArrowHits(now, self, tb, static_cast<size_t>(te - tb));
-            }
         }
         if (now - s_at < g_dodge.wait)
         {
@@ -2234,7 +2239,8 @@ namespace
             const uint32_t aim = foeObject ? aimOf(objects, foeObject) : 0;
             // Striking or aiming at the hero, or with aggro on it (coming, a blow or two off): a threat either way.
             const bool aggro = aggroOnHero(foeObject, heroId, selfId);
-            const bool atHero = (aim && (aim == heroId || aim == selfId)) || aggro;
+            const bool shooting = shotAtHero(f.id, GetTickCount());     // its arrows at the hero lately
+            const bool atHero = (aim && (aim == heroId || aim == selfId)) || aggro || shooting;
             aggroCount += aggro ? 1 : 0;
             const bool atHireling = aim && !atHero && isHireling(aim);
             const bool engagedFoe = g_playerTargets.count(f.id) || atHero || atHireling;
@@ -2302,6 +2308,12 @@ namespace
             if (farLooks >= 3 && !inMelee)
             {
                 cost *= 0.6f;       // shooting at the hero from afar, nobody in the melee: go for it
+            }
+            if (shooting && d > melee)
+            {
+                // Its arrows seen at the hero: the shooter before those about, unless one in the melee hits hard
+                // (the strong-foe pull below); a player goes for the archer that keeps hitting.
+                cost *= inMelee ? 0.5f : 0.35f;
             }
             // The threat first: who strikes the hero (the strong ones before the weak), then who strikes the
             // hireling (it dies fast alone); a weak one standing by waits.
@@ -2549,6 +2561,17 @@ namespace
         situation.count = count;
         situation.hx = hx;
         situation.hy = hy;
+        // The arrows seen every frame, through arts and retreats too (who shoots, and the hits for the dodge's
+        // learning), the dodge itself only when free.
+        if (const auto m = *reinterpret_cast<const uint8_t* const*>(0xAD5C40))
+        {
+            const auto tb = *reinterpret_cast<const uint8_t* const* const*>(m + 4);
+            const auto te = *reinterpret_cast<const uint8_t* const* const*>(m + 8);
+            if (tb && te > tb && te - tb < 0x40000)
+            {
+                noteArrowHits(now, self, tb, static_cast<size_t>(te - tb));
+            }
+        }
         // Low on health with no potion: step back instead (unless an art is under way); no arts meanwhile.
         if (!Tactics::busy(now) && retreat(now, self, health, maximum, foes, count, hx, hy, range, objects))
         {
