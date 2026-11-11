@@ -6071,6 +6071,100 @@ bool AutoAttack::on()
     return g_on;
 }
 
+// Fighting at the weapon's distance (the player, 2026-11-11: «las armas con mayor distancia de rango son para atacar
+// desde lo más lejos posible, y las de cuerpo a cuerpo son más eficientes en distancias cortas»; «no he visto el combate
+// a distancia»). With a bow, crossbow, throwing weapon or gun an enemy that comes within 3 tiles gets a step back, to
+// about 6 tiles off, away from where the enemies stand, as a good player keeps his distance and shoots again. Not when
+// shut in, not more than 4 steps in 30 s (cornered, it fights where it stands), and never with low health on a dead end.
+// Melee weapons (and the staff or spear, whose reach the game's own walk-up already strikes from) close in as before.
+// True: a step back went out (no attack order this time).
+static bool keepDistance(DWORD now, uint32_t id)
+{
+    static DWORD s_stepUntil = 0;
+    static DWORD s_steps[4] = {};
+    static int s_next = 0;
+    if (s_stepUntil && static_cast<int>(now - s_stepUntil) < 0)
+    {
+        return true;    // the step under way: let it be walked
+    }
+    const HeroProfile::Data hero = HeroProfile::current();
+    if (!hero.valid || !hero.ranged || hero.mounted || Whereabouts::area().shutIn)
+    {
+        return false;
+    }
+    cObjectManager* objects = cObjectManager::instance();
+    cEngine* engine = FrameHooks::engine();
+    cCreature* self = objects && engine ? objects->creature(engine->controlled) : nullptr;
+    if (!self)
+    {
+        return false;
+    }
+    // The enemies near, by the world: the nearest and where they stand together.
+    AimAssist::Foe foes[16];
+    const int count = AimAssist::enemies(static_cast<float>(Config::autoAttack.range), foes, 16);
+    double nearest = 1e9, cx = 0, cy = 0, weight = 0;
+    for (int i = 0; i < count; ++i)
+    {
+        const cObject* o = objects->object(foes[i].id);
+        if (!o)
+        {
+            continue;
+        }
+        const double dx = o->x - static_cast<double>(self->x), dy = o->y - static_cast<double>(self->y);
+        const double d = std::hypot(dx, dy) / kTileSize;
+        nearest = std::min(nearest, d);
+        if (d < 6.0)
+        {
+            const double w = 1.0 / std::max(d, 0.5);
+            cx += dx * w;
+            cy += dy * w;
+            weight += w;
+        }
+    }
+    if (nearest >= 3.0 || weight <= 0)
+    {
+        return false;
+    }
+    int recent = 0;
+    for (DWORD at : s_steps)
+    {
+        recent += at && now - at < 30000;
+    }
+    if (recent >= 4)
+    {
+        return false;
+    }
+    // Away from them, turned aside up to 90 degrees when that way is a wall or a fence.
+    const double away = std::atan2(-cy, -cx);
+    const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+    for (double turn : {0.0, 0.5, -0.5, 1.0, -1.0, 1.57, -1.57})
+    {
+        const double a = away + turn;
+        const double tx = self->x / kTileSize + std::cos(a) * 4.0, ty = self->y / kTileSize + std::sin(a) * 4.0;
+        bool clear = true;
+        for (int k = 1; k <= 8 && clear; ++k)
+        {
+            clear = ClickWalk::walkable(layer, static_cast<int>(self->x / kTileSize + std::cos(a) * k * 0.5),
+                                        static_cast<int>(self->y / kTileSize + std::sin(a) * k * 0.5)) != 0;
+        }
+        if (!clear || Whereabouts::reachable(static_cast<int>(tx), static_cast<int>(ty)) == 0)
+        {
+            continue;
+        }
+        g_walkX = static_cast<int32_t>(tx * kTileSize);
+        g_walkY = static_cast<int32_t>(ty * kTileSize);
+        sendWalk();
+        s_steps[s_next] = now;
+        s_next = (s_next + 1) % 4;
+        s_stepUntil = now + 700 + jitter(0, 250);
+        LOG("AutoAttack: keeping the distance (weapon kind {}): an enemy {:.1f} tiles off, a step back to {:.0f},{:.0f}, "
+            "then {:x} again",
+            hero.weaponKind, nearest, tx, ty, id);
+        return true;
+    }
+    return false;
+}
+
 void AutoAttack::onFrame()
 {
     Teleports::onFrame();
@@ -6473,6 +6567,10 @@ void AutoAttack::onFrame()
         {
             s_slotAt = now;
         }
+    }
+    if (!g_looting && keepDistance(now, id))
+    {
+        return;
     }
     if (attack(id))
     {
