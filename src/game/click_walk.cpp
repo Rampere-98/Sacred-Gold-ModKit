@@ -1,4 +1,5 @@
 #include "game/click_walk.h"
+#include "game/agent_save.h"
 #include "config/debug.h"
 #include "game/frame_hooks.h"
 #include "game/map_memory.h"
@@ -825,6 +826,11 @@ bool ClickWalk::walking()
 
 int ClickWalk::walkable(int layer, int tx, int ty)
 {
+    // Not the live sectors while a game loads: the world files only.
+    if (AgentSave::worldChanging())
+    {
+        return WorldTiles::walkable(layer, tx, ty);
+    }
     cMapData* map = WideSectors::map();
     const Sector* center = WideSectors::at(WideSectors::kCount / 2);
     if (!g_walkable || !WideSectors::active() || !map || !center)

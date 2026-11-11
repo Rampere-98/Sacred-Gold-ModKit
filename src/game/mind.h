@@ -26,14 +26,16 @@ namespace Mind
     {
         using C = HeroProfile::Class;
         //                                   quest farm retr lost dry  win    pots mounted off
-        static constexpr Values kSeraphim  {2,    2,   30,  60,  85,  0.5f,  6,   true,   3.0f};
-        static constexpr Values kGladiator {3,    3,   25,  60,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kMage      {1,    1,   35,  70,  90,  0.6f,  5,   true,   3.0f};
-        static constexpr Values kWoodElf   {2,    2,   35,  70,  90,  0.6f,  6,   true,   3.0f};
-        static constexpr Values kDarkElf   {2,    2,   30,  60,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kVampiress {2,    2,   30,  65,  85,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kDwarf     {3,    3,   25,  55,  80,  0.5f,  8,   false, 12.0f};
-        static constexpr Values kDaemon    {3,    3,   25,  60,  85,  0.5f,  8,   false, 12.0f};
+        // Farming zones a level nearer the hero's (the live verifier, 2026-11-11: the Seraphim, level 2-3, sent to
+        // zones of 4-7 three times and dead there three times).
+        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   3.0f};
+        static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   false, 12.0f};
+        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   3.0f};
+        static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   3.0f};
+        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   false, 12.0f};
+        static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   false, 12.0f};
+        static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   false, 12.0f};
+        static constexpr Values kDaemon    {3,    2,   25,  60,  85,  0.5f,  8,   false, 12.0f};
         static constexpr Values kUnknown   {2,    2,   25,  60,  85,  0.5f,  5,   false, 12.0f};
         switch (cls)
         {

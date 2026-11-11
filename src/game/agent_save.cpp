@@ -186,6 +186,16 @@ namespace
     }
 }
 
+bool AgentSave::worldChanging()
+{
+    cEngine* engine = FrameHooks::engine();
+    if (engine && (engine->flags & cEngine::loading))
+    {
+        return true;
+    }
+    return g_sub == 1 && g_actionAt && GetTickCount() - g_actionAt < 30000;
+}
+
 bool AgentSave::newGameFromMenu(int gameClass)
 {
     // The two functions where block S 10 has them, else the clicks as before.

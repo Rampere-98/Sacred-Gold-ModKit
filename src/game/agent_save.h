@@ -16,4 +16,8 @@ namespace AgentSave
     // In the start menu: a new campaign game with the class `gameClass` (the game's numbers: 1 Seraphim .. 9 Daemon) on
     // Bronze, begun as the hero selection's Start does (Manolito, block S 10), with no clicks; false if it cannot.
     bool newGameFromMenu(int gameClass);
+    // A load asked for lately (30 s) or under way: the world's sectors are being torn down and rebuilt, nothing of them
+    // to be read from other threads (the live verifier, 2026-11-11: two crashes in ClickWalk::walkable right after a
+    // load).
+    bool worldChanging();
 }
