@@ -1347,6 +1347,53 @@ namespace
         // stack holds nothing to free.
     }
 
+    // The horseshoe's call (Manolito, block Y, 2026-11-11; the player: «el caballo se puede llamar siempre que él
+    // quiera que automáticamente él se acerca a ti»): a cEvent 0x116 to the hero's vt[6], +0x10 the horse's id, as the
+    // horseshoe's left click sends with the horse far. The hero's handler (0x530D68) uses hero +0x570 and does nothing
+    // underground, in an interior or with the horse dead; the horse walks up (or is set beside its owner).
+    void sendCall(void*)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!hero || !g_rideHorse)     // the horse may lie beyond the loaded ground: the handler goes by hero +0x570
+        {
+            return;
+        }
+        alignas(8) uint8_t ev[0x44] = {};
+        *reinterpret_cast<uintptr_t*>(ev) = 0x89095C;
+        *reinterpret_cast<uint32_t*>(ev + 4) = 0x116;
+        *reinterpret_cast<uint32_t*>(ev + 0x10) = g_rideHorse;
+        using Handle = void(__fastcall*)(void* self, void*, void* ev);
+        const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
+        reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
+    }
+
+    // The call, at most every 30 s, only where the game's handler is where block Y has it.
+    void callHorse(DWORD now, uint32_t horse, double tiles)
+    {
+        static DWORD s_calledAt = 0;
+        static const bool s_known = [] {
+            static constexpr uint8_t kSig[] = {0x83, 0xBD, 0x70, 0x05, 0x00, 0x00, 0x10, 0x0F};
+            return std::memcmp(reinterpret_cast<const void*>(0x530D68), kSig, sizeof(kSig)) == 0;
+        }();
+        if (!s_known || (s_calledAt && now - s_calledAt < 30000))
+        {
+            return;
+        }
+        s_calledAt = now;
+        if (tiles > 0)
+        {
+            LOG("AutoAttack: horse {:x} {:.0f} tiles off: called (the horseshoe)", horse, tiles);
+        }
+        else
+        {
+            LOG("AutoAttack: horse {:x} beyond the loaded ground: called (the horseshoe)", horse);
+        }
+        remember("llama al caballo");
+        g_rideHorse = horse;
+        Inject::call(&sendCall, nullptr);
+    }
+
     void ride(DWORD now, const cCreature* self)
     {
         static DWORD s_at = 0;
@@ -1456,6 +1503,20 @@ namespace
         cObjectManager* om = cObjectManager::instance();
         const cCreature* steed = om ? om->creature(horse) : nullptr;
         // Not while stepping back from a fight (the code reviewer: a walk to the horse must not undo a retreat).
+        if (!steed && !g_retreatUntil && (ClickWalk::routing() || g_questTravel) && now - s_at > 8000)
+        {
+            // Left so far behind that it is not on the loaded ground: called all the same, on a long walk with no
+            // enemy within 15 tiles.
+            bool calm = true;
+            for (const AggroFoe& f : g_aggroFoes)
+            {
+                calm = calm && std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) > 15.0 * kTileSize;
+            }
+            if (calm)
+            {
+                callHorse(now, horse, 0.0);
+            }
+        }
         if (!steed || g_retreatUntil)
         {
             s_approachSince = 0;
@@ -1525,7 +1586,10 @@ namespace
                 // fight, the player: «no está teniendo mucha eficiencia»).
                 if (off > 10.0 * kTileSize)
                 {
-                    s_at = now;     // left far behind: no detour back for it now
+                    // Far: called as the horseshoe calls it (on the surface, the hero's handler checks the rest), and
+                    // mounted once it has come up; never walked back for.
+                    callHorse(now, horse, off / kTileSize);
+                    s_at = now;     // not walked back to: it comes
                     s_approachSince = 0;
                     return;
                 }
