@@ -4799,14 +4799,22 @@ namespace
             }
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
             // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.
-            const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
             // A creature to speak to that is not loaded yet: its spot is gone to (3 tiles), not the zone's edge (the
             // stuck solver, 2026-11-11: «hablar con X» goals ringed at 29-35 tiles from the journal's centre, 1450 of
             // 1586 «going to look», the creature at 3091,2783 never spoken to by any copy). Once loaded, the talk below.
+            // Loaded within 60 tiles, the creature itself is the goal (the stuck solver's check at 21:15: 90 % of «going
+            // to look» still in the 29-35 tile ring, the creatures loaded, so the zone's edge counted as there).
             const bool speakTo = who && who != 0xFFFFFFFFu;
-            const bool speakerFar = speakTo && !(objects && objects->object(who));
-            const bool zone = qr >= 8.0 * kTileSize && !speakerFar;
-            if (qd > (zone ? qr + 10.0 * kTileSize : speakerFar ? std::min(qr, 3.0 * kTileSize) : qr))
+            const cObject* speaker = speakTo && objects ? objects->object(who) : nullptr;
+            if (speaker && std::max(std::abs(static_cast<double>(speaker->x - self->x)),
+                                    std::abs(static_cast<double>(speaker->y - self->y))) < 60.0 * kTileSize)
+            {
+                qx = speaker->x;
+                qy = speaker->y;
+            }
+            const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
+            const bool zone = qr >= 8.0 * kTileSize && !speakTo;
+            if (qd > (zone ? qr + 10.0 * kTileSize : speakTo ? std::min(qr, 3.0 * kTileSize) : qr))
             {
                 g_questTravel = true;
                 if (qx != g_questX || qy != g_questY)
@@ -5132,8 +5140,24 @@ namespace
             const auto fails = g_talkFails.find(who);
             const int failed = fails != g_talkFails.end() ? fails->second : 0;
             const DWORD again = failed >= 4 ? 0xFFFFFFFFu : kTalkAgainMs << (2 * std::max(failed - 1, 0));
-            if (talkable(npc) && !isHireling(who) && failed < 4 &&
-                (talked == g_talkedAt.end() || now - talked->second > again))
+            const bool talkNow = talkable(npc) && !isHireling(who) && failed < 4 &&
+                                 (talked == g_talkedAt.end() || now - talked->second > again);
+            if (speakTo && !talkNow)
+            {
+                // What keeps the talk off, once per creature (the stuck solver: it failed with no word).
+                static uint32_t s_whyId = 0;
+                if (s_whyId != who)
+                {
+                    s_whyId = who;
+                    LOG("AutoAttack: quest creature {:x} not spoken to: loaded {}, talkable {}, hireling {}, failed {}, "
+                        "spoken {} s ago, {:.0f} tiles off",
+                        who, npc != nullptr, talkable(npc), isHireling(who), failed,
+                        talked == g_talkedAt.end() ? -1 : static_cast<int>((now - talked->second) / 1000),
+                        npc ? std::max(std::abs(static_cast<double>(npc->x - self->x)),
+                                       std::abs(static_cast<double>(npc->y - self->y))) / kTileSize : -1.0);
+                }
+            }
+            if (talkNow)
             {
                 if (who != g_talkId)
                 {
