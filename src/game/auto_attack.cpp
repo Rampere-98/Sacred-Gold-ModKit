@@ -4812,9 +4812,24 @@ namespace
                 qx = speaker->x;
                 qy = speaker->y;
             }
+            // A fixed goal is gone to at the standable tile nearest it, not its centre (the stuck solver, 2026-11-11:
+            // 3174,2794 lies inside a house's solid block, its yard 3 tiles off; walks to the blocked centre stopped
+            // 32-38 tiles out, A7 and A8 for hours), and reached within 2 tiles of it. The zone's wide edge only shut
+            // in (the arena behind its gate).
+            bool fixedGoal = false;
+            if (!speakTo && !Whereabouts::area().shutIn)
+            {
+                int nx = 0, ny = 0;
+                if (Whereabouts::nearestReachable(static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize), nx, ny))
+                {
+                    qx = static_cast<int32_t>((nx + 0.5) * kTileSize);
+                    qy = static_cast<int32_t>((ny + 0.5) * kTileSize);
+                    fixedGoal = true;
+                }
+            }
             const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
-            const bool zone = qr >= 8.0 * kTileSize && !speakTo;
-            if (qd > (zone ? qr + 10.0 * kTileSize : speakTo ? std::min(qr, 3.0 * kTileSize) : qr))
+            const bool zone = qr >= 8.0 * kTileSize && !speakTo && !fixedGoal;
+            if (qd > (zone ? qr + 10.0 * kTileSize : speakTo || fixedGoal ? std::min(qr, (speakTo ? 3.0 : 2.0) * kTileSize) : qr))
             {
                 g_questTravel = true;
                 if (qx != g_questX || qy != g_questY)
