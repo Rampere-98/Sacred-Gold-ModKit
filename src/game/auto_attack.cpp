@@ -4,6 +4,7 @@
 #include "game/combat_learn.h"
 #include "game/gear.h"
 #include "game/auto_start.h"
+#include "game/agent_save.h"
 #include "game/teleports.h"
 #include "game/agent_overlay.h"
 #include "game/hero_build.h"
@@ -2711,6 +2712,12 @@ namespace
             if ((done != g_questsDone || failed != g_questsFailed) && (g_questsDone || g_questsFailed || done || failed))
             {
                 LOG("AutoAttack: the journal moved on ({} done, {} failed): anyone may be spoken to again", done, failed);
+                // A quest done (the count up, not the reset of a new game): the copy's game saved (the player,
+                // 2026-11-11: «el momento de guardar partida tiene que ser en el momento que se supera una mision»).
+                if (done == g_questsDone + 1)   // one more; a jump is the journal first read after a load
+                {
+                    AgentSave::questDone();
+                }
                 Findings::note("quest", heroX, heroY, "the journal moved on: {} done, {} failed", done, failed);
                 forgetTalks();
             }
@@ -5770,6 +5777,7 @@ void AutoAttack::onFrame()
     const bool focused = Focus::foreground();
     const bool foreground = focused || Config::autoAttack.background;
     AutoStart::onFrame();
+    AgentSave::onFrame();
     checkNewGame();
 
     // The toggle key, on its press and only while the game has the focus.
