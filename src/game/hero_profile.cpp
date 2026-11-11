@@ -123,12 +123,24 @@ void HeroProfile::onFrame()
     {
         return;
     }
+    // The game's difficulty and campaign (the player, 2026-11-11: «que el medidor también mida el nivel de dificultad
+    // … bronce, plata…» and «la campaña en la que se encuentran»): u32 [0x182EE44] 0 Bronze .. 4 Niobium, u16
+    // [0x182EE48] 0 Sacred, 1 Underworld (AGENT_ADDRESSES, points 6 and the main menu's dispatch).
+    static constexpr const char* kDifficulty[] = {"Bronce", "Plata", "Oro", "Platino", "Niobio"};
+    const uint32_t difficulty = *reinterpret_cast<const uint32_t*>(0x182EE44);
+    const uint16_t campaign = *reinterpret_cast<const uint16_t*>(0x182EE48);
+    static uint32_t s_difficulty = 0xFFFFFFFF;
+    static uint16_t s_campaign = 0xFFFF;
     if (d.heroId != g_last.heroId || d.cls != g_last.cls || d.level != g_last.level ||
-        d.weaponKind != g_last.weaponKind || d.mounted != g_last.mounted)
+        d.weaponKind != g_last.weaponKind || d.mounted != g_last.mounted || difficulty != s_difficulty ||
+        campaign != s_campaign)
     {
-        LOG("HeroProfile: {} (class {}), level {}, health {} of {}, weapon kind {} ({}){}", className(d.cls),
-            static_cast<uint32_t>(d.cls), d.level, d.health, d.maxHealth, d.weaponKind,
-            d.ranged ? "a distancia" : "cuerpo a cuerpo", d.mounted ? ", mounted" : "");
+        s_difficulty = difficulty;
+        s_campaign = campaign;
+        LOG("HeroProfile: {} (class {}), level {}, health {} of {}, weapon kind {} ({}){} | dificultad {} | campaña {}",
+            className(d.cls), static_cast<uint32_t>(d.cls), d.level, d.health, d.maxHealth, d.weaponKind,
+            d.ranged ? "a distancia" : "cuerpo a cuerpo", d.mounted ? ", mounted" : "",
+            difficulty < 5 ? kDifficulty[difficulty] : "?", campaign == 1 ? "Underworld" : campaign == 0 ? "Sacred" : "?");
     }
     g_last = d;
 }
