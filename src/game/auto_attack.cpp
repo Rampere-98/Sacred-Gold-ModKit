@@ -1542,8 +1542,10 @@ namespace
             s_approachSince = 0;
             return;
         }
-        // A few units of slack: rider and horse may be read between their two updates (the code reviewer).
-        const bool mounted = std::abs(steed->x - self->x) <= 3 && std::abs(steed->y - self->y) <= 3;
+        // The hero's own mount field (+0x1EC, the horse's id while riding; HeroProfile and AgentSave read it), not the
+        // horse standing where the hero does: just off, the horse stays on the hero's spot, and the off event sent
+        // again each 1.5 s put the hero back up (A6 2026-11-12 00:08-00:27, 30 «getting off» in a row, standing still).
+        const bool mounted = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC) != 0;
         // Ride events sent with the hero still on foot after them (no riding skill?): after 3, a long rest.
         static int s_unmounted = 0;
         if (mounted)
