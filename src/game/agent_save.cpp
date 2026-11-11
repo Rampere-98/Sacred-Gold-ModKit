@@ -147,6 +147,71 @@ void AgentSave::questDone()
     g_saveWanted = true;
 }
 
+namespace
+{
+    int g_newClass = 0;
+
+    // On the window's thread: what the hero selection's Start does for a new hero (0x70D6E0's branch 0x70DA2D).
+    void beginNewGame(void*)
+    {
+        uint8_t* setup = *reinterpret_cast<uint8_t**>(0x182EBE8);
+        const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xCDCA1C);
+        HWND window = holder ? *reinterpret_cast<HWND*>(holder + 0xB0) : nullptr;
+        if (!setup || !window || *reinterpret_cast<const uintptr_t*>(0xAD6EF8))
+        {
+            LOG("AgentSave: a new game cannot begin from here (no setup, no window, or a game on)");
+            return;
+        }
+        reinterpret_cast<void(__fastcall*)(void*, void*, int)>(0x7D8550)(setup, nullptr, g_newClass);
+        *reinterpret_cast<uint32_t*>(setup + 0x14) = 1;
+        *reinterpret_cast<uint32_t*>(0x182EE44) = 0;        // Bronze, the selection's own first choice
+        *reinterpret_cast<uint8_t*>(0x182EE50) = 0;
+        *reinterpret_cast<uint8_t*>(0x182EE51) = 0;
+        if (uint8_t* flag = reinterpret_cast<uint8_t*(__cdecl*)()>(0x417E70)())
+        {
+            *flag = 1;
+        }
+        *(setup + 0x381D) = 0;
+        alignas(8) static uint8_t ev[0x40];
+        std::memset(ev, 0, sizeof(ev));
+        *reinterpret_cast<uintptr_t*>(ev) = 0x890DD0;
+        *reinterpret_cast<uint32_t*>(ev + 4) = 0x28;
+        *reinterpret_cast<uint32_t*>(ev + 0xC) = static_cast<uint32_t>(g_newClass);
+        if (void* dispatcher = reinterpret_cast<void*(__cdecl*)()>(kDispatcher)())
+        {
+            reinterpret_cast<void(__fastcall*)(void*, void*, void*, int, int)>(kSend)(dispatcher, nullptr, ev, 1, 0);
+        }
+        PostMessageW(window, 0x8002, 0, 0);
+        LOG("AgentSave: a new game with class {} begun from the start menu", g_newClass);
+    }
+}
+
+bool AgentSave::newGameFromMenu(int gameClass)
+{
+    // The two functions where block S 10 has them, else the clicks as before.
+    static const uint8_t kStartSig[] = {0x64, 0xA1, 0x00, 0x00, 0x00, 0x00, 0x6A, 0xFF, 0x68};
+    static const uint8_t kClassSig[] = {0x8B, 0x44, 0x24, 0x04, 0x89, 0x41, 0x44, 0xC2, 0x04, 0x00};
+    if (std::memcmp(reinterpret_cast<const void*>(0x70D6E0), kStartSig, sizeof(kStartSig)) != 0 ||
+        std::memcmp(reinterpret_cast<const void*>(0x7D8550), kClassSig, sizeof(kClassSig)) != 0)
+    {
+        static bool told = false;
+        if (!told)
+        {
+            told = true;
+            LOG("AgentSave: the hero selection's functions are not where block S 10 has them: the menu's clicks");
+        }
+        return false;
+    }
+    if (*reinterpret_cast<const uint32_t*>(kNetwork) || *reinterpret_cast<const uintptr_t*>(0xAD6EF8) ||
+        !*reinterpret_cast<const uintptr_t*>(0x182EBE8) || gameClass < 1 || gameClass > 9)
+    {
+        return false;
+    }
+    g_newClass = gameClass;
+    Inject::call(&beginNewGame, nullptr);
+    return true;
+}
+
 bool AgentSave::loadFromMenu()
 {
     if (g_slot < 0)

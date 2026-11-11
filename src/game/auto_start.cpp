@@ -21,14 +21,15 @@ namespace
     {
         const char* name;
         int x, y;
+        int gameClass;      // the game's number for it (HeroProfile::Class)
     };
     constexpr Spot kClasses[] = {
-        {"Seraphim", 216, 383}, {"Gladiator", 96, 470},  {"Battle Mage", 731, 401}, {"Wood Elf", 623, 331},
-        {"Dark Elf", 810, 348}, {"Vampiress", 888, 488}, {"Dwarf", 522, 401},       {"Daemon", 373, 383},
+        {"Seraphim", 216, 383, 1}, {"Gladiator", 96, 470, 2},  {"Battle Mage", 731, 401, 3}, {"Wood Elf", 623, 331, 5},
+        {"Dark Elf", 810, 348, 4}, {"Vampiress", 888, 488, 6}, {"Dwarf", 522, 401, 8},       {"Daemon", 373, 383, 9},
     };
     constexpr int kClassCount = sizeof(kClasses) / sizeof(kClasses[0]);
-    constexpr Spot kCampaign = {"campaign", 510, 284};
-    constexpr Spot kStart = {"start", 606, 714};
+    constexpr Spot kCampaign = {"campaign", 510, 284, 0};
+    constexpr Spot kStart = {"start", 606, 714, 0};
 
     bool g_enabled = true;
     bool g_rotate = true;       // [AutoStart] Rotate=0: always the same class (one agent per class, each its own copy)
@@ -147,6 +148,14 @@ void AutoStart::onFrame()
         }
         LOG("AutoStart: {} s in the start menu: a new game with the {} (try {})", (now - g_menuSince) / 1000,
             kClasses[g_nextClass].name, g_tries);
+        // Straight from the menu, no clicks (the player: «saltar el proceso de usar el menú inicial»); the clicks
+        // only if that cannot be done.
+        if (AgentSave::newGameFromMenu(kClasses[g_nextClass].gameClass))
+        {
+            g_step = 3;
+            g_stepAt = now + 5000;
+            return;
+        }
         g_step = 0;
         g_stepAt = now;
     }

@@ -13,4 +13,7 @@ namespace AgentSave
     // In the start menu: the copy's saved game loaded straight from there, as the menu's Load does (Manolito, block S
     // 2b); false with none (a new game then). Asked once a start.
     bool loadFromMenu();
+    // In the start menu: a new campaign game with the class `gameClass` (the game's numbers: 1 Seraphim .. 9 Daemon) on
+    // Bronze, begun as the hero selection's Start does (Manolito, block S 10), with no clicks; false if it cannot.
+    bool newGameFromMenu(int gameClass);
 }
