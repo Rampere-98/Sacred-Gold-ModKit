@@ -552,8 +552,8 @@ void AgentSave::onFrame()
     // standing again without it. Off the horse first, then saved.
     // Nor half off it (Manolito, block AG: the riding bits and the control left on the horse with the hero on foot;
     // A6 saved so, 2026-11-12, and each load had the camera on the horse): AutoAttack mends that first.
-    const cEngine* engine = FrameHooks::engine();
-    if (engine && engine->controlled != hero->id &&
+    const cEngine* rideEngine = FrameHooks::engine();
+    if (rideEngine && rideEngine->controlled != hero->id &&
         !*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC))
     {
         return;

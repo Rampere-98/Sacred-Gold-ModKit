@@ -908,8 +908,21 @@ namespace
             return false;
         }
         cCreature* self = objects->creature(engine->controlled);
+        cCreature* rider = objects->hero();
+        // Riding: the hero's own mount field (Manolito AD/AG), not «controlled is not the hero» (half off counts so too).
+        const bool riding = rider && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(rider) + 0x1EC) != 0;
         if (self && isFixed(id))
         {
+            // A well, a hiding place: used on foot (the horse uses nothing; the reviewer, 2026-11-12).
+            if (riding)
+            {
+                footFor(15000);
+                return true;
+            }
+            if (rider)
+            {
+                self = rider;
+            }
             // As a click on it: the order 7 with its id and where it stands.
             int32_t x = 0, y = 0;
             if (!fixedPosition(id, x, y))
@@ -942,12 +955,18 @@ namespace
         }
         // Mounted, a click on a creature goes to the rider, not the mount (seen in the orders the world mouse
         // handler gives): the horse would only walk up to it.
-        if (cCreature* hero = objects->hero(); hero && hero != self && target->asCreature())
+        if (rider && rider != self && target->asCreature())
         {
-            self = hero;
+            self = rider;
         }
-        // Mounted, loot is taken as the A key takes it, without getting off (once a second at most).
-        else if (hero && hero != self && !target->asCreature())
+        // Mounted, loot on the ground is taken as the A key takes it, without getting off (once a second at most);
+        // a door, a chest or anything else is used on foot (the reviewer: the A key opens none of them).
+        else if (riding && !target->asCreature() && lootOf(target) != Loot::Item)
+        {
+            footFor(15000);
+            return true;
+        }
+        else if (riding && !target->asCreature())
         {
             static DWORD s_collectAt = 0;
             const DWORD now = GetTickCount();
@@ -1353,6 +1372,15 @@ namespace
         using Handle = void(__fastcall*)(void* self, void*, void* ev);
         const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
         reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
+        // The off event leaves the control on the horse (Manolito, block AG): given back in the same call, as the game's
+        // input handler does on the next mouse event, so no frame sees the hero half off.
+        if (g_rideCode == 0x20A)
+        {
+            if (cEngine* engine = FrameHooks::engine())
+            {
+                engine->controlled = hero->id;
+            }
+        }
         // Not destroyed with 0x416B30: its return is not documented (the code reviewer), and the zeroed event on the
         // stack holds nothing to free.
     }
@@ -1448,17 +1476,26 @@ namespace
         // Walking up to the horse: since when (0: not), and when last told to walk.
         static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
         uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
+        // A wild horse ridden unbound (+0x570 0): the one under the hero (+0x1EC), so it can be got off (the reviewer).
+        if (!horse)
+        {
+            horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC);
+        }
         // Half off (the camera on the horse, the hero on foot beside it): mended, once in 5 s at most.
         if (const cEngine* engine = FrameHooks::engine();
             engine && engine->controlled != self->id &&
             !*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC))
         {
             static DWORD s_mendAt = 0;
+            static int s_mends = 0;
             if (now - s_mendAt > 5000)
             {
                 s_mendAt = now;
-                LOG("AutoAttack: half off the horse (controlled {:x}, the hero {:x} on foot): control back to the hero",
-                    engine->controlled, self->id);
+                if (++s_mends <= 20)
+                {
+                    LOG("AutoAttack: half off the horse (controlled {:x}, the hero {:x} on foot): control back to the hero "
+                        "(try {})", engine->controlled, self->id, s_mends);
+                }
                 Inject::call(&mendHalfOff, nullptr);
             }
             return;
@@ -1615,12 +1652,19 @@ namespace
             close += std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) < 8.0 * kTileSize;
         }
         const bool hardOnFoot = close >= 3 && Config::tactics.arts && Tactics::artsBarredMounted() > 0;
+        // The Vampiress rides only in her knight's form (the player, 2026-11-12).
+        const bool vampire = Tactics::vampireForm(now);
         uint32_t code = 0;
         // Up again once the nearest enemy is 5 tiles off: the saddle is the better place to fight from (the player,
         // 2026-11-11), so only an enemy at hand puts the walk to the horse off.
-        if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && (s_approachSince || !gated))
+        if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && !vampire && (s_approachSince || !gated))
         {
             code = 0x209;
+        }
+        else if (mounted && vampire && now - s_at > 1500)
+        {
+            LOG("AutoAttack: the Vampiress in her vampire form: off the horse");
+            code = 0x20A;
         }
         else if (mounted && onFoot && now - s_at > 1500)
         {

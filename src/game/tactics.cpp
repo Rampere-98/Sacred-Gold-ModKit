@@ -1,4 +1,5 @@
 #include "game/tactics.h"
+#include "game/hero_profile.h"
 #include "game/agent_cursor.h"
 #include "game/gear.h"
 #include "config.h"
@@ -531,6 +532,13 @@ namespace
             return false;
         }
         cCreature* self = objects->creature(engine->controlled);
+        // Riding, the controlled creature is the horse (Manolito AD/AG): the art is the rider's, as a click on a
+        // creature goes to the rider (the world mouse handler's orders).
+        if (cCreature* hero = objects->hero();
+            hero && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0)
+        {
+            self = hero;
+        }
         cObject* at_ = target ? objects->object(target) : self;
         if (!self || !at_)
         {
@@ -822,23 +830,19 @@ namespace
         {
             return;
         }
-        // Mounted, the arts are not cast (seen: the order does nothing).
+        // Mounted, the arts go to the rider (sendArt); only those the game allows on horseback.
         cEngine* engine = FrameHooks::engine();
         cCreature* hero = heroCreature();
-        if (!engine || !hero || engine->controlled != hero->id)
+        const bool riding = hero && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0;
+        // Half off (the control left on the horse, the hero on foot): AutoAttack mends it first.
+        if (!engine || !hero || (engine->controlled != hero->id && !riding))
         {
             return;
         }
-        // Mounted by the horse's place (the player, 2026-11-10: «usa habilidades bloqueadas a caballo saltándose el
-        // bloqueo»: the slot keys go past the game's own check, and the controlled creature stays the hero). The
-        // horse (hero +0x570) stands where its rider does (seen live). Mounted, only the arts the game allows there.
-        bool mounted = false;
-        {
-            const uint32_t horseId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
-            cObjectManager* objects = cObjectManager::instance();
-            const cCreature* horse = horseId && objects ? objects->creature(horseId) : nullptr;
-            mounted = horse && std::abs(horse->x - hero->x) <= 3 && std::abs(horse->y - hero->y) <= 3;
-        }
+        // Mounted, only the arts the game allows there (the player, 2026-11-10: «usa habilidades bloqueadas a caballo
+        // saltándose el bloqueo»: the slot keys go past the game's own check). Mounted by the hero's mount field, not
+        // the horse on his spot (just off, it stays there; the reviewer, 2026-11-12).
+        const bool mounted = riding;
         const Config::Tactics& c = Config::tactics;
         const AimAssist::Foe* target = nullptr;
         int close = 0;
@@ -1582,6 +1586,21 @@ void Tactics::onFrame(DWORD now)
     default:
         return;
     }
+}
+
+bool Tactics::vampireForm(unsigned long now)
+{
+    const cCreature* hero = heroCreature();
+    if (!hero || HeroProfile::current().cls != HeroProfile::Class::Vampiress)
+    {
+        return false;
+    }
+    if (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10) == 7)
+    {
+        return true;
+    }
+    const auto it = g_learned.find(0x3FE);
+    return it != g_learned.end() && it->second.lastCast && now - it->second.lastCast < 180000;
 }
 
 int Tactics::artsBarredMounted()

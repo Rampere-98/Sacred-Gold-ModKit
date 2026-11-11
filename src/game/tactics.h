@@ -52,4 +52,9 @@ namespace Tactics
     // Arts in the hero's slots, learned, that the game does not let him cast on horseback (the player, 2026-11-11:
     // «no todas las habilidades pueden ser usadas a caballo»): a hard fight is fought on foot then.
     int artsBarredMounted();
+
+    // The Vampiress in her vampire form (the player, 2026-11-12: «al transformarse no debería montar a caballo, solo
+    // cuando no está transformada»): the creature type hero+0x10 7 (Manolito's guess, not seen live) or her turn
+    // (0x3FE) cast within the last 3 minutes (how long it lasts: not known yet).
+    bool vampireForm(unsigned long now);
 }
