@@ -238,67 +238,44 @@ namespace
 
 namespace
 {
-    // [Display] NoActivate: the window shown, moved and given the focus without ever taking the foreground.
-    using SetForegroundWindowFn = BOOL(WINAPI*)(HWND);
-    using SetActiveWindowFn = HWND(WINAPI*)(HWND);
-    using BringWindowToTopFn = BOOL(WINAPI*)(HWND);
-    using ShowWindowFn = BOOL(WINAPI*)(HWND, int);
-    using SetWindowPosFn = BOOL(WINAPI*)(HWND, HWND, int, int, int, int, UINT);
-    using SetFocusFn = HWND(WINAPI*)(HWND);
-    ShowWindowFn g_origShowWindow = nullptr;
-    SetWindowPosFn g_origSetWindowPos = nullptr;
-    SetFocusFn g_origSetFocus = nullptr;
+    // [Display] NoActivate (the agent copies): the window the player was in, given back the foreground once the
+    // game has taken it at its start (it waits for its activation there: kept from it, it hung, 2026-11-11), within
+    // its first 90 s; later a copy brought forward by the player stays in front.
+    HWND g_playerWindow = nullptr;
+    DWORD g_startedAt = 0;
+    bool g_givenBack = false;
 
-    BOOL WINAPI quietSetForegroundWindow(HWND)
+    bool ours(HWND window)
     {
-        return TRUE;
+        DWORD process = 0;
+        return window && GetWindowThreadProcessId(window, &process) && process == GetCurrentProcessId();
     }
 
-    HWND WINAPI quietSetActiveWindow(HWND)
+    void giveForegroundBack()
     {
-        return GetActiveWindow();
-    }
-
-    BOOL WINAPI quietBringWindowToTop(HWND)
-    {
-        return TRUE;
-    }
-
-    BOOL WINAPI quietShowWindow(HWND window, int command)
-    {
-        switch (command)
+        if (!Config::display.noActivate || g_givenBack)
         {
-        case SW_SHOWNORMAL:
-        case SW_SHOW:
-        case SW_SHOWDEFAULT:
-            command = SW_SHOWNOACTIVATE;
-            break;
-        case SW_SHOWMINIMIZED:
-            command = SW_SHOWMINNOACTIVE;
-            break;
-        case SW_RESTORE:
-        case SW_SHOWMAXIMIZED:
-            command = SW_SHOWNA;
-            break;
-        default:
-            break;
+            return;
         }
-        return g_origShowWindow(window, command);
-    }
-
-    BOOL WINAPI quietSetWindowPos(HWND window, HWND after, int x, int y, int cx, int cy, UINT flags)
-    {
-        if (after == HWND_TOPMOST || after == HWND_TOP)
+        const HWND foreground = GetForegroundWindow();
+        if (!ours(foreground))
         {
-            flags |= SWP_NOZORDER;
+            if (foreground)
+            {
+                g_playerWindow = foreground;    // where the player is now
+            }
+            return;
         }
-        return g_origSetWindowPos(window, after, x, y, cx, cy, flags | SWP_NOACTIVATE);
-    }
-
-    // Given only while one of the game's windows is in the foreground already: in the background it would activate.
-    HWND WINAPI quietSetFocus(HWND window)
-    {
-        return active() ? g_origSetFocus(window) : GetFocus();
+        if (GetTickCount() - g_startedAt > 90000)
+        {
+            g_givenBack = true;
+            return;
+        }
+        if (g_playerWindow && IsWindow(g_playerWindow) && SetForegroundWindow(g_playerWindow))
+        {
+            g_givenBack = true;
+            LOG("Focus: NoActivate: the foreground given back to the player's window");
+        }
     }
 }
 
@@ -318,26 +295,10 @@ void Focus::install()
     }
     if (Config::display.noActivate)
     {
-        Patch::iat("USER32.dll", "SetForegroundWindow", reinterpret_cast<void*>(&quietSetForegroundWindow));
-        Patch::iat("USER32.dll", "SetActiveWindow", reinterpret_cast<void*>(&quietSetActiveWindow));
-        Patch::iat("USER32.dll", "BringWindowToTop", reinterpret_cast<void*>(&quietBringWindowToTop));
-        g_origShowWindow = static_cast<ShowWindowFn>(Patch::iat("USER32.dll", "ShowWindow", reinterpret_cast<void*>(&quietShowWindow)));
-        if (!g_origShowWindow)
-        {
-            g_origShowWindow = &ShowWindow;
-        }
-        g_origSetWindowPos =
-            static_cast<SetWindowPosFn>(Patch::iat("USER32.dll", "SetWindowPos", reinterpret_cast<void*>(&quietSetWindowPos)));
-        if (!g_origSetWindowPos)
-        {
-            g_origSetWindowPos = &SetWindowPos;
-        }
-        g_origSetFocus = static_cast<SetFocusFn>(Patch::iat("USER32.dll", "SetFocus", reinterpret_cast<void*>(&quietSetFocus)));
-        if (!g_origSetFocus)
-        {
-            g_origSetFocus = &SetFocus;
-        }
-        LOG("Focus: NoActivate: the game never takes the foreground");
+        g_startedAt = GetTickCount();
+        const HWND foreground = GetForegroundWindow();
+        g_playerWindow = ours(foreground) ? nullptr : foreground;
+        LOG("Focus: NoActivate: the foreground goes back to the player's window once the game is up");
     }
     LOG("Focus: input only in the foreground, ClipCursor={}", Config::display.clipCursor);
 
@@ -402,6 +363,7 @@ HWND Focus::window()
 
 void Focus::onFrame()
 {
+    giveForegroundBack();
     HWND window = g_window;
     if (!window)
     {

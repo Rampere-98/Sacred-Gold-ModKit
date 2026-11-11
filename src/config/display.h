@@ -20,7 +20,8 @@ namespace Config
         Frame frame = Frame::Auto;
         bool clipCursor = true;       // mouse confined to the game window while it is in the foreground
         // Never takes the foreground ([Display] NoActivate, the agent copies: the player, 2026-11-11, «consigues abrir
-        // los procesos sin molestar cuando uso el pc?»): the game's own calls that would activate its window do not.
+        // los procesos sin molestar cuando uso el pc?»): the game takes it at its start (it waits for that), then gives it
+        // straight back to the player's window.
         bool noActivate = false;
         int fpsLimit = 60;            // the game's own in-game frame limit (it uses 60); 0 = off
         int fpsLimitInactive = 20;    // frame limit (menus and game) while none of the game's windows is in the foreground; 0 = off
