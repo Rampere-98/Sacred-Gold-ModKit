@@ -985,6 +985,7 @@ namespace
         bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
     };
     std::vector<AggroFoe> g_aggroFoes;
+    int32_t g_aggroHeroX = 0, g_aggroHeroY = 0;    // where the hero stood when g_aggroFoes was read
     constexpr double kAggroTiles = 13.0;
 
     // A creature with aggro on the hero (Manolito, block N): its AI target +0x251 the hero (or what it rides), an enemy
@@ -3209,6 +3210,8 @@ namespace
         g_chestBuilding = 0;
         g_chestBest = 0.0;
         g_aggroFoes.clear();
+        g_aggroHeroX = heroX;
+        g_aggroHeroY = heroY;
         const auto manager = *reinterpret_cast<const uint8_t* const*>(0xAD5C40);
         const auto dialogs = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x755C);
         const auto dialogsEnd = *reinterpret_cast<const uint8_t* const*>(0xAACF80 + 0x7560);
@@ -5863,6 +5866,26 @@ void AutoAttack::onFrame()
     const bool foreground = focused || Config::autoAttack.background;
     AutoStart::onFrame();
     AgentSave::onFrame();
+    // A load: the fight, the retreat and the enemies given up on were of the game left (the live verifier, 2026-11-11:
+    // A1 «stepping back over» 3 min after it died, in the game loaded since; object ids are new there too).
+    {
+        static bool s_wasChanging = false;
+        const bool changing = AgentSave::worldChanging();
+        if (changing && !s_wasChanging)
+        {
+            g_retreatUntil = 0;
+            g_retreatDoomed = false;
+            g_retreatExtended = 0;
+            g_retreatStartAt = 0;
+            g_noRetreatUntil = 0;
+            g_unreachable.clear();
+            g_unreachableAt.clear();
+            g_aggroFoes.clear();
+            g_shotBy.clear();
+            g_target = 0;
+        }
+        s_wasChanging = changing;
+    }
     checkNewGame();
 
     // The toggle key, on its press and only while the game has the focus.
@@ -6202,6 +6225,10 @@ void AutoAttack::onFrame()
             {
                 LOG("AutoAttack: target {:x} (left for now, but it came into the melee)", id);
             }
+            else if (shotAtHero(id, now))
+            {
+                LOG("AutoAttack: target {:x}, the one shooting at the hero", id);
+            }
             else
             {
                 LOG("AutoAttack: target {:x}", id);
@@ -6217,4 +6244,14 @@ void AutoAttack::onFrame()
     {
         g_target = 0;
     }
+}
+
+double AutoAttack::nearestHostileTiles()
+{
+    double nearest = 99.0 * kTileSize;
+    for (const AggroFoe& f : g_aggroFoes)
+    {
+        nearest = std::min(nearest, std::hypot(static_cast<double>(f.x - g_aggroHeroX), static_cast<double>(f.y - g_aggroHeroY)));
+    }
+    return nearest / kTileSize;
 }

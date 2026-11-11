@@ -20,4 +20,8 @@ namespace AutoAttack
 
     // The agent plays (F11 / the menu's «Activo ahora»).
     bool on();
+
+    // Tiles from the hero to the nearest living hostile creature on the surface (read with the quest marks, every
+    // few seconds; 99 with none within 40 tiles).
+    double nearestHostileTiles();
 }

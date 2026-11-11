@@ -1,4 +1,5 @@
 #include "game/agent_save.h"
+#include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/frame_hooks.h"
 #include "input/inject.h"
@@ -330,6 +331,19 @@ void AgentSave::onFrame()
     }
     if (health <= 0 || CombatLearn::forecast().foes > 0 || !canSave())
     {
+        return;
+    }
+    // Not where enemies stand about, nor hurt (the live verifier, 2026-11-11: A1 saved beside a group and died 5 times
+    // in 31 min, each load straight back among them): a player saves once the place is quiet and the hero whole.
+    if (AutoAttack::nearestHostileTiles() < 25.0 || health * 10 < hero->maxHealth * 7)
+    {
+        static DWORD s_toldAt = 0;
+        if (now - s_toldAt > 30000)
+        {
+            s_toldAt = now;
+            LOG("AgentSave: a quest done: the save waits (an enemy {:.0f} tiles off, {} of {} health)",
+                AutoAttack::nearestHostileTiles(), health, hero->maxHealth);
+        }
         return;
     }
     // The last save kept beside it first (a bad game is not carried on with nothing to go back to).
