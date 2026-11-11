@@ -1,6 +1,7 @@
 #include "game/click_walk.h"
 #include "game/agent_cursor.h"
 #include "game/agent_save.h"
+#include "config/auto_attack.h"
 #include "config/debug.h"
 #include "game/frame_hooks.h"
 #include "game/map_memory.h"
@@ -351,7 +352,19 @@ namespace
                     continue;
                 }
                 const int n = index(nx, ny);
-                const int32_t c = cost[cell] + (d < 4 ? 10 : 14);
+                int32_t c = cost[cell] + (d < 4 ? 10 : 14);
+                if (Config::autoAttack.ownPaths)
+                {
+                    // Kept off walls, trees and water's edge: each blocked tile around costs as 0.4 of a step, so
+                    // the route runs mid-path where the hero does not snag on corners.
+                    for (int e = 0; e < 8; ++e)
+                    {
+                        if (!g_grid.walkable(nx + kDx[e], ny + kDy[e]))
+                        {
+                            c += 4;
+                        }
+                    }
+                }
                 if (c < cost[n])
                 {
                     cost[n] = c;
@@ -387,6 +400,31 @@ namespace
         return true;
     }
 
+    // A straight walk from a to b over walkable tiles only (sampled every quarter tile, no corner cut): a leg the
+    // game's path finder has nothing to decide on.
+    bool lineClear(Cell a, Cell b)
+    {
+        const double dx = b.x - a.x, dy = b.y - a.y;
+        const int steps = std::max(1, static_cast<int>(std::max(std::abs(dx), std::abs(dy)) * 4));
+        int px = a.x, py = a.y;
+        for (int i = 1; i <= steps; ++i)
+        {
+            const int x = static_cast<int>(std::floor(a.x + 0.5 + dx * i / steps));
+            const int y = static_cast<int>(std::floor(a.y + 0.5 + dy * i / steps));
+            if (x == px && y == py)
+            {
+                continue;
+            }
+            if (!g_grid.walkable(x, y) || (x != px && y != py && (!g_grid.walkable(x, py) || !g_grid.walkable(px, y))))
+            {
+                return false;
+            }
+            px = x;
+            py = y;
+        }
+        return true;
+    }
+
     // The next leg's end: the furthest route tile after the one nearest the hero that stays within kLegTiles of
     // him. False if the hero is off the route.
     bool nextLeg(Cell hero, Cell& end)
@@ -409,9 +447,14 @@ namespace
             return false;
         }
         size_t j = nearest;
-        while (j + 1 < cells.size() && chebyshev(cells[j + 1], hero.x, hero.y) <= g_route.legTiles)
+        while (j + 1 < cells.size() && chebyshev(cells[j + 1], hero.x, hero.y) <= g_route.legTiles &&
+               (!Config::autoAttack.ownPaths || lineClear(hero, cells[j + 1])))
         {
             ++j;
+        }
+        if (j == nearest && j + 1 < cells.size())
+        {
+            ++j;    // the next route tile at least (beside the hero, the line test is too strict at a corner)
         }
         g_route.from = nearest;
         g_route.legEnd = j;
@@ -474,8 +517,20 @@ namespace
         cObjectManager* objects = cObjectManager::instance();
         if (order && creature && objects && objects->hero() == creature)
         {
-            const bool ours = g_ours;
+            bool ours = g_ours;
             g_ours = false;
+            bool kept = false;
+            // The agent asking again for the goal its own route already walks to: the route goes on (no plan again,
+            // no new leg's grace), the order sent as the current leg.
+            if (!ours && g_asking && !g_askByPlayer && g_active && g_routed && order->type == cOrder::move &&
+                std::max(std::abs(static_cast<double>(order->x) - g_goalX),
+                         std::abs(static_cast<double>(order->y) - g_goalY)) < 2.0 * kTileSize &&
+                g_route.legEnd < g_route.cells.size())
+            {
+                target(g_route.cells[g_route.legEnd], order->x, order->y);
+                ours = true;
+                kept = true;
+            }
             if (!ours)
             {
                 // Any other order for the hero (a click, hold-to-walk, an attack, stop) ends a far walk.
@@ -487,7 +542,41 @@ namespace
                 const double dx = static_cast<double>(order->x) - creature->x;
                 const double dy = static_cast<double>(order->y) - creature->y;
                 const double tiles = std::max(std::abs(dx), std::abs(dy)) / kTileSize;
-                if (!ours && tiles <= kMaxTiles)
+                bool own = false;
+                if (!ours && g_asking && !g_askByPlayer && Config::autoAttack.ownPaths && tiles > 3.0 &&
+                    tiles <= kMaxTiles)
+                {
+                    // The agent's walk on its own route, not the game's path finder (which keeps the doors and stairs
+                    // into houses: when no route is found on the hero's layer, the order goes to the game as it is).
+                    g_grid.avoid.clear();
+                    g_grid.layer = layerOf(creature);
+                    const Cell from = cellOf(creature->x, creature->y);
+                    Cell end{};
+                    const int32_t goalX = order->x, goalY = order->y;
+                    g_goalX = goalX;
+                    g_goalY = goalY;
+                    if (plan(from, cellOf(goalX, goalY)) && nextLeg(from, end))
+                    {
+                        own = true;
+                        g_native = false;
+                        g_routed = true;
+                        g_route.replans = 0;
+                        g_route.hops = 0;
+                        g_active = true;
+                        target(end, order->x, order->y);
+                        static int s_told = 0;
+                        if (Config::debug.uiTrace || s_told++ < 20)
+                        {
+                            LOG("Click walk: own route to {},{} ({:.0f} tiles, {} route tiles), first leg to {},{}",
+                                goalX, goalY, tiles, g_route.cells.size(), order->x, order->y);
+                        }
+                    }
+                }
+                if (own)
+                {
+                    // Planned above: neither the game's walk nor the far route below.
+                }
+                else if (!ours && tiles <= kMaxTiles)
                 {
                     g_native = true;
                     g_routed = false;
@@ -547,7 +636,7 @@ namespace
                         order->y = y;
                     }
                 }
-                if (g_active)
+                if (g_active && !kept)
                 {
                     g_lastX = g_legX = creature->x;
                     g_lastY = g_legY = creature->y;

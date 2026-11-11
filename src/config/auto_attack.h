@@ -25,6 +25,10 @@ namespace Config
         bool autoCollect = false;   // collect also with the auto attack off, whenever loot lies about and no fight is on
         int lootRange = 1600;    // ... within this many screen pixels of the hero
         bool humanCursor = false;   // the agent acts through the game's cursor, moved as a quick player's hand (AgentCursor)
+        // The agent's own walks on its own routes (the player, 2026-11-11: «que el agente buscara el camino más
+        // eficiente para llegar sin atascarse», not the game's click-to-walk path finder): A* over the loaded
+        // sectors kept off walls, walked in straight legs; the game's path finder only when no route is found.
+        bool ownPaths = false;
         int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
     };
     inline AutoAttack autoAttack;
