@@ -1,5 +1,7 @@
 #pragma once
 
+#include <ctime>
+
 // The agents' saved games (the player, 2026-11-11): each copy SacredA<n> keeps its game in its own slot,
 // GAME<9+n>.PAK (GAME10..GAME17), by the game's own save; saved when a quest is done, never after the hero died since
 // the last save; a hero that dies loads its last save; the copy's own game loaded once it starts. Never anywhere but
@@ -22,4 +24,13 @@ namespace AgentSave
     bool worldChanging();
     // Deaths since this copy's slot was last written: the same game loaded again and again (kept across the loads).
     int deathsSinceSave();
+
+    // Where the hero died (tiles) within the last 30 min, kept on disk across the copy's restarts.
+    struct DeathSpot
+    {
+        int x, y;
+        std::time_t at;
+    };
+    void noteDeathSpot(int x, int y);
+    bool nearDeathSpot(int x, int y);   // within 20 tiles of one
 }

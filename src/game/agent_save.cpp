@@ -13,6 +13,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <vector>
+#include <ctime>
 #include <string>
 
 using namespace Sacred;
@@ -44,6 +46,57 @@ namespace
     DWORD g_actionAt = 0;       // the last save or load asked for
     int g_sub = 0;              // the event's kind for the window's thread
     alignas(8) uint8_t g_event[0x40] = {};
+    // Kept beside the slot across the copy's restarts (the live verifier, 2026-11-11: an install restarts all 8
+    // every half hour, the deaths counted and the places shunned were forgotten, A3 back at once where it died):
+    // SacredBild-deaths.txt, the deaths since the save on the first line, then «x y unix-time» of each spot.
+    std::wstring g_deathsPath;
+    std::vector<AgentSave::DeathSpot> g_spots;
+
+    void writeDeaths()
+    {
+        if (g_deathsPath.empty())
+        {
+            return;
+        }
+        FILE* f = _wfopen(g_deathsPath.c_str(), L"w");
+        if (!f)
+        {
+            return;
+        }
+        std::fprintf(f, "%d\n", g_deathsSinceSave);
+        for (const AgentSave::DeathSpot& d : g_spots)
+        {
+            std::fprintf(f, "%d %d %lld\n", d.x, d.y, static_cast<long long>(d.at));
+        }
+        std::fclose(f);
+    }
+
+    void readDeaths()
+    {
+        FILE* f = _wfopen(g_deathsPath.c_str(), L"r");
+        if (!f)
+        {
+            return;
+        }
+        int deaths = 0;
+        if (std::fscanf(f, "%d", &deaths) == 1)
+        {
+            g_deathsSinceSave = deaths;
+        }
+        const long long now = static_cast<long long>(std::time(nullptr));
+        int x = 0, y = 0;
+        long long at = 0;
+        while (std::fscanf(f, "%d %d %lld", &x, &y, &at) == 3)
+        {
+            if (now - at < 1800)
+            {
+                g_spots.push_back({x, y, static_cast<std::time_t>(at)});
+            }
+        }
+        std::fclose(f);
+        LOG("AgentSave: {} deaths since the last save and {} places shunned, kept from before", g_deathsSinceSave,
+            g_spots.size());
+    }
 
     bool exeMatches()
     {
@@ -94,6 +147,8 @@ namespace
         wchar_t file[32];
         swprintf(file, 32, L"\\save\\GAME%02d.PAK", g_slot);
         g_path = dir + file;
+        g_deathsPath = dir + L"\\SacredBild-deaths.txt";
+        readDeaths();
         std::snprintf(g_name, sizeof(g_name), "Agente A%d", n);
         LOG("AgentSave: the copy's slot is GAME{:02d}", g_slot);
     }
@@ -309,6 +364,7 @@ void AgentSave::onFrame()
         {
             ++g_deathsSinceSave;
             LOG("AgentSave: death {} since the last save", g_deathsSinceSave);
+            writeDeaths();
             load(now, "the hero died");
         }
         else
@@ -358,6 +414,7 @@ void AgentSave::onFrame()
     LOG("AgentSave: a quest done: saving GAME{:02d} ({} of {} health)", g_slot, health, hero->maxHealth);
     g_saveWanted = false;
     g_deathsSinceSave = 0;
+    writeDeaths();
     g_sub = 2;
     g_actionAt = now;
     Inject::call(&sendEvent, nullptr);
@@ -366,4 +423,25 @@ void AgentSave::onFrame()
 int AgentSave::deathsSinceSave()
 {
     return g_deathsSinceSave;
+}
+
+void AgentSave::noteDeathSpot(int x, int y)
+{
+    const std::time_t now = std::time(nullptr);
+    std::erase_if(g_spots, [now](const DeathSpot& d) { return now - d.at >= 1800; });
+    g_spots.push_back({x, y, now});
+    writeDeaths();
+}
+
+bool AgentSave::nearDeathSpot(int x, int y)
+{
+    const std::time_t now = std::time(nullptr);
+    for (const DeathSpot& d : g_spots)
+    {
+        if (now - d.at < 1800 && (x - d.x) * (x - d.x) + (y - d.y) * (y - d.y) < 400)
+        {
+            return true;
+        }
+    }
+    return false;
 }
