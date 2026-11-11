@@ -2157,6 +2157,7 @@ namespace
 
         // The current target: no nearer in a while without a blow, it is out of reach (across water, up a wall).
         float currentDistance = -1.0f;
+        int currentHealth = -1;
         bool inMelee = false;
         for (int i = 0; i < count; ++i)
         {
@@ -2165,6 +2166,7 @@ namespace
             if (foes[i].id == g_target)
             {
                 currentDistance = d;
+                currentHealth = foes[i].health;
             }
             if (d < melee)
             {
@@ -2179,9 +2181,23 @@ namespace
         g_lastLookAt = now;
         if (g_target && !g_looting && currentDistance >= 0.0f)
         {
+            // Striking or casting is progress only if it tells (the player, 2026-11-11: the Seraphim casting her arts
+            // at one behind a fence, «did nothing seen» over and over, never left): its health must go down.
+            static uint32_t s_healthOf = 0;
+            static int s_healthBest = 0;
+            if (s_healthOf != g_target || currentHealth > s_healthBest)
+            {
+                s_healthOf = g_target;
+                s_healthBest = currentHealth;
+            }
+            const bool hurtIt = currentHealth >= 0 && currentHealth < s_healthBest;
+            if (hurtIt)
+            {
+                s_healthBest = currentHealth;
+            }
+            const bool striking = CombatState::action(self) == CombatState::Fighting || CombatState::casting(self);
             if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
-                CombatState::action(self) == CombatState::Fighting ||
-                CombatState::casting(self))
+                hurtIt || (striking && currentDistance < melee))
             {
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;
