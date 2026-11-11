@@ -1159,6 +1159,7 @@ namespace
     float g_targetBest = 0.0f;      // its nearest distance since, pixels (0: none yet)
     DWORD g_targetBestAt = 0;       // ... reached then
     DWORD g_lastLookAt = 0;         // the last look at the situation
+    DWORD g_retreatStartAt = 0;     // when the retreat began
     bool g_retreatDoomed = false;   // the retreat is from a hopeless fight (not for health or potions)
     int g_retreatExtended = 0;      // times the retreat went on with little health and no potion
     std::unordered_map<uint32_t, DWORD> g_unreachable;      // enemies given up on, until then
@@ -1694,7 +1695,9 @@ namespace
             {
                 g_retreatExtended = 0;
             }
-            if (g_retreatDoomed && !doomed && !tooLong && anyNear)
+            // Not on the first look that sees fewer (the live verifier, 2026-11-11: 24 of 33 such retreats over in
+            // under 3 s, the group still there, only out of sight): 8 s away at least.
+            if (g_retreatDoomed && !doomed && !tooLong && anyNear && g_retreatStartAt && now - g_retreatStartAt > 8000)
             {
                 LOG("AutoAttack: stepping back over (the fight no longer foreseen hopeless)");
                 g_retreatUntil = 0;
@@ -1726,6 +1729,7 @@ namespace
             g_retreatWalkAt = 0;
             g_retreatExtended = 0;
             g_retreatDoomed = doomed && !(low && noPotions);
+            g_retreatStartAt = now;
             if (g_retreatDoomed)
             {
                 LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health",
