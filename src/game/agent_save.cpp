@@ -1,5 +1,6 @@
 #include "game/agent_save.h"
 
+#include <cstdlib>
 #include <atomic>
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
@@ -179,7 +180,7 @@ namespace
         g_deathsSinceSave = 0;
         g_spots.clear();
         writeDeaths();
-        LOG("AgentSave: 10 deaths from the same save: it is set aside as GAME{:02d}.OLD, a new game from the start", g_slot);
+        LOG("AgentSave: the save is set aside as GAME{:02d}.OLD, a new game from the start", g_slot);
     }
 
     bool slotFileExists()
@@ -418,6 +419,29 @@ void AgentSave::onFrame()
     // 2026-11-11: A3 35 min still on open ground, alive, after buying a horse).
     if (g_reloadWanted.exchange(false) && slotFileExists())
     {
+        // A save that loads into a place the hero cannot leave (the stuck solver, 2026-11-11: A3's GAME12, saved on
+        // horseback, each load still at 3320,2679, load, still, death, load for 2 h): stuck twice on the same tile
+        // after loads of it, it is set aside and a new game begun, like 10 deaths from it.
+        static int32_t s_stuckX = 0, s_stuckY = 0;
+        static int s_stuckTimes = 0;
+        const int32_t tx = static_cast<int32_t>(hero->x / 53.66563), ty = static_cast<int32_t>(hero->y / 53.66563);
+        if (s_stuckTimes && std::abs(tx - s_stuckX) <= 3 && std::abs(ty - s_stuckY) <= 3)
+        {
+            ++s_stuckTimes;
+        }
+        else
+        {
+            s_stuckTimes = 1;
+            s_stuckX = tx;
+            s_stuckY = ty;
+        }
+        if (s_stuckTimes >= 3)
+        {
+            LOG("AgentSave: stuck at tile {},{} after {} loads of the same save: it cannot be played on", tx, ty,
+                s_stuckTimes - 1);
+            setAside();
+            ExitProcess(0);
+        }
         load(now, "the hero stuck in one place for 5 min");
         return;
     }
