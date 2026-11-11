@@ -10,4 +10,7 @@ namespace AgentSave
     void onFrame();
     // A quest done (the journal's count went up): a save is due once the game allows it.
     void questDone();
+    // In the start menu: the copy's saved game loaded straight from there, as the menu's Load does (Manolito, block S
+    // 2b); false with none (a new game then). Asked once a start.
+    bool loadFromMenu();
 }

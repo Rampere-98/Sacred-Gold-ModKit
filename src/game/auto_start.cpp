@@ -1,4 +1,5 @@
 #include "game/auto_start.h"
+#include "game/agent_save.h"
 #include "game/controller.h"
 #include "game/frame_hooks.h"
 #include "game/resolution.h"
@@ -136,6 +137,14 @@ void AutoStart::onFrame()
             }
             return;
         }
+        // The copy's saved game first (the player, 2026-11-11: «nueva partida es para el personaje que no tiene
+        // savegame»): loaded from the menu; a new game only with none, or when the load did not begin in 45 s.
+        if (AgentSave::loadFromMenu())
+        {
+            g_step = 20;
+            g_stepAt = now + 45000;
+            return;
+        }
         LOG("AutoStart: {} s in the start menu: a new game with the {} (try {})", (now - g_menuSince) / 1000,
             kClasses[g_nextClass].name, g_tries);
         g_step = 0;
@@ -147,6 +156,12 @@ void AutoStart::onFrame()
     }
     switch (g_step)
     {
+    case 20:
+        // The saved game did not begin loading: a new game after all.
+        LOG("AutoStart: the saved game did not load in 45 s: a new game");
+        g_step = -1;
+        g_menuSince = now - 20000;
+        return;
     case 0:
         // A message box over the menu (the quit question): Esc closes it.
         if (ui->dialog && ui->dialog->visible())

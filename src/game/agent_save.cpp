@@ -139,7 +139,40 @@ namespace
 
 void AgentSave::questDone()
 {
+    // Not the journal first read after a load (seen live: A4 saved 22 s after loading, nothing done).
+    if (g_actionAt && GetTickCount() - g_actionAt < 90000 && g_sub == 1)
+    {
+        return;
+    }
     g_saveWanted = true;
+}
+
+bool AgentSave::loadFromMenu()
+{
+    if (g_slot < 0)
+    {
+        findSlot();
+    }
+    if (g_slot <= 0 || g_loadedOnce || !slotFileExists() || *reinterpret_cast<const uint32_t*>(kNetwork))
+    {
+        return false;
+    }
+    // In the menu with no engine yet ([0xAD6EF8] 0): the menu's Load posts 0x8002 (1, slot) to the game's window, whose
+    // handler closes the menu and builds the engine loading ./SAVE/GAME<slot>.PAK; it also sets [[0x182EBE8]+0x14] 1.
+    const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xCDCA1C);
+    HWND window = holder ? *reinterpret_cast<HWND*>(holder + 0xB0) : nullptr;
+    uint8_t* setup = *reinterpret_cast<uint8_t**>(0x182EBE8);
+    if (*reinterpret_cast<const uintptr_t*>(0xAD6EF8) || !window || !setup)
+    {
+        return false;
+    }
+    *reinterpret_cast<uint32_t*>(setup + 0x14) = 1;
+    PostMessageW(window, 0x8002, 1, static_cast<LPARAM>(g_slot));
+    g_loadedOnce = true;
+    g_sub = 1;
+    g_actionAt = GetTickCount();
+    LOG("AgentSave: loading GAME{:02d} from the start menu", g_slot);
+    return true;
 }
 
 void AgentSave::onFrame()
