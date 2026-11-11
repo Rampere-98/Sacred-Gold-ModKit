@@ -1200,8 +1200,12 @@ namespace
 
     void lengthWorker()
     {
+        // Below the game's threads, and a breath between searches (the player, 2026-11-11: «ahora todos tienen
+        // tirones»: eight copies, each searching all the time, held the processor at 100 %).
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_LOWEST);
         for (;;)
         {
+            Sleep(40);
             RouteJob job;
             {
                 std::unique_lock lock(g_lenLock);
@@ -1233,6 +1237,12 @@ namespace
 
 float MapMemory::routeTiles(int layer, int fromX, int fromY, int toX, int toY)
 {
+    // Far goals keep the straight line: a search over hundreds of tiles costs much, and that far the difference
+    // tells little.
+    if (std::abs(toX - fromX) > 300 || std::abs(toY - fromY) > 300)
+    {
+        return -2.0f;
+    }
     const uint64_t key = lengthKey(layer, fromX, fromY, toX, toY);
     const DWORD now = GetTickCount();
     const std::lock_guard lock(g_lenLock);
@@ -1254,7 +1264,7 @@ float MapMemory::routeTiles(int layer, int fromX, int fromY, int toX, int toY)
         return fromLast();
     }
     // A short queue: the newest asked first, the oldest dropped (asked again if still wanted).
-    if (g_lenJobs.size() >= 24)
+    if (g_lenJobs.size() >= 8)
     {
         g_lenPending.erase(g_lenJobs.back().key);
         g_lenJobs.pop_back();
