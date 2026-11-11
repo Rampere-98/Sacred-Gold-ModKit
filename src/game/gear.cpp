@@ -1270,7 +1270,14 @@ namespace
         {
             s_openAt = now;
         }
-        uint8_t* tab = master + 0x154;
+        // +0x154 holds a pointer to the tab sheet (vtable 0x897258), whose +0x78 points to the tab control (vtable
+        // 0x897220) with the pages and the active one (Manolito, block AC, 2026-11-11: read as inline, no page found).
+        uint8_t* sheet = *reinterpret_cast<uint8_t* const*>(master + 0x154);
+        uint8_t* tab = sheet ? *reinterpret_cast<uint8_t* const*>(sheet + 0x78) : nullptr;
+        if (!tab)
+        {
+            return false;
+        }
         const auto* pages = *reinterpret_cast<uint8_t* const*>(tab + 0x78);
         const auto* pagesEnd = *reinterpret_cast<uint8_t* const*>(tab + 0x7C);
         uint8_t* lotto = pages && pagesEnd - pages >= 2 * 0x18 ? *reinterpret_cast<uint8_t* const*>(pages + 0x18 + 0x14) : nullptr;
@@ -1442,7 +1449,14 @@ namespace
             return false;
         }
         const uint8_t* st = reinterpret_cast<const uint8_t*>(hero) + kStats;
-        uint8_t* tab = master + 0x154;
+        // +0x154 holds a pointer to the tab sheet (vtable 0x897258), whose +0x78 points to the tab control (vtable
+        // 0x897220) with the pages and the active one (Manolito, block AC, 2026-11-11: read as inline, no page found).
+        uint8_t* sheet = *reinterpret_cast<uint8_t* const*>(master + 0x154);
+        uint8_t* tab = sheet ? *reinterpret_cast<uint8_t* const*>(sheet + 0x78) : nullptr;
+        if (!tab)
+        {
+            return false;
+        }
         const auto* pages = *reinterpret_cast<uint8_t* const*>(tab + 0x78);
         const auto* pagesEnd = *reinterpret_cast<uint8_t* const*>(tab + 0x7C);
         uint8_t* page = pages && pagesEnd - pages >= 0x18 ? *reinterpret_cast<uint8_t* const*>(pages + 0x14) : nullptr;
@@ -1474,14 +1488,13 @@ namespace
             return giveUp("fewer than 2 arts of one kind");
         }
         const int before = comboCount(st);
+        // The template (+0x778..+0x78B) left at zero (Manolito, block AC, 2026-11-11: filled, the price 0x6D23E0 reads
+        // 0 and the combo comes free, a cheat): only the 4 slots, as the player's drag fills them.
         std::memset(page + 0x778, 0, 0x14);
-        *reinterpret_cast<uint16_t*>(page + 0x778) = 4;
         for (int i = 0; i < 4; ++i)
         {
             *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = ids[i];
             *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = levels[i];
-            *reinterpret_cast<uint16_t*>(page + 0x780 + i * 2) = static_cast<uint16_t>(ids[i]);
-            *(page + 0x788 + i) = static_cast<uint8_t>(std::min<uint16_t>(levels[i], 255));
         }
         const uint8_t* local = *reinterpret_cast<const uint8_t* const*>(0x182EBE8);
         const uint32_t player = local ? *reinterpret_cast<const uint32_t*>(local + 0x14) : 0;
