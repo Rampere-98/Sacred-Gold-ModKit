@@ -1926,7 +1926,10 @@ namespace
     {
         static DWORD s_at = 0;
         static uint32_t s_lastArrow = 0;
-        if (g_retreatUntil)
+        // Never through an art going out (the player, 2026-11-11: «esquivar los proyectiles está cancelando las
+        // artes»): the main attack is an art too, cast by the game from the click, not by Tactics, so Tactics::busy did
+        // not tell; the step would cut it short and its recharge lost. The art's blows first, the arrow taken.
+        if (g_retreatUntil || CombatState::casting(self))
         {
             return false;
         }
