@@ -550,6 +550,14 @@ void AgentSave::onFrame()
     // Not on horseback (the player, 2026-11-11: «el elfo oscuro lo veo muriendo encima del caballo»): A5 saved mounted
     // 0.3 s after a level gained, and every load of it showed the hero at 0 health on the horse, dying there, then
     // standing again without it. Off the horse first, then saved.
+    // Nor half off it (Manolito, block AG: the riding bits and the control left on the horse with the hero on foot;
+    // A6 saved so, 2026-11-12, and each load had the camera on the horse): AutoAttack mends that first.
+    const cEngine* engine = FrameHooks::engine();
+    if (engine && engine->controlled != hero->id &&
+        !*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC))
+    {
+        return;
+    }
     if (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0)
     {
         AutoAttack::footFor(20000);

@@ -1404,6 +1404,35 @@ namespace
         Inject::call(&sendCall, nullptr);
     }
 
+    // Half off the horse (Manolito, block AG, 2026-11-12, read live in A6): the hero on foot (+0x1EC 0) but its
+    // riding bits (+0x200 & 0x14) still set and cEngine::controlled still the horse, so the camera and the mouse
+    // follow the horse. The game itself mends it only on a mouse event (0x6173E7 in the input handler 0x6172C0); the
+    // agent makes none. Mended as that does, on the game's thread: the off event with the horse's id (hero +0x570, the
+    // handler 0x53677C does nothing with id 0), then controlled back to the hero.
+    void mendHalfOff(void*)
+    {
+        cEngine* engine = FrameHooks::engine();
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!engine || !hero)
+        {
+            return;
+        }
+        const auto* h = reinterpret_cast<const uint8_t*>(hero);
+        const uint32_t horse = *reinterpret_cast<const uint32_t*>(h + 0x570);
+        if (horse && (*reinterpret_cast<const uint32_t*>(h + 0x200) & 0x14) && objects->creature(horse))
+        {
+            alignas(8) uint8_t ev[0x44] = {};
+            *reinterpret_cast<uintptr_t*>(ev) = 0x89095C;
+            *reinterpret_cast<uint32_t*>(ev + 4) = 0x20A;
+            *reinterpret_cast<uint32_t*>(ev + 0x14) = horse;
+            using Handle = void(__fastcall*)(void* self, void*, void* ev);
+            const auto* vt = *reinterpret_cast<const uintptr_t* const*>(hero);
+            reinterpret_cast<Handle>(vt[6])(hero, nullptr, ev);
+        }
+        engine->controlled = hero->id;
+    }
+
     void ride(DWORD now, const cCreature* self)
     {
         // The hero, not the controlled creature (Manolito, block AD, 2026-11-11: mounted, engine->controlled is the
@@ -1419,6 +1448,21 @@ namespace
         // Walking up to the horse: since when (0: not), and when last told to walk.
         static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
         uint32_t horse = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x570);
+        // Half off (the camera on the horse, the hero on foot beside it): mended, once in 5 s at most.
+        if (const cEngine* engine = FrameHooks::engine();
+            engine && engine->controlled != self->id &&
+            !*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC))
+        {
+            static DWORD s_mendAt = 0;
+            if (now - s_mendAt > 5000)
+            {
+                s_mendAt = now;
+                LOG("AutoAttack: half off the horse (controlled {:x}, the hero {:x} on foot): control back to the hero",
+                    engine->controlled, self->id);
+                Inject::call(&mendHalfOff, nullptr);
+            }
+            return;
+        }
         // A wild horse taken (the player, 2026-11-10: «existen caballos salvajes, son útiles cuando no tienes
         // caballo»; Manolito, H2: walk up to it and send the ride event): one within 25 tiles when the hero has none,
         // or one two levels better than his, on foot, no enemy within 15 tiles.
