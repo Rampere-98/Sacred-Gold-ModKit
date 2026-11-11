@@ -3120,6 +3120,28 @@ namespace
         }
     }
 
+    // Where the hero died lately (tiles): the farming zone it was in and where it fell, shunned 30 min (the live
+    // verifier, 2026-11-11: A3 died 8 times running in the zone at 3223,2664 «levels 1-4», loaded and went back to it).
+    struct DeathSpot
+    {
+        int x, y;
+        DWORD at;
+    };
+    std::vector<DeathSpot> g_deathSpots;
+
+    bool nearDeathSpot(int tx, int ty)
+    {
+        const DWORD now = GetTickCount();
+        for (const DeathSpot& d : g_deathSpots)
+        {
+            if (now - d.at < 1800000 && std::hypot(tx - d.x, ty - d.y) < 20.0)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     void chooseFarm(const uint8_t* world, int heroLevel, int32_t heroX, int32_t heroY)
     {
         float best = 0.0f;
@@ -3141,6 +3163,10 @@ namespace
             // Not a zone well above the hero's level, by the class's mind (the class strategist, 2026-11-10: the
             // Gladiator at level 1 sent to a zone of 19-32, the Daemon to one of 45-80).
             if (lo > heroLevel + Mind::now().farmLevelSlack)
+            {
+                continue;
+            }
+            if (nearDeathSpot(cx, cy))
             {
                 continue;
             }
@@ -5884,6 +5910,30 @@ void AutoAttack::onFrame()
     {
         static bool s_wasChanging = false;
         const bool changing = AgentSave::worldChanging();
+        static int s_deaths = 0;
+        if (AgentSave::deathsSinceSave() > s_deaths)
+        {
+            const DWORD at = GetTickCount();
+            std::erase_if(g_deathSpots, [at](const DeathSpot& d) { return at - d.at >= 1800000; });
+            if (g_farmKnown)
+            {
+                g_deathSpots.push_back({static_cast<int>(g_farmX / kTileSize), static_cast<int>(g_farmY / kTileSize), at});
+            }
+            if (g_aggroHeroX || g_aggroHeroY)
+            {
+                g_deathSpots.push_back(
+                    {static_cast<int>(g_aggroHeroX / kTileSize), static_cast<int>(g_aggroHeroY / kTileSize), at});
+            }
+            LOG("AutoAttack: died: the farming zone at tile {},{} and where it fell ({},{}) shunned 30 min",
+                g_farmKnown ? static_cast<int>(g_farmX / kTileSize) : -1, g_farmKnown ? static_cast<int>(g_farmY / kTileSize) : -1,
+                static_cast<int>(g_aggroHeroX / kTileSize), static_cast<int>(g_aggroHeroY / kTileSize));
+            g_farmSector = -1;
+            if (s_deaths < 2 && AgentSave::deathsSinceSave() >= 2)
+            {
+                LOG("AutoAttack: careful from now on (2 deaths from the same save): none above the hero's level sought, the retreat sooner");
+            }
+        }
+        s_deaths = AgentSave::deathsSinceSave();
         if (changing && !s_wasChanging)
         {
             g_retreatUntil = 0;
