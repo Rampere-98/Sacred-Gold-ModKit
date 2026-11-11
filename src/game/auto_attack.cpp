@@ -1405,6 +1405,15 @@ namespace
 
     void ride(DWORD now, const cCreature* self)
     {
+        // The hero, not the controlled creature (Manolito, block AD, 2026-11-11: mounted, engine->controlled is the
+        // horse, whose +0x570 is its rider, so «horse 1» was the hero's own id and A3 stood still for hours).
+        if (cObjectManager* om = cObjectManager::instance())
+        {
+            if (const cCreature* hero = om->hero())
+            {
+                self = hero;
+            }
+        }
         static DWORD s_at = 0;
         // Walking up to the horse: since when (0: not), and when last told to walk.
         static DWORD s_approachSince = 0, s_approachStep = 0, s_restUntil = 0;
