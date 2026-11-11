@@ -463,6 +463,14 @@ void AgentSave::onFrame()
         }
         return;
     }
+    // Every 10 min of play a save too, as a player saves (the player, 2026-11-11: the Daemon «no sube de nivel
+    // nunca» while gaining experience: only quests and levels saved, and each restart loaded a save an hour old).
+    // Counted from the last save or load; the same quiet-place rules below.
+    if (!g_saveWanted && g_actionAt && now - g_actionAt > 600000 && !g_diedSince)
+    {
+        g_saveWanted = true;
+        LOG("AgentSave: 10 min since the last save or load: a save due");
+    }
     // A quest done: saved once the game allows it, with no fight about and the hero alive, unless it died since.
     if (!g_saveWanted)
     {
