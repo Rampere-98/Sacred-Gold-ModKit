@@ -266,7 +266,12 @@ namespace
             reinterpret_cast<void(__fastcall*)(void*, void*, void*, int, int)>(kSend)(dispatcher, nullptr, ev, 1, 0);
         }
         PostMessageW(window, 0x8002, 0, 0);
-        LOG("AgentSave: a new game with class {} begun from the start menu", g_newClass);
+        // A new hero, a new count (the player, 2026-11-11: «al iniciar partida nueva resetea las muertes del
+        // personaje»): its deaths and the places shunned were the last hero's.
+        g_deathsSinceSave = 0;
+        g_spots.clear();
+        writeDeaths();
+        LOG("AgentSave: a new game with class {} begun from the start menu: deaths and places shunned reset", g_newClass);
     }
 }
 
