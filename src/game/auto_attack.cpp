@@ -463,6 +463,10 @@ namespace
         {
             return false;
         }
+        // Noted for the routes (MapMemory::noteDoor): opens or not, by its trigger's state below.
+        const int doorLayer = *(reinterpret_cast<const uint8_t*>(hero) + 0x24);
+        const int doorX = static_cast<int>(o->x / 53.66563), doorY = static_cast<int>(o->y / 53.66563);  // kTileSize, defined further on
+        bool shutForGood = false;
         // Its state, in its trigger record (Manolito, block K, AGENT_ADDRESSES «Puertas y palancas»): door+0x34 the
         // trigger's index, the records [world+0x268] (end [world+0x26C]) 0x10 each, world = [[0xAD5C40]]; +0xA u16
         // bit 0 open, 0x8000 locked by a script or lever; +0xC u32 the key it asks (the game looks in the backpack).
@@ -480,6 +484,12 @@ namespace
                     const uint16_t state = *reinterpret_cast<const uint16_t*>(trig + 0xA);
                     const uint32_t key = *reinterpret_cast<const uint32_t*>(trig + 0xC);
                     // 0x4000 is no lock: «just switched», gone in a second (Manolito).
+                    // A key asked counts as shut for the routes: the backpack may not hold it.
+                    shutForGood = !(state & 1) && ((state & 0x8000) || key);
+                    if (!lever)
+                    {
+                        MapMemory::noteDoor(doorLayer, doorX, doorY, !shutForGood);
+                    }
                     if ((state & 1) || (!lever && (state & 0x8000) && !key))
                     {
                         return false;
@@ -490,6 +500,11 @@ namespace
         const auto it = g_doorTried.find(id);
         if (it != g_doorTried.end() && GetTickCount() - it->second < 120000)
         {
+            // Tried and still shut a few seconds on: no way through for the routes either.
+            if (!lever && GetTickCount() - it->second > 5000)
+            {
+                MapMemory::noteDoor(doorLayer, doorX, doorY, false);
+            }
             return false;
         }
         const float dx = static_cast<float>(o->x - hero->x), dy = static_cast<float>(o->y - hero->y);
@@ -756,6 +771,22 @@ namespace
     // routes in legs; once within reach, the next order (lootDone's nudge when the hero stops) uses it.
     constexpr double kTileSize = 53.66563;
     constexpr int32_t kUseReach = static_cast<int32_t>(24 * kTileSize);
+
+    // How far the hero walks from one point to another, in world units (the player, 2026-11-11: «que paren de medir
+    // cercanía con la distancia en línea recta, … la distancia de la ruta entera»): the route's length over what the
+    // map knows (roads, doors that open, walls and doors held shut), once worked out on its own thread; until then, or
+    // with no route (too far apart for one search), the straight line.
+    double wayLength(int32_t fromX, int32_t fromY, int32_t toX, int32_t toY)
+    {
+        const double straight = std::hypot(static_cast<double>(toX - fromX), static_cast<double>(toY - fromY));
+        cObjectManager* objects = cObjectManager::instance();
+        const cCreature* hero = objects ? objects->hero() : nullptr;
+        const int layer = hero ? *(reinterpret_cast<const uint8_t*>(hero) + 0x24) : 0;
+        const float tiles = MapMemory::routeTiles(layer, static_cast<int>(fromX / kTileSize),
+                                                  static_cast<int>(fromY / kTileSize), static_cast<int>(toX / kTileSize),
+                                                  static_cast<int>(toY / kTileSize));
+        return tiles >= 0.0f ? std::max(straight, tiles * kTileSize) : straight;
+    }
 
     int32_t g_walkX = 0, g_walkY = 0;
     DWORD g_roamAt = 0;     // the last roaming step (0: not roaming)
@@ -2708,7 +2739,7 @@ namespace
         }
         for (QuestGoal& g : g_questBook)
         {
-            g.distance = std::hypot(static_cast<double>(g.x - heroX), static_cast<double>(g.y - heroY));
+            g.distance = wayLength(heroX, heroY, g.x, g.y);
             g.blocked = goalBlocked(g.x, g.y, now);
         }
         std::stable_sort(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& a, const QuestGoal& b) {
@@ -3051,7 +3082,13 @@ namespace
             {
                 fit = 0.25f;
             }
-            const double tiles = std::hypot(cx - heroX / kTileSize, cy - heroY / kTileSize);
+            double tiles = std::hypot(cx - heroX / kTileSize, cy - heroY / kTileSize);
+            if (tiles < 300.0)
+            {
+                // The walk there, not the straight line.
+                tiles = wayLength(heroX, heroY, static_cast<int32_t>((cx + 0.5) * kTileSize),
+                                  static_cast<int32_t>((cy + 0.5) * kTileSize)) / kTileSize;
+            }
             float score = static_cast<float>(f.count) * fit / static_cast<float>(1.0 + tiles / 150.0);
             if (key == g_farmSector)
             {
@@ -3169,8 +3206,13 @@ namespace
                         !*(o + 0x24) && isChest(o) && !(*reinterpret_cast<const uint32_t*>(o + 0x14) & 0x4000))
                     {
                         const uint32_t id = *reinterpret_cast<const uint32_t*>(o + 0xC);
-                        const double d = std::hypot(static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x1C) - heroX),
-                                                    static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x20) - heroY));
+                        double d = std::hypot(static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x1C) - heroX),
+                                              static_cast<double>(*reinterpret_cast<const int32_t*>(o + 0x20) - heroY));
+                        if (d < 150.0 * kTileSize && !lootBlocked(id, now) && !g_lootDone.count(lootKey(id)))
+                        {
+                            d = wayLength(heroX, heroY, *reinterpret_cast<const int32_t*>(o + 0x1C),
+                                          *reinterpret_cast<const int32_t*>(o + 0x20));    // the walk
+                        }
                         if (!lootBlocked(id, now) && !g_lootDone.count(lootKey(id)) && (!g_chestBuilding || d < g_chestBest))
                         {
                             g_chestBuilding = id;
@@ -3314,7 +3356,7 @@ namespace
                     const uint32_t sale = man ? *reinterpret_cast<const uint32_t*>(man + 0x570) : 0;
                     const cCreature* h = sale ? om->creature(sale) : nullptr;
                     if (h && std::hypot(static_cast<double>(m.x - heroX), static_cast<double>(m.y - heroY)) < 60.0 * kTileSize &&
-                        Gear::horseWorth(h) >= ownWorth + 2000)
+                        wayLength(heroX, heroY, m.x, m.y) < 60.0 * kTileSize && Gear::horseWorth(h) >= ownWorth + 2000)
                     {
                         better = true;
                     }
@@ -3928,7 +3970,11 @@ namespace
             for (const Merchant& m : g_merchants)
             {
                 const auto failed = g_shopFailedAt.find(m.id);
-                const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                if (m.layer == layer && d <= 150.0 * kTileSize)
+                {
+                    d = wayLength(self->x, self->y, m.x, m.y);    // the walk, not the straight line
+                }
                 // One in a house (its floor another layer) only near: a click on him sends the hero there by the game's
                 // own path finder, which opens the doors on the way (the player: «algunos comerciantes se encuentran
                 // dentro de casas»).
@@ -4036,7 +4082,11 @@ namespace
                 double bestDistance = 0.0;
                 for (const Merchant& m : toMaster ? g_masters : toSmith ? g_smiths : g_stables)
                 {
-                    const double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                    double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
+                    if (m.layer == layer && d <= 300.0 * kTileSize)
+                    {
+                        d = wayLength(self->x, self->y, m.x, m.y);    // the walk, not the straight line
+                    }
                     if ((m.layer == layer || d < 30.0 * kTileSize) && (!best || d < bestDistance))
                     {
                         best = &m;

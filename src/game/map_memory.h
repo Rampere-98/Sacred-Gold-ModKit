@@ -19,6 +19,15 @@ namespace MapMemory
     // walkable tiles cheap, never seen ones dearer (they may be anything), unwalkable ones never. Empty and false
     // when there is none or the ends lie too far apart for one search (~1000 tiles).
     bool route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out);
+    // A door seen (the player, 2026-11-11: «ten cuidado con las puertas, es importante que existan»; a script-held
+    // door clicked again and again once kept the Daemon shut in 18 min): one that opens (or is open) is a way through
+    // for routes, its tile and those around it; one held shut by a script or a key is a wall there, whatever the world
+    // files say of its doorway.
+    void noteDoor(int layer, int tileX, int tileY, bool opens);
+    // The walk's length in tiles along a route (the player, 2026-11-11: «la distancia de la ruta entera», not the
+    // straight line), worked out on a thread of its own and kept two minutes for ends within 4 tiles: -1 while it is
+    // being worked out, -2 with no route (too far apart for one search, or none over what is known).
+    float routeTiles(int layer, int fromX, int fromY, int toX, int toY);
     // How little worth going to: the more seen and blocked, the higher.
     float cost(int layer, int32_t x, int32_t y);
     // Cells known, and of them on `layer`.

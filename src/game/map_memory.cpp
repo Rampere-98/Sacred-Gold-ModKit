@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstdio>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
 #include <atomic>
@@ -25,6 +26,7 @@
 #include <memory>
 #include <unordered_map>
 #include <unordered_set>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -1158,6 +1160,147 @@ void MapMemory::visit(int layer, int32_t x, int32_t y)
     });
 }
 
+namespace
+{
+    // Route lengths, worked out on a thread of their own (a search over a big box takes up to a second or more).
+    struct RouteJob
+    {
+        int layer, fromX, fromY, toX, toY;
+        uint64_t key;
+    };
+    std::mutex g_lenLock;
+    std::condition_variable g_lenWake;
+    std::deque<RouteJob> g_lenJobs;
+    std::unordered_map<uint64_t, std::pair<float, DWORD>> g_lenKnown;   // length (-2 no route), when
+    std::unordered_set<uint64_t> g_lenPending;
+    bool g_lenThread = false;
+    // The last length worked out to each goal (by layer and goal within 4 tiles), from where: while a new start is
+    // worked out, that one plus the way between the starts (the goals' order does not swap back and forth meanwhile).
+    struct LastLength
+    {
+        int fromX, fromY;
+        float tiles;
+        DWORD at;
+    };
+    std::unordered_map<uint64_t, LastLength> g_lenLast;
+
+    uint64_t goalKey(int layer, int toX, int toY)
+    {
+        return (static_cast<uint64_t>(layer & 0xFF) << 32) | (static_cast<uint64_t>((toX >> 2) & 0xFFFF) << 16) |
+               static_cast<uint64_t>((toY >> 2) & 0xFFFF);
+    }
+
+    uint64_t lengthKey(int layer, int fromX, int fromY, int toX, int toY)
+    {
+        // Ends within 4 tiles share one: 12 bits a coordinate (tiles below 16384).
+        const auto q = [](int v) { return static_cast<uint64_t>((v >> 2) & 0xFFF); };
+        return (static_cast<uint64_t>(layer & 0xFF) << 48) | (q(fromX) << 36) | (q(fromY) << 24) | (q(toX) << 12) |
+               q(toY);
+    }
+
+    void lengthWorker()
+    {
+        for (;;)
+        {
+            RouteJob job;
+            {
+                std::unique_lock lock(g_lenLock);
+                g_lenWake.wait(lock, [] { return !g_lenJobs.empty(); });
+                job = g_lenJobs.front();
+                g_lenJobs.pop_front();
+            }
+            std::vector<std::pair<int, int>> cells;
+            float tiles = -2.0f;
+            if (MapMemory::route(job.layer, job.fromX, job.fromY, job.toX, job.toY, cells))
+            {
+                tiles = 0.0f;
+                for (size_t i = 1; i < cells.size(); ++i)
+                {
+                    const bool diagonal = cells[i].first != cells[i - 1].first && cells[i].second != cells[i - 1].second;
+                    tiles += diagonal ? 1.4142f : 1.0f;
+                }
+            }
+            const std::lock_guard lock(g_lenLock);
+            g_lenKnown[job.key] = {tiles, GetTickCount()};
+            g_lenPending.erase(job.key);
+            if (tiles >= 0.0f)
+            {
+                g_lenLast[goalKey(job.layer, job.toX, job.toY)] = {job.fromX, job.fromY, tiles, GetTickCount()};
+            }
+        }
+    }
+}
+
+float MapMemory::routeTiles(int layer, int fromX, int fromY, int toX, int toY)
+{
+    const uint64_t key = lengthKey(layer, fromX, fromY, toX, toY);
+    const DWORD now = GetTickCount();
+    const std::lock_guard lock(g_lenLock);
+    if (const auto it = g_lenKnown.find(key); it != g_lenKnown.end() && now - it->second.second < 120000)
+    {
+        return it->second.first;
+    }
+    const auto fromLast = [&]() -> float {
+        const auto it = g_lenLast.find(goalKey(layer, toX, toY));
+        if (it == g_lenLast.end() || now - it->second.at >= 120000)
+        {
+            return -1.0f;
+        }
+        const float moved = static_cast<float>(std::hypot(fromX - it->second.fromX, fromY - it->second.fromY));
+        return moved <= 24.0f ? it->second.tiles + moved : -1.0f;
+    };
+    if (g_lenPending.count(key))
+    {
+        return fromLast();
+    }
+    // A short queue: the newest asked first, the oldest dropped (asked again if still wanted).
+    if (g_lenJobs.size() >= 24)
+    {
+        g_lenPending.erase(g_lenJobs.back().key);
+        g_lenJobs.pop_back();
+    }
+    g_lenJobs.push_front({layer, fromX, fromY, toX, toY, key});
+    g_lenPending.insert(key);
+    if (g_lenKnown.size() > 4000)
+    {
+        for (auto it = g_lenKnown.begin(); it != g_lenKnown.end();)
+        {
+            it = now - it->second.second >= 120000 ? g_lenKnown.erase(it) : std::next(it);
+        }
+    }
+    if (!g_lenThread)
+    {
+        g_lenThread = true;
+        std::thread(lengthWorker).detach();
+    }
+    g_lenWake.notify_one();
+    if (g_lenLast.size() > 4000)
+    {
+        for (auto it = g_lenLast.begin(); it != g_lenLast.end();)
+        {
+            it = now - it->second.at >= 120000 ? g_lenLast.erase(it) : std::next(it);
+        }
+    }
+    return fromLast();
+}
+
+namespace
+{
+    std::unordered_map<uint64_t, bool> g_doorTiles;   // under g_lock: the doors seen, by layer and tile: opens
+
+    uint64_t doorKey(int layer, int x, int y)
+    {
+        return (static_cast<uint64_t>(layer & 0xFF) << 40) | (static_cast<uint64_t>(x & 0xFFFFF) << 20) |
+               static_cast<uint64_t>(y & 0xFFFFF);
+    }
+}
+
+void MapMemory::noteDoor(int layer, int tileX, int tileY, bool opens)
+{
+    const std::lock_guard lock(g_lock);
+    g_doorTiles[doorKey(layer, tileX, tileY)] = opens;
+}
+
 bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
 {
     out.clear();
@@ -1208,6 +1351,20 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
             }
         }
     }
+    // The doors seen in the box: a way through (cost 12) or a wall (0), applied after the world files below.
+    std::vector<std::tuple<int, int, bool>> doors;
+    for (const auto& [k, opens] : g_doorTiles)
+    {
+        if (static_cast<int>(k >> 40) != layer)
+        {
+            continue;
+        }
+        const int dx = static_cast<int>((k >> 20) & 0xFFFFF), dy = static_cast<int>(k & 0xFFFFF);
+        if (dx >= x0 && dy >= y0 && dx < x0 + w && dy < y0 + h)
+        {
+            doors.push_back({dx, dy, opens});
+        }
+    }
     lock.unlock();
     // The roads first (the player, 2026-11-10: «las carreteras mapeadas y el agente se moviera por ellas»): on the
     // surface, by the world files (Manolito, block R2), a road tile costs 6, so far walks follow them; ground never
@@ -1231,6 +1388,20 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
             else if (v == 22)
             {
                 v = (b & 1) ? 14 : 0;
+            }
+        }
+    }
+    for (const auto& [dx, dy, opens] : doors)
+    {
+        for (int oy = -1; oy <= 1; ++oy)
+        {
+            for (int ox = -1; ox <= 1; ++ox)
+            {
+                const int x = dx + ox, y = dy + oy;
+                if (x >= x0 && y >= y0 && x < x0 + w && y < y0 + h)
+                {
+                    step[static_cast<size_t>(y - y0) * w + (x - x0)] = opens ? 12 : 0;
+                }
             }
         }
     }
