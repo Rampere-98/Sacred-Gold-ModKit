@@ -43,6 +43,7 @@ namespace
     bool g_loadedOnce = false;
     DWORD g_inGameSince = 0;
     bool g_saveWanted = false;
+    bool g_restartSave = false; // the save wanted is the one before a restart (a fight's end and half health do)
     bool g_diedSince = false;   // died since the last save or load: no save
     int g_deathsSinceSave = 0;  // deaths since the slot was last written (kept across its loads)
     int32_t g_lastHealth = 1;
@@ -56,6 +57,7 @@ namespace
     // every half hour, the deaths counted and the places shunned were forgotten, A3 back at once where it died):
     // SacredBild-deaths.txt, the deaths since the save on the first line, then «x y unix-time» of each spot.
     std::wstring g_deathsPath;
+    std::wstring g_flagPath;    // SacredBild-save-now: the install asks for a save before a restart
     std::vector<AgentSave::DeathSpot> g_spots;
 
     void writeDeaths()
@@ -157,6 +159,7 @@ namespace
         swprintf(file, 32, L"\\save\\GAME%02d.PAK", g_slot);
         g_path = dir + file;
         g_deathsPath = dir + L"\\SacredBild-deaths.txt";
+        g_flagPath = dir + L"\\SacredBild-save-now";
         readDeaths();
         std::snprintf(g_name, sizeof(g_name), "Agente A%d", n);
         LOG("AgentSave: the copy's slot is GAME{:02d}", g_slot);
@@ -463,13 +466,19 @@ void AgentSave::onFrame()
         }
         return;
     }
-    // Every 10 min of play a save too, as a player saves (the player, 2026-11-11: the Daemon «no sube de nivel
-    // nunca» while gaining experience: only quests and levels saved, and each restart loaded a save an hour old).
-    // Counted from the last save or load; the same quiet-place rules below.
-    if (!g_saveWanted && g_actionAt && now - g_actionAt > 600000 && !g_diedSince)
+    // A restart coming (the install asks with SacredBild-save-now beside the exe): saved first (the player, 2026-11-11:
+    // the Daemon «no sube de nivel nunca» while gaining experience, each restart loading a save an hour old; «prefiero
+    // guardar a cada reinicio», not every 10 min). Looked for every 2 s; no fight and half health enough then.
+    static DWORD s_flagLookAt = 0;
+    if (now - s_flagLookAt > 2000)
     {
-        g_saveWanted = true;
-        LOG("AgentSave: 10 min since the last save or load: a save due");
+        s_flagLookAt = now;
+        if (!g_flagPath.empty() && DeleteFileW(g_flagPath.c_str()))
+        {
+            g_saveWanted = true;
+            g_restartSave = true;
+            LOG("AgentSave: a restart is coming: a save due");
+        }
     }
     // A quest done: saved once the game allows it, with no fight about and the hero alive, unless it died since.
     if (!g_saveWanted)
@@ -489,7 +498,8 @@ void AgentSave::onFrame()
     }
     // Not where enemies stand about, nor hurt (the live verifier, 2026-11-11: A1 saved beside a group and died 5 times
     // in 31 min, each load straight back among them): a player saves once the place is quiet and the hero whole.
-    if (AutoAttack::nearestHostileTiles() < 25.0 || health * 10 < hero->maxHealth * 7)
+    if (g_restartSave ? health * 2 < hero->maxHealth
+                      : AutoAttack::nearestHostileTiles() < 25.0 || health * 10 < hero->maxHealth * 7)
     {
         static DWORD s_toldAt = 0;
         if (now - s_toldAt > 30000)
@@ -506,8 +516,10 @@ void AgentSave::onFrame()
     {
         CopyFileW(g_path.c_str(), backup.c_str(), FALSE);
     }
-    LOG("AgentSave: a quest done: saving GAME{:02d} ({} of {} health)", g_slot, health, hero->maxHealth);
+    LOG("AgentSave: {}: saving GAME{:02d} ({} of {} health)", g_restartSave ? "a restart coming" : "a quest done", g_slot,
+        health, hero->maxHealth);
     g_saveWanted = false;
+    g_restartSave = false;
     g_deathsSinceSave = 0;
     writeDeaths();
     g_sub = 2;
