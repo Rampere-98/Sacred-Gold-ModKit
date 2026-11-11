@@ -172,7 +172,7 @@ namespace
     }
 
     // A save with no way on (the player, 2026-11-11: «sí, desde 10»): the hero starts again from the start, as a
-    // player would. The slot is kept aside as GAMEnn.OLD (not deleted); the new game's first quest done writes it anew.
+    // player would. The slot is kept aside as GAMEnn.BAK (not deleted); the new game's first quest done writes it anew.
     void setAside()
     {
         // One backup per hero only (the player, 2026-11-11: «apenas 1 backup por personaje, que sería el savegame
