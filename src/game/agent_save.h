@@ -3,7 +3,7 @@
 #include <ctime>
 
 // The agents' saved games (the player, 2026-11-11): each copy SacredA<n> keeps its game in its own slot,
-// GAME<9+n>.PAK (GAME10..GAME17), by the game's own save; saved when a quest is done, never after the hero died since
+// GAME<9+n>.PAK (GAME10..GAME17), by the game's own save; saved when a quest is done or a level gained, never after the hero died since
 // the last save; a hero that dies loads its last save; the copy's own game loaded once it starts. Never anywhere but
 // those copies (the player's own game folder and its GAME01..05 are left alone).
 namespace AgentSave
@@ -12,6 +12,9 @@ namespace AgentSave
     void onFrame();
     // A quest done (the journal's count went up): a save is due once the game allows it.
     void questDone();
+    // A level gained (the player, 2026-11-11: «sí, al subir»; each restart lost the levels gained since the last
+    // quest): a save is due too, on the same terms.
+    void levelUp();
     // In the start menu: the copy's saved game loaded straight from there, as the menu's Load does (Manolito, block S
     // 2b); false with none (a new game then). Asked once a start.
     bool loadFromMenu();

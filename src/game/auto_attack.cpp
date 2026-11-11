@@ -6493,6 +6493,25 @@ void AutoAttack::onFrame()
             {
                 watchStuck(now, self);
             }
+            // A level gained by the same hero (one up, not a load's change): saved as for a quest done.
+            {
+                static int s_level = 0;
+                static uint32_t s_hero = 0;
+                const int level = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56);
+                if (AgentSave::worldChanging())
+                {
+                    s_level = 0;
+                }
+                else
+                {
+                    if (s_hero == self->id && s_level && level == s_level + 1)
+                    {
+                        AgentSave::levelUp();
+                    }
+                    s_level = level;
+                    s_hero = self->id;
+                }
+            }
             writeMind(now, self, layer,
                       *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,

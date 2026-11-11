@@ -225,6 +225,12 @@ void AgentSave::questDone()
     g_saveWanted = true;
 }
 
+void AgentSave::levelUp()
+{
+    LOG("AgentSave: a level gained: a save is due");
+    questDone();
+}
+
 namespace
 {
     int g_newClass = 0;
