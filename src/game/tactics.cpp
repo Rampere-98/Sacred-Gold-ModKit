@@ -931,7 +931,7 @@ namespace
         // line said why).
         {
             static uint64_t s_seen = 0;
-            uint64_t sig = mounted ? 1 : 0;
+            uint64_t sig = (mounted ? 1 : 0) + 2 * *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10);
             for (int slot = 0; slot < kSlots; ++slot)
             {
                 const SlotArt sa = slotArt(player, slot);
@@ -954,7 +954,9 @@ namespace
                                         sa.art, !readable || !listed || ha.found, castMounted(sa.kind, sa.art, hero),
                                         static_cast<int>(slotUse(slot, sa.art)));
                 }
-                LOG("Tactics: slots{}{}", mounted ? " (mounted)" : "", list.empty() ? " empty" : list);
+                LOG("Tactics: slots{} (creature type {}){}", mounted ? " (mounted)" : "",
+                    *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10),
+                    list.empty() ? " empty" : list);
             }
         }
         for (int slot = 0; slot < kSlots; ++slot)
@@ -972,7 +974,18 @@ namespace
                 continue;
             }
             learned(sa.art).self = selfCast(sa.kind, sa.art);
-            const Art use = slotUse(slot, sa.art);
+            Art use = slotUse(slot, sa.art);
+            // The Vampiress's turn into a vampire (0x3FE) is her fighting form (the player, 2026-11-11: she «tiene
+            // equipadas habilidades que sí se pueden usar a caballo … no las usa ni a pie», and 0x3FE/0x3FF were all
+            // her slots held): cast as a buff at a hard fight's start, only from the knight's form (creature type
+            // hero+0x10 6; the vampire's taken as 7, Manolito's guess, not seen live yet) and at most every 10 min,
+            // so a wrong guess cannot flip her back and forth. Turning back (0x3FF) stays the player's.
+            if (sa.art == 0x3FE && Config::tactics.slots[slot] == Art::Auto)
+            {
+                const uint32_t type = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10);
+                const DWORD last = learned(sa.art).lastCast;
+                use = type == 6 && (!last || static_cast<int>(s.now - last) > 600000) ? Art::Buff : Art::Off;
+            }
             int rank = 0;
             uint32_t at_ = 0;
             const char* reason = "";
