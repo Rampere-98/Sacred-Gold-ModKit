@@ -3627,8 +3627,32 @@ namespace
         double best = 0.0;
         DWORD bestAt = 0, lastAt = 0, detourUntil = 0;
         int fails = 0;
+        int32_t movedX = 0, movedY = 0;     // where the hero last was 3 tiles on along a route
+        DWORD aroundSince = 0;              // since when moving along a route with no nearer for it (0: not)
     };
     Travel g_travel;
+
+    // A way round (a gate, a bridge, a river's bend: the player, 2026-11-11, «el agente continúa con problemas con
+    // las puertas»): along a route the straight line may grow before it shrinks. A hero 3 tiles on from where it was,
+    // following ClickWalk's route, is making progress, for up to 2 min with the goal no nearer.
+    bool goingAround(int32_t& movedX, int32_t& movedY, DWORD& since, const cCreature* self, DWORD now)
+    {
+        if (!self || !ClickWalk::routing())
+        {
+            return false;
+        }
+        if (std::hypot(static_cast<double>(self->x - movedX), static_cast<double>(self->y - movedY)) < 3.0 * kTileSize)
+        {
+            return false;
+        }
+        movedX = self->x;
+        movedY = self->y;
+        if (!since)
+        {
+            since = now;
+        }
+        return now - since < 120000;
+    }
     std::unordered_map<uint64_t, DWORD> g_travelBlocked;
 
     bool goalBlocked(int32_t x, int32_t y, DWORD now)
@@ -3652,10 +3676,19 @@ namespace
         {
             return true;
         }
+        static int32_t s_movedX = 0, s_movedY = 0;
+        static DWORD s_aroundSince = 0;
         if (key != s_key || distance < s_best - kTileSize)
         {
             s_key = key;
             s_best = distance;
+            s_since = now;
+            s_aroundSince = 0;
+            return false;
+        }
+        cObjectManager* om = cObjectManager::instance();
+        if (goingAround(s_movedX, s_movedY, s_aroundSince, om ? om->hero() : nullptr, now))
+        {
             s_since = now;
             return false;
         }
@@ -3826,7 +3859,7 @@ namespace
         // A new goal, or back from a fight or a collect (the time away is no lack of progress).
         if (std::abs(x - t.x) > 3 * kTileSize || std::abs(y - t.y) > 3 * kTileSize)
         {
-            t = Travel{x, y, d, now, now, 0, 0};
+            t = Travel{x, y, d, now, now, 0, 0, self->x, self->y};
         }
         if (now - t.lastAt > 2000)
         {
@@ -3838,6 +3871,11 @@ namespace
             t.best = d;
             t.bestAt = now;
             t.fails = 0;
+            t.aroundSince = 0;
+        }
+        else if (goingAround(t.movedX, t.movedY, t.aroundSince, self, now))
+        {
+            t.bestAt = now;
         }
         if (t.detourUntil && static_cast<int>(now - t.detourUntil) < 0)
         {
