@@ -14,6 +14,7 @@
 #include <cmath>
 
 using namespace Sacred;
+using AgentCursor::Aim;
 
 namespace
 {

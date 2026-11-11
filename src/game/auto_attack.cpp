@@ -2140,13 +2140,35 @@ namespace
         // Shut in (a yard behind its fence): an enemy on no tile the hero can walk to is out of reach, whatever its
         // aggro. Seen live (2026-11-10): the Dark Elf and the Wood Elf at their start chased the enemies beyond the
         // fence by turns, 4 s each, for up to 3 minutes; their aggro made them strike, so the focus kept switching.
+        // A fence, water or a wall on the straight line from the hero to `o` (the walkable test every half tile).
+        const auto lineBlocked = [&](const cObject* o) {
+            const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+            const double sx = self->x / kTileSize, sy = self->y / kTileSize;
+            const double ex = o->x / kTileSize, ey = o->y / kTileSize;
+            const int steps = static_cast<int>(std::ceil(std::max(std::abs(ex - sx), std::abs(ey - sy)) * 2.0));
+            for (int k = 2; k < steps - 1; ++k)
+            {
+                const double t = static_cast<double>(k) / steps;
+                if (ClickWalk::walkable(layer, static_cast<int>(sx + (ex - sx) * t), static_cast<int>(sy + (ey - sy) * t)) == 0)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
         const auto walledOff = [&](const cObject* o, float d) {
-            if (!o || d < melee)
+            // Next to the hero, nothing between. Within the melee reach too a fence counts (the player, 2026-11-11:
+            // the Seraphim's spear reaching a goblin over a fence, «acaba nunca pegándole»).
+            if (!o || d < 1.5f * static_cast<float>(kTileSize))
             {
                 return false;
             }
             if (!Whereabouts::area().shutIn)
             {
+                if (d < melee)
+                {
+                    return lineBlocked(o);
+                }
                 // Across water or a cliff (the player, 2026-11-11: «no detecta colisión ni casilla no pisable», the
                 // Vampiress at archers over a river): no walk there, or one far longer than the line to it.
                 const float way = MapMemory::routeTiles(*(reinterpret_cast<const uint8_t*>(self) + 0x24), static_cast<int>(self->x / kTileSize),
@@ -2160,18 +2182,11 @@ namespace
                 // Seen only over walkable ground (the player, 2026-11-11: «que la visión del agente se anulara al
                 // intentar pasar por una casilla no pisable»): a fence, water or a wall on the straight line hides it,
                 // unless a short way round is known.
-                const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
-                const double sx = self->x / kTileSize, sy = self->y / kTileSize;
-                const double ex = o->x / kTileSize, ey = o->y / kTileSize;
-                const int steps = static_cast<int>(std::ceil(std::max(std::abs(ex - sx), std::abs(ey - sy)) * 2.0));
-                bool blocked = false;
-                for (int k = 2; k < steps - 1 && !blocked; ++k)
-                {
-                    const double t = static_cast<double>(k) / steps;
-                    blocked = ClickWalk::walkable(layer, static_cast<int>(sx + (ex - sx) * t),
-                                                  static_cast<int>(sy + (ey - sy) * t)) == 0;
-                }
-                return blocked && !(way >= 0.0f && way <= line * 1.5f + 5.0f);
+                return lineBlocked(o) && !(way >= 0.0f && way <= line * 1.5f + 5.0f);
+            }
+            if (d < melee)
+            {
+                return false;
             }
             const int tx = static_cast<int>(o->x / kTileSize), ty = static_cast<int>(o->y / kTileSize);
             for (int dy = -1; dy <= 1; ++dy)
@@ -2243,8 +2258,12 @@ namespace
                 s_healthBest = currentHealth;
             }
             const bool striking = CombatState::action(self) == CombatState::Fighting || CombatState::casting(self);
+            // Striking over a fence (a spear's reach) is no progress: only its health going down is.
+            const cObject* targetObject = objects && self ? objects->object(g_target) : nullptr;
+            const bool fencedOff = targetObject && currentDistance >= 1.5f * static_cast<float>(kTileSize) &&
+                                   lineBlocked(targetObject);
             if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
-                hurtIt || (striking && currentDistance < melee))
+                hurtIt || (striking && currentDistance < melee && !fencedOff))
             {
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;
