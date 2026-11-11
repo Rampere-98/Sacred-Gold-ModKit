@@ -80,6 +80,13 @@ namespace
             LOG("AgentSave: the save functions are not where block S has them: no saves");
             return;
         }
+        // Only where the copy's SacredBild.ini asks for it ([AgentSave] Enabled=1), while it is tried on one copy.
+        const std::wstring ini = dir + L"\\SacredBild.ini";
+        if (!GetPrivateProfileIntW(L"AgentSave", L"Enabled", 0, ini.c_str()))
+        {
+            LOG("AgentSave: off for this copy ([AgentSave] Enabled=0)");
+            return;
+        }
         const int n = name[7] - L'0';
         g_slot = 9 + n;
         wchar_t file[32];
