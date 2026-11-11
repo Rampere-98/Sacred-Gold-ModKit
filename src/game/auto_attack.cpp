@@ -1327,6 +1327,9 @@ namespace
     };
     std::vector<WildHorse> g_wildHorses;
     uint32_t g_rideCode = 0, g_rideHorse = 0;
+    // A walk stuck on horseback (the analyst, 2026-11-11: A5, mounted all the time, the most «no nearer» of the eight,
+    // in a wood; a horse does not pass where a man on foot does): off for a minute, on foot, before the tile is left.
+    DWORD g_onFootUntil = 0;
 
     void sendRide(void*)
     {
@@ -1497,7 +1500,8 @@ namespace
         }
         // The 8 s between changes holds the mounting only: getting off for an enemy near is never put off (the live
         // verifier, 2026-11-10: off at 7 and 4 tiles, the gate had held it).
-        const bool gated = now - s_at < 8000 || static_cast<int>(now - s_restUntil) < 0;
+        const bool onFoot = g_onFootUntil && static_cast<int>(now - g_onFootUntil) < 0;
+        const bool gated = now - s_at < 8000 || static_cast<int>(now - s_restUntil) < 0 || onFoot;
         // Mounted: the horse stands exactly where the rider does (seen live 2026-11-10, the player's Gladiator on its
         // horse: same position each second; +0x200 & 0x10, the guess, stayed clear and the agent kept mounting).
         cObjectManager* om = cObjectManager::instance();
@@ -1555,6 +1559,11 @@ namespace
         if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && (s_approachSince || !gated))
         {
             code = 0x209;
+        }
+        else if (mounted && onFoot && now - s_at > 1500)
+        {
+            LOG("AutoAttack: the walk got no nearer on horseback: off, on foot a minute");
+            code = 0x20A;
         }
         // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
         else if (mounted && nearest < Mind::now().dismountTiles * kTileSize && now - s_at > 1500)
@@ -3755,6 +3764,28 @@ namespace
         // Each time again no nearer, left longer (the analyst, 2026-11-11: 333 «no nearer» in 3 h over the 8 copies,
         // ~1.9 h lost, the same tiles again and again, 3174,2794 39 times in one copy): 2, 10, 30 min, then an hour.
         static std::unordered_map<uint64_t, int> s_times;
+        static std::unordered_set<uint64_t> s_offFor;     // tiles tried again on foot already
+        // Kept on disk beside the game (SacredBild-parked.txt: key, times), so a restart does not try them all again
+        // (the analyst, 2026-11-11: the count of «no nearer» went up with each reinstall).
+        static std::wstring s_file;
+        if (s_file.empty())
+        {
+            wchar_t exe[MAX_PATH] = {};
+            GetModuleFileNameW(nullptr, exe, MAX_PATH);
+            s_file = exe;
+            s_file = s_file.substr(0, s_file.find_last_of(L"\\/") + 1) + L"SacredBild-parked.txt";
+            if (FILE* f = _wfopen(s_file.c_str(), L"rb"))
+            {
+                unsigned long long k = 0;
+                int n = 0;
+                while (std::fscanf(f, "%llu %d", &k, &n) == 2)
+                {
+                    s_times[k] = std::min(n, 4);
+                    s_left[k] = now;    // parked again from the start, for as long as its count says
+                }
+                std::fclose(f);
+            }
+        }
         static const DWORD kLeftMs[] = {120000, 600000, 1800000, 3600000};
         if (const auto it = s_left.find(key);
             it != s_left.end() && now - it->second < kLeftMs[std::min(s_times[key], 4) - 1])
@@ -3777,6 +3808,13 @@ namespace
             s_since = now;
             return false;
         }
+        if (now - s_since > 20000 && HeroProfile::current().mounted && !s_offFor.count(key))
+        {
+            s_offFor.insert(key);
+            g_onFootUntil = now + 60000;
+            s_since = now;
+            return false;
+        }
         if (now - s_since > 20000)
         {
             const int times = ++s_times[key];
@@ -3785,6 +3823,14 @@ namespace
                 kLeftMs[std::min(times, 4) - 1] / 60000);
             s_left[key] = now;
             s_key = 0;
+            if (FILE* f = _wfopen(s_file.c_str(), L"wb"))
+            {
+                for (const auto& [k, n] : s_times)
+                {
+                    std::fprintf(f, "%llu %d\n", static_cast<unsigned long long>(k), n);
+                }
+                std::fclose(f);
+            }
             return true;
         }
         return false;
@@ -3969,6 +4015,13 @@ namespace
             return true;
         }
         t.detourUntil = 0;
+        if (now - t.bestAt > 20000 && HeroProfile::current().mounted &&
+            !(g_onFootUntil && static_cast<int>(now - (g_onFootUntil - 60000)) < 300000))
+        {
+            g_onFootUntil = now + 60000;    // on foot before a step aside (once in 5 min)
+            t.bestAt = now;
+            return true;
+        }
         if (now - t.bestAt > 20000)
         {
             ClickWalk::cancel();
