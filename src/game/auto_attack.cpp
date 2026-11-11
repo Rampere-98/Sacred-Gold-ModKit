@@ -1613,7 +1613,9 @@ namespace
         // Each class by its own mind (Mind, docs/Mentalidades.md): the frail casters leave sooner; the player's own
         // retreat percent, once changed in the menu from its 25, rules over the class's.
         const Mind::Values& mind = Mind::now();
-        const int retreatPct = c.retreatPercent != 25 ? c.retreatPercent : mind.retreatPercent;
+        // Careful after dying twice from the same save: away 15 points sooner.
+        const int retreatPct = (c.retreatPercent != 25 ? c.retreatPercent : mind.retreatPercent) +
+                               (AgentSave::deathsSinceSave() >= 2 ? 15 : 0);
         const bool dry = Gear::healingLeft() == 0 && fc.foes >= 5;
         const bool lost = fc.foes > 0 && fc.win < mind.lostWin &&
                           health * 100 <= maximum * (dry ? mind.lostHealthDryPct : mind.lostHealthPct);
@@ -2268,6 +2270,16 @@ namespace
             // behind a graveyard's fence, within the melee look, was taken again at once, for minutes on end.
             if (const auto gone = g_unreachableAt.find(f.id);
                 g_unreachable.count(f.id) && d > std::min(melee, gone != g_unreachableAt.end() ? gone->second * 0.6f : melee))
+            {
+                continue;
+            }
+            // Careful after dying again and again from the same save (the live verifier, 2026-11-11: A1 and A3 loaded
+            // the same game a dozen times, the potions drunk and dead at the same spot each time): only those not
+            // above the hero's level are sought; a stronger one only once it strikes the hero in the melee.
+            if (AgentSave::deathsSinceSave() >= 2 && foeObject && foeObject->asCreature() && heroObject && !current &&
+                !(atHero && d <= melee) &&
+                *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(foeObject) + 0x3FE) >
+                    *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(heroObject) + 0x3FE))
             {
                 continue;
             }
@@ -4653,7 +4665,8 @@ namespace
             const bool questLost = questFc.foes > 0 && questFc.win < 0.3f;
             if (questFoe && questFoe->health > 0 && hero->isEnemy(questFoe) &&
                 (g_unreachable.count(who & 0xFFFF) || g_unreachable.count(who) || questLost ||
-                 (Gear::healingLeft() == 0 && levelOf(questFoe) + 3 > levelOf(hero))))
+                 (Gear::healingLeft() == 0 && levelOf(questFoe) + 3 > levelOf(hero)) ||
+                 (AgentSave::deathsSinceSave() >= 2 && levelOf(questFoe) > levelOf(hero))))
             {
                 static uint32_t s_toldFoe = 0;
                 if (s_toldFoe != who)

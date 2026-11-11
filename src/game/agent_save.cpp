@@ -39,6 +39,7 @@ namespace
     DWORD g_inGameSince = 0;
     bool g_saveWanted = false;
     bool g_diedSince = false;   // died since the last save or load: no save
+    int g_deathsSinceSave = 0;  // deaths since the slot was last written (kept across its loads)
     int32_t g_lastHealth = 1;
     DWORD g_actionAt = 0;       // the last save or load asked for
     int g_sub = 0;              // the event's kind for the window's thread
@@ -306,6 +307,8 @@ void AgentSave::onFrame()
     {
         if (slotFileExists())
         {
+            ++g_deathsSinceSave;
+            LOG("AgentSave: death {} since the last save", g_deathsSinceSave);
             load(now, "the hero died");
         }
         else
@@ -354,7 +357,13 @@ void AgentSave::onFrame()
     }
     LOG("AgentSave: a quest done: saving GAME{:02d} ({} of {} health)", g_slot, health, hero->maxHealth);
     g_saveWanted = false;
+    g_deathsSinceSave = 0;
     g_sub = 2;
     g_actionAt = now;
     Inject::call(&sendEvent, nullptr);
+}
+
+int AgentSave::deathsSinceSave()
+{
+    return g_deathsSinceSave;
 }
