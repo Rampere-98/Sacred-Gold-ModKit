@@ -799,6 +799,13 @@ namespace
         cEngine* engine = FrameHooks::engine();
         cObjectManager* objects = cObjectManager::instance();
         cCreature* self = engine && objects ? objects->creature(engine->controlled) : nullptr;
+        // Riding, to the hero all the same: his handler passes a move on to the horse, which swallows direct orders
+        // (Manolito, phase 2, 2026-11-12: 0x52E590; the horse with a rider, +0x200 & 4, takes none).
+        if (cCreature* hero = objects ? objects->hero() : nullptr;
+            hero && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC))
+        {
+            self = hero;
+        }
         if (!self)
         {
             return;

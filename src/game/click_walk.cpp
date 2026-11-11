@@ -548,25 +548,23 @@ namespace
         y = static_cast<int32_t>(std::lround((c.y + 0.5) * kTileSize));
     }
 
-    // Who walks: the hero, or riding (his mount field hero+0x1EC set) the horse, the controlled creature then
-    // (Manolito AD/AG). A route went on dying the moment the agent got up (the reviewer, 2026-11-12).
-    cCreature* walkerOf(cEngine* engine, cObjectManager* objects, cCreature* hero)
+    // Riding (the hero's mount field hero+0x1EC set), the controlled creature is the horse (Manolito AD/AG); the
+    // orders still go to the hero, whose handler (0x52E590) passes a move on to the horse, which swallows direct ones
+    // (Manolito, phase 2, 2026-11-12). A route went on dying the moment the agent got up (the reviewer, 2026-11-12).
+    bool controls(cEngine* engine, cObjectManager* objects, cCreature* hero)
     {
-        if (engine && objects && hero && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC))
+        if (engine->controlled == hero->id)
         {
-            if (cCreature* horse = objects->creature(engine->controlled))
-            {
-                return horse;
-            }
+            return true;
         }
-        return hero;
+        return *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) &&
+               objects && objects->creature(engine->controlled);
     }
 
     void __fastcall hookSendOrder(cEngine* engine, void* edx, cCreature* creature, cOrder* order)
     {
         cObjectManager* objects = cObjectManager::instance();
-        if (order && creature && objects && objects->hero() &&
-            (objects->hero() == creature || walkerOf(engine, objects, objects->hero()) == creature))
+        if (order && creature && objects && objects->hero() == creature)
         {
             bool ours = g_ours;
             g_ours = false;
@@ -707,7 +705,7 @@ namespace
         order.y = y;
         order.layer = layerOf(hero);    // left 0, a hero on layer 1-2 had its order snapped to layer 0 and never set off
         g_ours = true;
-        engine->sendOrder(walkerOf(engine, cObjectManager::instance(), hero), order);
+        engine->sendOrder(hero, order);
         g_ours = false;
     }
 
@@ -830,7 +828,7 @@ namespace
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         if (!g_askPending || !engine || !hero || (engine->flags & (cEngine::loading | cEngine::noWorldInput)) ||
-            engine->controlled != walkerOf(engine, objects, hero)->id)
+            !controls(engine, objects, hero))
         {
             return;
         }
@@ -845,7 +843,7 @@ namespace
             std::max(std::abs(static_cast<double>(order.x) - hero->x), std::abs(static_cast<double>(order.y) - hero->y)) /
                 kTileSize);
         g_asking = true;
-        engine->sendOrder(walkerOf(engine, objects, hero), order);
+        engine->sendOrder(hero, order);
         g_asking = false;
     }
 
@@ -860,7 +858,7 @@ namespace
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         if (!engine || !hero || (engine->flags & (cEngine::loading | cEngine::noWorldInput)) ||
-            engine->controlled != walkerOf(engine, objects, hero)->id)
+            !controls(engine, objects, hero))
         {
             finish("no hero to walk");
             return;
