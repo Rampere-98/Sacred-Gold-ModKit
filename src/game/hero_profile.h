@@ -34,6 +34,14 @@ namespace HeroProfile
         bool mounted = false;   // on a horse (hero +0x1EC, slot 18)
     };
 
+    // A weapon item's weapon-info subclass (as weaponKind above); 0 for none or not a weapon.
+    uint8_t itemWeaponKind(uint32_t id);
+    // Throwing, bow, crossbow, gun.
+    bool rangedKind(uint8_t kind);
+    // The classes whose own skills are with ranged weapons (Wood Elf: bows; Dwarf: guns and crossbows): they fight
+    // from afar whenever they have one.
+    inline bool prefersRanged(Class cls) { return cls == Class::WoodElf || cls == Class::Dwarf; }
+
     // Read now (presenting thread; the hero's stats block at +0x3A8: class +8 (1-9), level +0x56).
     Data current();
     const char* className(Class cls);

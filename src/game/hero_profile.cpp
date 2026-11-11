@@ -33,9 +33,8 @@ namespace
         return v;
     }
 
-    uint8_t weaponKind(uintptr_t hero, uint32_t slot)
+    uint8_t kindOf(uint32_t id)
     {
-        const uint32_t id = read<uint32_t>(hero + 0x1A4 + slot * 4);
         const uintptr_t objects = read<uintptr_t>(kObjects);
         const uintptr_t table = objects ? read<uintptr_t>(objects + 4) : 0;
         const uintptr_t item = id && table ? read<uintptr_t>(table + 4 * (id & 0xFFFF)) : 0;
@@ -53,6 +52,21 @@ namespace
         const uintptr_t infos = read<uintptr_t>(types + kWeaponInfo);
         return infos ? read<uint8_t>(infos + index * 0x102 + 0x1E) : 0;
     }
+
+    uint8_t weaponKind(uintptr_t hero, uint32_t slot)
+    {
+        return kindOf(read<uint32_t>(hero + 0x1A4 + slot * 4));
+    }
+}
+
+uint8_t HeroProfile::itemWeaponKind(uint32_t id)
+{
+    return kindOf(id);
+}
+
+bool HeroProfile::rangedKind(uint8_t kind)
+{
+    return kind == 6 || kind == 7 || kind == 12 || kind == 13 || kind == 14;
 }
 
 HeroProfile::Data HeroProfile::current()
@@ -78,7 +92,7 @@ HeroProfile::Data HeroProfile::current()
     {
         d.weaponKind = weaponKind(h, 12);
     }
-    d.ranged = d.weaponKind == 6 || d.weaponKind == 7 || d.weaponKind == 12 || d.weaponKind == 13 || d.weaponKind == 14;
+    d.ranged = rangedKind(d.weaponKind);
     d.mounted = read<uint32_t>(h + 0x1EC) != 0;
     return d;
 }

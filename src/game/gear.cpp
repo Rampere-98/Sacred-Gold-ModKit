@@ -11,6 +11,7 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <cmath>
 #include <vector>
 #include <atomic>
 #include <cstring>
@@ -975,6 +976,148 @@ namespace
     // Out of a fight: an empty open slot (not the active one) gets a weapon from the backpack, one of a kind the slots
     // do not have yet first (a fire sword beside the plain one), else the strongest. Main hand only (no shields, bows or
     // a second weapon: those need the game's own drop checks). One a call.
+    // A weapon slot holds a ranged weapon (bow, crossbow, throwing weapon, gun) in either hand.
+    bool slotRanged(const uint8_t* pack, int slot)
+    {
+        return HeroProfile::rangedKind(HeroProfile::itemWeaponKind(slotItem(pack, slot, 0))) ||
+               HeroProfile::rangedKind(HeroProfile::itemWeaponKind(slotItem(pack, slot, 1)));
+    }
+
+    bool g_rangedRefused = false;   // the game took no ranged weapon into a slot: not tried again this run
+
+    // Fighting from afar (the player, 2026-11-11: «las armas con mayor distancia de rango son para atacar desde lo más
+    // lejos posible»): the best ranged weapon of the backpack into an empty weapon slot. First for the classes whose
+    // skills are with them (Wood Elf, Dwarf); the others keep one too once they have three slots, for an enemy out of
+    // the melee's reach. Either hand as the game takes it (a bow goes to the bow hand, equipment 12).
+    bool fillRangedSlot(cCreature* hero, uint8_t* pack)
+    {
+        if (!g_slotsReady || g_rangedRefused)
+        {
+            return false;
+        }
+        const HeroProfile::Data profile = HeroProfile::current();
+        const int open = slotsOpen(hero);
+        if (!HeroProfile::prefersRanged(profile.cls) && open < 3)
+        {
+            return false;
+        }
+        const int active = *reinterpret_cast<const uint16_t*>(pack + kActiveSlot);
+        int empty = -1;
+        for (int slot = 0; slot < open; ++slot)
+        {
+            if (slotRanged(pack, slot))
+            {
+                return false;   // one there already
+            }
+            if (!slotItem(pack, slot, 0) && !slotItem(pack, slot, 1) && slot != active && empty < 0)
+            {
+                empty = slot;
+            }
+        }
+        void* types = typeMgr();
+        uint32_t best = 0;
+        float bestScore = 0.0f;
+        int seen = 0;
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            const uint32_t type = typeOf(id);
+            if ((flagsOf(id) & kQuestItem) || !type || !types || !HeroProfile::rangedKind(HeroProfile::itemWeaponKind(id)))
+            {
+                return;
+            }
+            ++seen;
+            if (!fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
+            {
+                return;
+            }
+            const float score = worth(id).score;
+            if (!best || score > bestScore)
+            {
+                best = id;
+                bestScore = score;
+            }
+        });
+        static DWORD s_toldAt = 0;
+        if (!s_toldAt || GetTickCount() - s_toldAt > 300000)
+        {
+            s_toldAt = GetTickCount();
+            LOG("Gear: ranged weapons in the backpack: {} ({} usable), an empty weapon slot {}", seen, best ? "one" : "none",
+                empty >= 0 ? std::to_string(empty + 1) : std::string("none"));
+        }
+        if (!best)
+        {
+            return false;
+        }
+        if (empty < 0 && HeroProfile::prefersRanged(profile.cls))
+        {
+            // No empty slot: the one not in use gives its weapons back to the backpack for it.
+            const int slot = active == 0 ? 1 : 0;
+            if (slot >= open)
+            {
+                return false;
+            }
+            uint32_t old[2] = {slotItem(pack, slot, 0), slotItem(pack, slot, 1)};
+            uint16_t cells[2] = {};
+            int sizes[2][2] = {};
+            for (int hand = 0; hand < 2; ++hand)
+            {
+                if (old[hand] && (!sizeOf(old[hand], sizes[hand][0], sizes[hand][1]) ||
+                                  !fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &cells[hand], 0)))
+                {
+                    return false;   // no room for it
+                }
+            }
+            for (uint32_t hand : {0u, 1u})
+            {
+                if (old[hand])
+                {
+                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), hand, 0, 1);
+                }
+            }
+            if (slotItem(pack, slot, 0) || slotItem(pack, slot, 1))
+            {
+                LOG("Gear: weapon slot {} would not give its weapons back: no ranged weapon this run", slot + 1);
+                g_rangedRefused = true;
+                return false;
+            }
+            for (int hand = 0; hand < 2; ++hand)
+            {
+                if (old[hand])
+                {
+                    // The cell found before the other went in: looked for again.
+                    uint16_t free = cells[hand];
+                    fn<FindFree>(g_findFree)(pack, nullptr, sizes[hand][0], sizes[hand][1], &free, 0);
+                    fn<PutItem>(g_putItem)(pack, nullptr, free, old[hand], sizes[hand][0], sizes[hand][1], 1);
+                }
+            }
+            LOG("Gear: weapon slot {} emptied for a ranged weapon (the class fights from afar)", slot + 1);
+            empty = slot;
+        }
+        if (empty < 0)
+        {
+            return false;
+        }
+        fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
+        for (uint32_t hand : {0u, 1u})
+        {
+            fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, best, 1);
+            if (slotItem(pack, empty, hand) == best)
+            {
+                LOG("Gear: ranged weapon {:x} (kind {}) put in weapon slot {} of {}, hand {}", best,
+                    HeroProfile::itemWeaponKind(best), empty + 1, open, hand);
+                return true;
+            }
+        }
+        int w = 0, h = 0;
+        uint16_t free = 0;
+        if (sizeOf(best, w, h) && fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+        {
+            fn<PutItem>(g_putItem)(pack, nullptr, free, best, w, h, 1);
+        }
+        LOG("Gear: ranged weapon {:x} not taken by weapon slot {}: not tried again", best, empty + 1);
+        g_rangedRefused = true;
+        return false;
+    }
+
     bool fillWeaponSlot(cCreature* hero, uint8_t* pack)
     {
         if (!g_slotsReady)
@@ -1772,6 +1915,9 @@ namespace
             else if (g_calm && !shop && g_settings.scrolls && g_useItem && readScroll(hero, pack))
             {
             }
+            else if (g_calm && !shop && g_settings.weaponSlots && fillRangedSlot(hero, pack))
+            {
+            }
             else if (g_calm && !shop && g_settings.weaponSlots && fillWeaponSlot(hero, pack))
             {
             }
@@ -2045,13 +2191,24 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     {
         return false;
     }
-    const float current = slotDamage(hero, pack, active, target);
+    // The weapon's distance (the player, 2026-11-11): a ranged slot is worth more for the classes made for it, and for
+    // the others against an enemy out of the melee's reach; less for them against one at hand.
+    const bool prefers = HeroProfile::prefersRanged(HeroProfile::current().cls);
+    const float tiles = std::hypot(static_cast<float>(target->x - hero->x), static_cast<float>(target->y - hero->y)) / 53.66563f;
+    const auto weigh = [&](int slot, float damage) {
+        if (!slotRanged(pack, slot))
+        {
+            return prefers ? damage * 0.8f : damage;
+        }
+        return prefers ? damage * 1.8f : tiles > 5.0f ? damage * 1.25f : damage * 0.7f;
+    };
+    const float current = weigh(active, slotDamage(hero, pack, active, target));
     int best = active;
     float bestDamage = current;
     std::string each;
     for (int slot = 0; slot < open; ++slot)
     {
-        const float d = slot == active ? 0.0f : slotDamage(hero, pack, slot, target);
+        const float d = slot == active ? 0.0f : weigh(slot, slotDamage(hero, pack, slot, target));
         each += std::to_string(slot + 1) + "=" + std::to_string(static_cast<int>(slot == active ? current : d)) + " ";
         if (d > bestDamage)
         {
