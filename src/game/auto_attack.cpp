@@ -1506,7 +1506,9 @@ namespace
             const double off = std::hypot(static_cast<double>(steed->x - self->x), static_cast<double>(steed->y - self->y));
             if (off > 2.0 * kTileSize)
             {
-                if (off > 40.0 * kTileSize)
+                // More than 10 tiles back: left behind, on foot (the Daemon walked 24 tiles back to it after each
+                // fight, the player: «no está teniendo mucha eficiencia»).
+                if (off > 10.0 * kTileSize)
                 {
                     s_at = now;     // left far behind: no detour back for it now
                     s_approachSince = 0;
@@ -3828,9 +3830,14 @@ namespace
             ClickWalk::cancel();
             if (++t.fails >= 3)
             {
-                LOG("AutoAttack: no way found to tile {},{} ({:.0f} tiles): left 3 min", static_cast<int>(x / kTileSize),
-                    static_cast<int>(y / kTileSize), d / kTileSize);
-                g_travelBlocked[key] = now + 180000;
+                // Each time again no way, left longer (the player, 2026-11-11: the Daemon «no está teniendo mucha
+                // eficiencia», 40 s lost every 3 min on a quest goal with no way to it): 3, 15, 45 min, then 2 h.
+                static std::unordered_map<uint64_t, int> s_noWay;
+                static const DWORD kNoWayMs[] = {180000, 900000, 2700000, 7200000};
+                const int times = std::min(++s_noWay[key], 4);
+                LOG("AutoAttack: no way found to tile {},{} ({:.0f} tiles, time {}): left {} min", static_cast<int>(x / kTileSize),
+                    static_cast<int>(y / kTileSize), d / kTileSize, times, kNoWayMs[times - 1] / 60000);
+                g_travelBlocked[key] = now + kNoWayMs[times - 1];
                 t = Travel{};
                 return false;
             }
