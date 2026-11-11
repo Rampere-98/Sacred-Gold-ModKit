@@ -1588,19 +1588,12 @@ void Tactics::onFrame(DWORD now)
     }
 }
 
-bool Tactics::vampireForm(unsigned long now)
+bool Tactics::vampireForm(unsigned long)
 {
+    // Manolito, block AH: the vampire form is bit 0x2000 of +0x14 (and the creature type +0x10 7), both set only by
+    // setForm 0x557040.
     const cCreature* hero = heroCreature();
-    if (!hero || HeroProfile::current().cls != HeroProfile::Class::Vampiress)
-    {
-        return false;
-    }
-    if (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10) == 7)
-    {
-        return true;
-    }
-    const auto it = g_learned.find(0x3FE);
-    return it != g_learned.end() && it->second.lastCast && now - it->second.lastCast < 180000;
+    return hero && (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x14) & 0x2000) != 0;
 }
 
 int Tactics::artsBarredMounted()

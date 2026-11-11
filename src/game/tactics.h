@@ -54,7 +54,6 @@ namespace Tactics
     int artsBarredMounted();
 
     // The Vampiress in her vampire form (the player, 2026-11-12: «al transformarse no debería montar a caballo, solo
-    // cuando no está transformada»): the creature type hero+0x10 7 (Manolito's guess, not seen live) or her turn
-    // (0x3FE) cast within the last 3 minutes (how long it lasts: not known yet).
+    // cuando no está transformada»): bit 0x2000 of hero+0x14 (Manolito, block AH).
     bool vampireForm(unsigned long now);
 }
