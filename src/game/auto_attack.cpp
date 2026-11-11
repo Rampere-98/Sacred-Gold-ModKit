@@ -1207,6 +1207,8 @@ namespace
     constexpr DWORD kUnreachableMs = 20000;
 
     DWORD g_lastTargetAt = 0;       // the last enemy taken for target
+    DWORD g_lastHurtAt = 0;         // the target's health last went down (a blow that told)
+    DWORD g_lootCount = 0;          // loot taken for good, counted (AgentStuck: progress)
     void targetTaken(DWORD now, uint32_t id)
     {
         // The same one taken again moments after a dodge or a look away (the player, 2026-11-11: the Vampiress after
@@ -2258,6 +2260,7 @@ namespace
             if (hurtIt)
             {
                 s_healthBest = currentHealth;
+                g_lastHurtAt = now;
             }
             const bool striking = CombatState::action(self) == CombatState::Fighting || CombatState::casting(self);
             // Striking over a fence (a spear's reach) is no progress: only its health going down is.
@@ -5391,6 +5394,7 @@ namespace
             {
                 LOG("AutoAttack: loot {:x} opened a window, left for good", g_target);
                 g_lootDone.insert(lootKey(g_target));
+                ++g_lootCount;
             }
             endCollect("no hero or world");
             return;
@@ -5461,6 +5465,7 @@ namespace
                     g_lootDone.clear();
                 }
                 g_lootDone.insert(lootKey(g_target));
+                ++g_lootCount;
             }
             else
             {
@@ -6078,6 +6083,63 @@ bool AutoAttack::on()
     return g_on;
 }
 
+// The agent knows when it is stuck (the player, 2026-11-11: «el agente tiene que identificar cuando está atascado, y
+// avisarte para que revises el motivo del atasco»): 150 s in the game world with no progress of any kind (not 6 tiles
+// from where it stood, no blow that told, no loot taken, no quest done), not in a shop or a load, alive. Then a report
+// line to SacredBild-stuck.txt beside the game (read by the coordinator's watcher, which looks into it) and to the log
+// (the mosaic shows it). Again only after 10 min, or once it got going and stuck 20 tiles elsewhere.
+static void watchStuck(DWORD now, const cCreature* self)
+{
+    static int32_t s_x = 0, s_y = 0;
+    static DWORD s_since = 0, s_hurt = 0, s_loot = 0, s_quests = 0, s_toldAt = 0;
+    static int32_t s_toldX = 0, s_toldY = 0;
+    const bool moved = std::hypot(static_cast<double>(self->x - s_x), static_cast<double>(self->y - s_y)) > 6 * kTileSize;
+    const bool busy = AgentSave::worldChanging() || Gear::shopOpen() || !heroAlive();
+    if (!s_since || moved || busy || g_lastHurtAt != s_hurt || g_lootCount != s_loot || g_questsDoneAt != s_quests)
+    {
+        s_x = self->x;
+        s_y = self->y;
+        s_since = now;
+        s_hurt = g_lastHurtAt;
+        s_loot = g_lootCount;
+        s_quests = g_questsDoneAt;
+        return;
+    }
+    if (now - s_since < 150000)
+    {
+        return;
+    }
+    const bool elsewhere =
+        std::hypot(static_cast<double>(self->x - s_toldX), static_cast<double>(self->y - s_toldY)) > 20 * kTileSize;
+    if (s_toldAt && now - s_toldAt < 600000 && !elsewhere)
+    {
+        return;
+    }
+    s_toldAt = now;
+    s_toldX = self->x;
+    s_toldY = self->y;
+    const HeroProfile::Data hero = HeroProfile::current();
+    const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+    SYSTEMTIME t;
+    GetLocalTime(&t);
+    const std::string line = std::format(
+        "{:02d}:{:02d}:{:02d} | {} nivel {} | casilla {},{} capa {} | {} | mision {},{} | objetivo {:x} | {} s sin avanzar",
+        t.wHour, t.wMinute, t.wSecond, HeroProfile::className(hero.cls), hero.level, static_cast<int>(self->x / kTileSize),
+        static_cast<int>(self->y / kTileSize), layer, intentSpanish(), static_cast<int>(g_questX / kTileSize),
+        static_cast<int>(g_questY / kTileSize), g_target, (now - s_since) / 1000);
+    LOG("AgentStuck: {}", line);
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exe, MAX_PATH);
+    std::wstring path = exe;
+    path = path.substr(0, path.find_last_of(L"\\/") + 1) + L"SacredBild-stuck.txt";
+    if (FILE* f = _wfopen(path.c_str(), L"ab"))
+    {
+        std::fwrite(line.data(), 1, line.size(), f);
+        std::fwrite("\r\n", 1, 2, f);
+        std::fclose(f);
+    }
+}
+
 // Fighting at the weapon's distance (the player, 2026-11-11: «las armas con mayor distancia de rango son para atacar
 // desde lo más lejos posible, y las de cuerpo a cuerpo son más eficientes en distancias cortas»; «no he visto el combate
 // a distancia»). With a bow, crossbow, throwing weapon or gun an enemy that comes within 3 tiles gets a step back, to
@@ -6322,6 +6384,7 @@ void AutoAttack::onFrame()
             {
                 LOG("AutoAttack: stone {:x} keeps its dialog open, left to the player", g_target);
                 g_lootDone.insert(lootKey(g_target));
+                ++g_lootCount;
                 s_answers = 0;
                 endCollect("dialog");
                 return;
@@ -6365,6 +6428,7 @@ void AutoAttack::onFrame()
         {
             LOG("AutoAttack: stone {:x} used ({} answers)", g_target, s_answers);
             g_lootDone.insert(lootKey(g_target));
+            ++g_lootCount;
             g_target = 0;
         }
         s_answers = 0;
@@ -6414,6 +6478,10 @@ void AutoAttack::onFrame()
             noteTrail(now, self->x, self->y, layer);
             watchTutorial(now);
             ride(now, self);
+            if (g_on)
+            {
+                watchStuck(now, self);
+            }
             writeMind(now, self, layer,
                       *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(self) + 0x3A8 + 0x56));
             scanQuestMarks(now, self->x, self->y,
