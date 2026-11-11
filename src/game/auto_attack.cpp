@@ -4928,7 +4928,10 @@ namespace
                         }
                         const int32_t wx = static_cast<int32_t>((nx + 0.5) * kTileSize);
                         const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
-                        const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
+                        // A chest near holds the walk to the quest's centre only for its first minute (the stuck solver,
+                        // 2026-11-11: chests already failed kept the hero ringing the zone's edge, 94 % of «going to look»).
+                        const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize &&
+                                               (g_chestHeading != g_chestId || now - g_chestSince < 60000);
                         const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
                         if (!chestNear && wd > 0.6 * kTileSize && !approachStalled(wx, wy, wd, now))
                         {
@@ -5003,7 +5006,8 @@ namespace
                     const int32_t wy = static_cast<int32_t>((ny + 0.5) * kTileSize);
                     g_homeX = wx;
                     g_homeY = wy;
-                    const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize;
+                    const bool chestNear = g_chestId && g_chestBest < 40.0 * kTileSize &&
+                                               (g_chestHeading != g_chestId || now - g_chestSince < 60000);
                     const double wd = std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y));
                     // Shut in, the nearest tile reached and nothing happening: the script may wait on a trigger
                     // elsewhere in the yard (the arena's barriers open only after the «Equipo» tutorial, fired by the
