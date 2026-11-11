@@ -240,7 +240,7 @@ namespace
 {
     // [Display] NoActivate (the agent copies): the window the player was in, given back the foreground once the
     // game has taken it at its start (it waits for its activation there: kept from it, it hung, 2026-11-11), within
-    // its first 90 s; later a copy brought forward by the player stays in front.
+    // its first 90 s, each time it takes it; later a copy brought forward by the player stays in front.
     HWND g_playerWindow = nullptr;
     DWORD g_startedAt = 0;
     bool g_givenBack = false;
@@ -271,10 +271,11 @@ namespace
             g_givenBack = true;
             return;
         }
-        if (g_playerWindow && IsWindow(g_playerWindow) && SetForegroundWindow(g_playerWindow))
+        // Each time it takes it in those 90 s (seen: taken again a second after it was given back, then kept 14 s).
+        static int s_times = 0;
+        if (g_playerWindow && IsWindow(g_playerWindow) && SetForegroundWindow(g_playerWindow) && ++s_times <= 3)
         {
-            g_givenBack = true;
-            LOG("Focus: NoActivate: the foreground given back to the player's window");
+            LOG("Focus: NoActivate: the foreground given back to the player's window (time {})", s_times);
         }
     }
 }
