@@ -24,6 +24,8 @@ namespace MapMemory
     // for routes, its tile and those around it; one held shut by a script or a key is a wall there, whatever the world
     // files say of its doorway.
     void noteDoor(int layer, int tileX, int tileY, bool opens);
+    // The doors that open, known on `layer` within the box [x0, x1) x [y0, y1): their tiles.
+    std::vector<std::pair<int, int>> doorsThatOpen(int layer, int x0, int y0, int x1, int y1);
     // The walk's length in tiles along a route (the player, 2026-11-11: «la distancia de la ruta entera», not the
     // straight line), worked out on a thread of its own and kept two minutes for ends within 4 tiles: -1 while it is
     // being worked out, -2 with no route (too far apart for one search, or none over what is known).

@@ -1311,6 +1311,22 @@ void MapMemory::noteDoor(int layer, int tileX, int tileY, bool opens)
     g_doorTiles[doorKey(layer, tileX, tileY)] = opens;
 }
 
+std::vector<std::pair<int, int>> MapMemory::doorsThatOpen(int layer, int x0, int y0, int x1, int y1)
+{
+    std::vector<std::pair<int, int>> out;
+    const std::lock_guard lock(g_lock);
+    for (const auto& [key, opens] : g_doorTiles)
+    {
+        const int l = static_cast<int>((key >> 40) & 0xFF);
+        const int x = static_cast<int>((key >> 20) & 0xFFFFF), y = static_cast<int>(key & 0xFFFFF);
+        if (opens && l == (layer & 0xFF) && x >= x0 && y >= y0 && x < x1 && y < y1)
+        {
+            out.emplace_back(x, y);
+        }
+    }
+    return out;
+}
+
 bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::vector<std::pair<int, int>>& out)
 {
     out.clear();

@@ -139,6 +139,23 @@ namespace
                 sectors[slot] = s && s->originX == wantX && s->originY == wantY ? s : nullptr;
             }
             state.assign(kCells, 0);
+            // A shut door that opens is a way through, not the wall the tile test makes of it (the player,
+            // 2026-11-11: «el agente continúa con problemas con las puertas para conseguir llegar a sus objetivos»: a
+            // goal behind a gate, a graveyard's, had the route end at the nearest tile outside). Its tile and those
+            // around it; the hero opens it when it is on the way (AutoAttack's doorOnTheWay).
+            for (const auto& [dx, dy] : MapMemory::doorsThatOpen(layer, baseX, baseY, baseX + kSide, baseY + kSide))
+            {
+                for (int y = dy - 1; y <= dy + 1; ++y)
+                {
+                    for (int x = dx - 1; x <= dx + 1; ++x)
+                    {
+                        if (inside(x, y))
+                        {
+                            state[(y - baseY) * kSide + (x - baseX)] = 1;
+                        }
+                    }
+                }
+            }
             for (const Cell& c : avoid)
             {
                 if (inside(c.x, c.y))

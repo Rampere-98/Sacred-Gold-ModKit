@@ -6519,6 +6519,18 @@ void AutoAttack::onFrame()
             if (g_on)
             {
                 watchStuck(now, self);
+                // The doors on the screen noted for the routes every 3 s, before one is needed (each is noted as it
+                // is weighed: acceptDoor), so a plan goes through a gate rather than around a wall.
+                static DWORD s_doorScanAt = 0;
+                if (now - s_doorScanAt > 3000)
+                {
+                    s_doorScanAt = now;
+                    AimAssist::Target none;
+                    AimAssist::findObject(4000.0f, [](uint32_t id, void*) {
+                        acceptDoor(id, nullptr);
+                        return false;
+                    }, nullptr, none);
+                }
             }
             // A level gained by the same hero (one up, not a load's change): saved as for a quest done.
             {
