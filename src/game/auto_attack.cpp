@@ -1671,7 +1671,8 @@ namespace
                 callHorse(now, horse, 0.0);
             }
         }
-        if (!steed || g_retreatUntil)
+        // A dead horse is not mounted nor called (the code reviewer: 3 tries and 10 min of rest spent on it).
+        if (!steed || g_retreatUntil || steed->health <= 0)
         {
             s_approachSince = 0;
             return;
@@ -1705,12 +1706,21 @@ namespace
             close += std::hypot(static_cast<double>(f.x - self->x), static_cast<double>(f.y - self->y)) < 8.0 * kTileSize;
         }
         const bool hardOnFoot = close >= 3 && Config::tactics.arts && Tactics::artsBarredMounted() > 0;
+        // Off for a hard fight: not back up until 20 s without one (the code reviewer: off with three near, up again
+        // as soon as fewer than three, back and forth). An ordinary fight is still fought from the saddle.
+        static DWORD s_hardAt = 0;
+        if (hardOnFoot)
+        {
+            s_hardAt = now;
+        }
+        const bool settled = !s_hardAt || now - s_hardAt > 20000;
         // The Vampiress rides only in her knight's form (the player, 2026-11-12).
         const bool vampire = Tactics::vampireForm(now);
         uint32_t code = 0;
         // Up again once the nearest enemy is 5 tiles off: the saddle is the better place to fight from (the player,
         // 2026-11-11), so only an enemy at hand puts the walk to the horse off.
-        if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && !vampire && (s_approachSince || !gated))
+        if (!mounted && longWalk && nearest > 5.0 * kTileSize && !hardOnFoot && !vampire && settled &&
+            (s_approachSince || !gated))
         {
             code = 0x209;
         }
