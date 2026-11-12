@@ -1260,6 +1260,14 @@ namespace
         return master;
     }
 
+    // The Dark Elf's swap result is always one of his runes, whose 3D model (PAK upgrade_delf.grn) the master's
+    // page loads and the game crashes on (Manolito, block AK: Sacred.exe+4502AE, sprintf over a texture name; A5
+    // twice, same step): no swap for him.
+    bool swapCrashes()
+    {
+        return HeroProfile::current().cls == HeroProfile::Class::DarkElf;
+    }
+
     // One step of the swap a frame; true while the master's window holds the agent.
     bool swapRunes(cCreature* hero, uint8_t* pack)
     {
@@ -1338,7 +1346,7 @@ namespace
         }
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         const uint32_t price3 = *reinterpret_cast<const uint32_t*>(0xAD4B2C + 3 * 4);
-        if (filled < 3 && countForeignRunes(hero, pack) + filled >= 3 && gold >= price3 + 300)
+        if (filled < 3 && !swapCrashes() && countForeignRunes(hero, pack) + filled >= 3 && gold >= price3 + 300)
         {
             // Another rune of another class into the next free slot.
             cObjectManager* objects = cObjectManager::instance();
@@ -2204,7 +2212,7 @@ bool Gear::packFull()
 
 int Gear::foreignRunes()
 {
-    return g_ready ? g_foreignRunes.load() : 0;
+    return g_ready && !swapCrashes() ? g_foreignRunes.load() : 0;
 }
 
 void Gear::setHorseUpgrade(bool better)
