@@ -2729,7 +2729,10 @@ namespace
             // fight sought). Focus (the player's wish, 2026-11-10): a trip decided on is gone through to the end;
             // only danger (one that attacks) stops it on the way.
             // Farming is seeking the enemies (the intent); elsewhere only as the setting says, never on a trip.
-        const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm) && !Gear::wantsShop() && !g_questTravel;
+        // C8 (docs/Criterios.md): no fight of its choosing under 60 % of health; those that come are fought all the same.
+        const bool fitToSeek = !heroObject || heroObject->maxHealth <= 0 || heroObject->health * 100 >= heroObject->maxHealth * 60;
+        const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm) && !Gear::wantsShop() && !g_questTravel &&
+                          fitToSeek;
             if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
@@ -3266,10 +3269,17 @@ namespace
             g.who = sign.id;
             g_questBook.push_back(g);
         }
+        // C6 (docs/Criterios.md: A3 646 «off to the quest» over 326 goals): the goal followed now counts 30 % nearer, so
+        // two goals at much the same way are not flipped between at each step.
+        static uint32_t s_followed = 0;
         for (QuestGoal& g : g_questBook)
         {
             g.distance = wayLength(heroX, heroY, g.x, g.y);
             g.blocked = goalBlocked(g.x, g.y, now);
+            if (s_followed && (g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7)) == s_followed)
+            {
+                g.distance *= 0.7;
+            }
         }
         std::stable_sort(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& a, const QuestGoal& b) {
             if (a.blocked != b.blocked)
@@ -3293,6 +3303,7 @@ namespace
             return false;
         }
         const QuestGoal& g = g_questBook.front();
+        s_followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
         x = g.x;
         y = g.y;
         radius = g.radius;
@@ -4009,7 +4020,10 @@ namespace
         static double s_best = 0.0;
         static DWORD s_since = 0;
         static std::unordered_map<uint64_t, DWORD> s_left;
-        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx)) << 32) | static_cast<uint32_t>(wy);
+        // C5 (docs/Criterios.md: 87 stucks, A3 11 times at 3320,2679, the same goal 4-6 times): by a cell of 6 tiles,
+        // not the exact tile, so the next tile beside it does not start the count again.
+        const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(wx / (6 * kTileSize))) << 32) |
+                             static_cast<uint32_t>(wy / (6 * kTileSize));
         // Each time again no nearer, left longer (the analyst, 2026-11-11: 333 «no nearer» in 3 h over the 8 copies,
         // ~1.9 h lost, the same tiles again and again, 3174,2794 39 times in one copy): 2, 10, 30 min, then an hour.
         static std::unordered_map<uint64_t, int> s_times;
@@ -4070,7 +4084,8 @@ namespace
                 LOG("AutoAttack: {} parked tiles taken from the other copies", shared);
             }
         }
-        static const DWORD kLeftMs[] = {120000, 600000, 1800000, 3600000};
+        // C5: 2 min, then 1 h, 6 h and a day (the old 10/30/60 min let the same cell take an hour over and over).
+        static const DWORD kLeftMs[] = {120000, 3600000, 21600000, 86400000};
         if (const auto it = s_left.find(key);
             it != s_left.end() && now - it->second < kLeftMs[std::min(s_times[key], 4) - 1])
         {

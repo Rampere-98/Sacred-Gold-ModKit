@@ -527,6 +527,8 @@ namespace
         return n;
     }
 
+    uint32_t g_potionPrice = 600;   // the cheapest healing potion last seen on sale (the reserve for equipment buys)
+
     bool buyPotion(cCreature* hero, uint8_t* pack)
     {
         if (countHealing(pack) >= wantHealing())
@@ -572,6 +574,10 @@ namespace
                     }
                 });
             }
+        }
+        if (cheapest != 0xFFFFFFFFu)
+        {
+            g_potionPrice = cheapest;
         }
         for (int page = 0; page < kStockPages && !done; ++page)
         {
@@ -634,7 +640,11 @@ namespace
     {
         void* inv = inventory();
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
-        const uint32_t budget = static_cast<uint32_t>(gold * static_cast<uint64_t>(100 - g_settings.keepGoldPercent) / 100);
+        // C7 (docs/Criterios.md: 6 of 7 cheapest upgrades out of a budget of half the gold; A8 dead with 21 916): the
+        // gold less a whole restock of potions and 300, never less than the old share.
+        const uint64_t reserve = static_cast<uint64_t>(wantHealing()) * g_potionPrice + 300;
+        const uint32_t share = static_cast<uint32_t>(gold * static_cast<uint64_t>(100 - g_settings.keepGoldPercent) / 100);
+        const uint32_t budget = std::max<uint32_t>(share, gold > reserve ? static_cast<uint32_t>(gold - reserve) : 0u);
         // The cheapest upgrade seen over budget, told once per merchant (what it would buy with more gold).
         static uint32_t toldFor = 0;
         uint32_t cheapest = 0, cheapestPrice = 0;
@@ -707,6 +717,13 @@ namespace
             if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && type >= 0x14FF && type <= 0x1696 &&
                 (tried == g_runesTried.end() || tried->second < heroLevel))
             {
+                // C7 (docs/Criterios.md: 76 readings refused, 14 runes, ~7 s each): another class's rune is never read
+                // (canUseItem(id, 1) gives the complaint, 6 = the class; ITEMS_RE §3.3); it waits for the rune swap.
+                if (g_canUse && !fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) == 6)
+                {
+                    g_runesTried[id] = 0x7FFFFFFF;
+                    return;
+                }
                 rune = id;
             }
         });
