@@ -1399,6 +1399,9 @@ namespace
     using LearnCombo = void(__fastcall*)(uint8_t* page, void*, uint32_t player);
     std::atomic<bool> g_wantCombo{false};
     DWORD g_comboTriedAt = 0;
+    // Paid at the master with no combo seen after (2026-11-12: 1500 gold a try, 4 tries a visit, comboCount still 0 on
+    // 5 copies): no more tries this run until the combo list is read right (Manolito asked).
+    bool g_comboPaid = false;
 
     int comboCount(const uint8_t* st)
     {
@@ -1516,6 +1519,15 @@ namespace
         {
             LOG("Gear: combo learned at the master: arts {:x} {:x} {:x} (levels {} {} {}) for {} gold, {} combos now",
                 ids[0], ids[1], ids[2], levels[0], levels[1], levels[2], gold - left, after);
+            g_wantCombo = false;
+            g_comboTriedAt = GetTickCount();
+            return true;
+        }
+        if (left < gold)
+        {
+            LOG("Gear: combo paid ({} gold) but not seen among the hero's combos (+0x10E): no more tries this run",
+                gold - left);
+            g_comboPaid = true;
             g_wantCombo = false;
             g_comboTriedAt = GetTickCount();
             return true;
@@ -1864,7 +1876,7 @@ namespace
                 uint32_t ids[4];
                 uint16_t levels[4];
                 const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
-                const bool want = comboCount(st) == 0 && comboArts(st, ids, levels) &&
+                const bool want = !g_comboPaid && comboCount(st) == 0 && comboArts(st, ids, levels) &&
                                   gold >= (g_wantCombo ? 2000u : 3000u) &&
                                   (!g_comboTriedAt || GetTickCount() - g_comboTriedAt > 1800000);
                 if (want != g_wantCombo.exchange(want) && want)
