@@ -343,9 +343,81 @@ namespace
     }
 }
 
+namespace
+{
+    // bindTextures (0x401BE0) drains Granny's global new-texture queue and formats each
+    // entry's name with sprintf("%s.TGA"). The name points into the .grn that registered
+    // the texture; if that file was freed before the queue drained (e.g. a weapon model
+    // replaced right after a slot switch) the pointer dangles and sprintf faults (4502AE).
+    constexpr uintptr_t kTgaSprintfCall = 0x401C57;
+    constexpr uintptr_t kSprintf = 0x849AE1;
+    using SprintfFn = int(__cdecl*)(char*, const char*, ...);
+
+    bool readableName(const char* name)
+    {
+        if (!name)
+        {
+            return false;
+        }
+        MEMORY_BASIC_INFORMATION mbi{};
+        if (!VirtualQuery(name, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT ||
+            (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) ||
+            !(mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_READ |
+                             PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)))
+        {
+            return false;
+        }
+        const auto end = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
+        for (size_t i = 0; i < 64; ++i)
+        {
+            if (reinterpret_cast<uintptr_t>(name + i) >= end)
+            {
+                return false;
+            }
+            const auto c = static_cast<unsigned char>(name[i]);
+            if (c == 0)
+            {
+                return i > 0;
+            }
+            if (c < 0x20 || c > 0x7E)
+            {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    int __cdecl guardedTgaName(char* buf, const char* fmt, const char* name)
+    {
+        if (!readableName(name))
+        {
+            static std::atomic<int> logged{0};
+            if (logged.fetch_add(1) < 20)
+            {
+                LOG("GrannyAsync: dangling texture name {:08x} in bindTextures, skipped", reinterpret_cast<uintptr_t>(name));
+            }
+            name = "x";   // a file that does not exist; the loop must still drain the queue
+        }
+        return reinterpret_cast<SprintfFn>(kSprintf)(buf, fmt, name);
+    }
+}
+
 void GrannyAsync::installModelGuard()
 {
     Patch::hook(g_origGetModel, static_cast<uintptr_t>(0x411F50), &hookGetModel, "cGrannyModelManager::getModel");
+
+    const auto* site = reinterpret_cast<const uint8_t*>(kTgaSprintfCall);
+    int32_t rel = 0;
+    std::memcpy(&rel, site + 1, 4);
+    if (site[0] == 0xE8 && kTgaSprintfCall + 5 + rel == kSprintf &&
+        Patch::redirectCall(kTgaSprintfCall, reinterpret_cast<const void*>(&guardedTgaName)))
+    {
+        LOG("GrannyAsync: texture-name guard installed");
+    }
+    else
+    {
+        LOG("GrannyAsync: texture-name guard not installed (unexpected bytes at {:08x})", kTgaSprintfCall);
+    }
 }
 
 GrannyAsync::ModelLock::ModelLock()
