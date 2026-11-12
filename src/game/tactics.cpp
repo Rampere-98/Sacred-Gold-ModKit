@@ -1,5 +1,6 @@
 #include "game/tactics.h"
 #include "game/hero_profile.h"
+#include "game/mind.h"
 #include "game/agent_cursor.h"
 #include "game/gear.h"
 #include "config.h"
@@ -728,7 +729,7 @@ namespace
         case 0x429: case 0x419: case 0x41A: case 0x41B: case 0x41C: case 0x41D:     // dark elf: sudden fury, traps
         case 0x431: case 0x40E:                                         // vampiress: multi-hit (both forms)
         case 0x40B: case 0x40C: case 0x40D:                             // vampiress: bats
-        case 0x436: case 0x43D: case 0x43E: case 0x43F: case 0x38: case 0x39:      // dwarf
+        case 0x436: case 0x43D: case 0x43E: case 0x43F: case 0x38:                 // dwarf
         case 0x44D: case 0x44E: case 0x44F: case 0x3C: case 0x3E: case 0x41: case 0x40: case 0x42: case 0x43: // daemon
             return Art::Area;
         // Buffs and summons
@@ -760,7 +761,8 @@ namespace
         // Form changes, teleport: the player's call
         // Dwarf's Greed (0x37): more gold from the one it is cast on, no harm; cast every 2 s at an enemy behind a
         // fence, 170 times (seen live, 2026-11-09). Not the agent's.
-        case 0x37:
+        // Dwarf's Entrench (0x39): roots the hero in place (Builds.md §8, «evitar»), no use for a hero who moves.
+        case 0x37: case 0x39:
         case 0x1: case 0x24: case 0x3FE: case 0x3FF:
         case 0x446: case 0x449: case 0x44A: case 0x44B: case 0x44C:
             return Art::Off;
@@ -1078,6 +1080,18 @@ namespace
                     rank = 9;
                     at_ = worst;
                     reason = "blinding the enemy that hurts most";
+                }
+            }
+            // The class's panic art (docs/Mentalidades.md §2, panicArt and panicPercent): with health below the mark
+            // and enemies on the hero, cast before anything else, potions or not (the escapes 0x1, 0x24, 0x413 are
+            // no blows: their own use leaves them off otherwise).
+            {
+                const Mind::Values& m = Mind::now();
+                if (m.panicArt && sa.art == m.panicArt && s.threat && s.health * 100 < s.maxHealth * m.panicPercent)
+                {
+                    rank = 11;
+                    at_ = target ? s.target : 0;
+                    reason = "panic (the class guide's art)";
                 }
             }
             if (!rank)
