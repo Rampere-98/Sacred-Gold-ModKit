@@ -1,4 +1,5 @@
 #include "game/frame_hooks.h"
+#include <exception>
 #include "game/map_memory.h"
 #include "game/agent_cursor.h"
 #include "game/auto_attack.h"
@@ -214,18 +215,43 @@ namespace
         {
             D3DStats::onFrame();
         }
-        GrannyAsync::onFrame();
-        GrannyParallel::onFrame();
-        GpuSkin::onFrame();
-        Focus::onFrame();
-        Controller::onFrame();
-        HeroProfile::onFrame();
-        AgentCursor::onFrame();
-        AutoAttack::onFrame();
-        ClickWalk::onFrame();
-        AutoPotion::onFrame();
-        ModkitMenu::onFrame();
-        logGameState();
+        // A C++ exception out of the mod's per-frame work ended the game through abort (A4 2026-11-12: std::bad_alloc
+        // on this thread, 3 min into a run): caught here, the stage logged, the frame goes on.
+        const char* stage = "GrannyAsync";
+        try
+        {
+            GrannyAsync::onFrame();
+            stage = "GrannyParallel";
+            GrannyParallel::onFrame();
+            stage = "GpuSkin";
+            GpuSkin::onFrame();
+            stage = "Focus";
+            Focus::onFrame();
+            stage = "Controller";
+            Controller::onFrame();
+            stage = "HeroProfile";
+            HeroProfile::onFrame();
+            stage = "AgentCursor";
+            AgentCursor::onFrame();
+            stage = "AutoAttack";
+            AutoAttack::onFrame();
+            stage = "ClickWalk";
+            ClickWalk::onFrame();
+            stage = "AutoPotion";
+            AutoPotion::onFrame();
+            stage = "ModkitMenu";
+            ModkitMenu::onFrame();
+            stage = "logGameState";
+            logGameState();
+        }
+        catch (const std::exception& e)
+        {
+            static int told = 0;
+            if (++told <= 20)
+            {
+                LOG("Frame hooks: {} threw ({}): the frame goes on", stage, e.what());
+            }
+        }
         if (DeviceProxy* proxy = DeviceProxy::instance())
         {
             proxy->onPresent(thread);
