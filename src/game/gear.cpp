@@ -1243,6 +1243,7 @@ namespace
     using UiCall = void(__fastcall*)(uint8_t* ui, void*);
     using UiShow = void(__fastcall*)(uint8_t* ui, void*, int show);
     int g_swapsDone = 0;
+    bool g_masterDone = false;     // the swaps over with the window still open (A2 2026-11-12: show(0) left it open)
 
     uint8_t* masterWindow()
     {
@@ -1266,7 +1267,12 @@ namespace
         {
             s_openAt = 0;
             s_told = false;
+            g_masterDone = false;
             return false;
+        }
+        if (g_masterDone)
+        {
+            return false;   // the window's show(0) does not close it: AutoAttack's I closes it with the inventory
         }
         const DWORD now = GetTickCount();
         if (!s_openAt)
@@ -1377,6 +1383,7 @@ namespace
         fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(lotto))[0x24 / 4])(lotto, nullptr, 0);
         fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(master))[0x24 / 4])(master, nullptr, 0);
         g_foreignRunes = countForeignRunes(hero, pack);
+        g_masterDone = true;
         return true;
     }
 
@@ -2167,7 +2174,7 @@ bool Gear::shopOpen()
 
 bool Gear::craftsmanOpen()
 {
-    return g_ready && masterWindow() != nullptr;
+    return g_ready && !g_masterDone && masterWindow() != nullptr;
 }
 
 float Gear::expectedHit(uint32_t targetId)
