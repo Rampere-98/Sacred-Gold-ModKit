@@ -5573,6 +5573,28 @@ namespace
             // At the quest's goal: still the quest, looking around it (not «explore»: the analyst saw the two
             // swapping every second, 172 lines in 10 minutes).
             setIntent(Intent::Quest, "at the quest's goal: looking around it");
+            // Within the goal's ring but walled off from it (the player, 2026-11-12: A5 behind a house by the grave
+            // digger's yard at 3190,2773, asking for the goal every 4 s for minutes): after 30 s still 3 tiles or more
+            // off, the way in near the goal, as travel() does when no walk gets nearer.
+            static DWORD s_offGoalSince = 0;
+            const double offGoal = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
+            if ((qx || qy) && offGoal > 3.0 * kTileSize)
+            {
+                if (!s_offGoalSince)
+                {
+                    s_offGoalSince = now;
+                }
+                else if (now - s_offGoalSince > 30000 && entranceNearGoal(now, self, qx, qy))
+                {
+                    s_offGoalSince = now;
+                    g_roamAt = now;
+                    return;
+                }
+            }
+            else
+            {
+                s_offGoalSince = 0;
+            }
         }
         else if (g_intent != Intent::Farm || !g_farmKnown)
         {
