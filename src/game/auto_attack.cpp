@@ -4332,6 +4332,41 @@ namespace
     // a yard with no way on). Step by step, 30 s apart: first all «left for now» marks are forgotten (who was spoken
     // to, goals travel gave up on), then a walk of 15 tiles each time a new way round (the tile reachable nearest it).
     // Fights and collects (no roam for 3 s) and any jump (a portal, a teleport) start the watch again.
+    // The ways out of where the hero is shut in: those MapMemory saw it jump through, plus the game's own (a tpstart
+    // tile at hand, the stairs anchors beside an interior's landing inside, a house's door in the yard).
+    std::vector<std::pair<int, int>> waysOutAround(int layer, int htx, int hty)
+    {
+        std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius);
+        // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
+        // way out is there; Manolito, block L).
+        for (const Teleports::Interior& in : Teleports::interiors())
+        {
+            if (in.start && std::abs(in.outX - htx) <= Whereabouts::kRadius && std::abs(in.outY - hty) <= Whereabouts::kRadius)
+            {
+                ways.emplace_back(in.outX, in.outY);
+            }
+            else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
+            {
+                for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
+                {
+                    ways.push_back(a);
+                }
+            }
+            else if (!in.start && layer == 0 && std::abs(in.outX - htx) <= Whereabouts::kRadius &&
+                     std::abs(in.outY - hty) <= Whereabouts::kRadius)
+            {
+                // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
+                // stairs anchors beside it.
+                ways.emplace_back(in.outX, in.outY);
+                for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
+                {
+                    ways.push_back(a);
+                }
+            }
+        }
+        return ways;
+    }
+
     bool stuckGuard(DWORD now, const cCreature* self)
     {
         // Where the hero stood every 2 s: stuck while all of the last 60 s (or more) fit in a box of 16 tiles. Seen
@@ -4458,34 +4493,7 @@ namespace
             const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
             int bx = 0, by = 0;
             double best = 1e18;
-            std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius);
-            // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
-            // way out is there; Manolito, block L).
-            for (const Teleports::Interior& in : Teleports::interiors())
-            {
-                if (in.start && std::abs(in.outX - htx) <= Whereabouts::kRadius && std::abs(in.outY - hty) <= Whereabouts::kRadius)
-                {
-                    ways.emplace_back(in.outX, in.outY);
-                }
-                else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
-                {
-                    for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
-                    {
-                        ways.push_back(a);
-                    }
-                }
-                else if (!in.start && layer == 0 && std::abs(in.outX - htx) <= Whereabouts::kRadius &&
-                         std::abs(in.outY - hty) <= Whereabouts::kRadius)
-                {
-                    // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
-                    // stairs anchors beside it.
-                    ways.emplace_back(in.outX, in.outY);
-                    for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
-                    {
-                        ways.push_back(a);
-                    }
-                }
-            }
+            std::vector<std::pair<int, int>> ways = waysOutAround(layer, htx, hty);
             for (const auto& [ex, ey] : ways)
             {
                 const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
@@ -5125,7 +5133,7 @@ namespace
                         // its teleport tiles (tpstart_g_03/04 -> 3293,2717, Manolito), not by a path.
                         static std::unordered_map<uint64_t, DWORD> s_triedWayOut;
                         const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
-                        for (const auto& [ex, ey] : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+                        for (const auto& [ex, ey] : waysOutAround(layer, htx, hty))
                         {
                             const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
                             if (const auto t = s_triedWayOut.find(wk); t != s_triedWayOut.end() && now - t->second < 120000)

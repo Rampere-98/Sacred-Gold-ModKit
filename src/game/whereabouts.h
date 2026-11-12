@@ -9,7 +9,7 @@
 // agent goes to the reachable tile nearest it (by the gate, where a script may open the way) and waits there.
 namespace Whereabouts
 {
-    constexpr int kRadius = 40;     // tiles around the hero the fill looks at
+    constexpr int kRadius = 64;     // tiles around the hero the fill looks at (40 let a 49-tile cave look open: 2026-11-12)
 
     struct Area
     {
