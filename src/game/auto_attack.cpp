@@ -1925,10 +1925,10 @@ namespace
         // C4 (docs/Criterios.md: 3 potions or more in a fight were 38.6 % of the near-deaths): two drunk and two or
         // more still up, the fight is left now, whatever the health.
         const bool drained = CombatLearn::fightPotions() >= 2 && fc.foes >= 2 && !quickOne;
-        const bool doomed = drained || !quickOne &&
+        const bool doomed = drained || (!quickOne &&
                             ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
                              (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
-                             (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f));
+                             (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f)));
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
         // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
         // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
