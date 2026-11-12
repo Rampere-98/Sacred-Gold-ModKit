@@ -2165,6 +2165,11 @@ bool Gear::shopOpen()
     return inv && *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
 }
 
+bool Gear::craftsmanOpen()
+{
+    return g_ready && masterWindow() != nullptr;
+}
+
 float Gear::expectedHit(uint32_t targetId)
 {
     if (!g_ready)

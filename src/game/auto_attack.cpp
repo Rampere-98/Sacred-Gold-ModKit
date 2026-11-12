@@ -7230,12 +7230,13 @@ void AutoAttack::onFrame()
     // The merchant trip: the shop the agent opened is the trip's; once Gear has nothing more there, it is closed.
     // The inventory left open (a help window's, the player's earlier): with it open a pick up stays on the cursor
     // instead of going to the backpack (seen live 2026-11-09). Closed (I, its key) at once while the agent collects,
-    // else after 3 s open with no click of the player's for 8 s; never at a shop.
+    // else after 3 s open with no click of the player's for 8 s; never at a shop nor at a combo master (A2 2026-11-12:
+    // closed with the first rune in the swap's slot, 19 visits and no swap).
     static DWORD s_inventorySince = 0, s_inventoryClosedAt = 0;
     {
         cUI_Manager* ui = cUI_Manager::instance();
         cUI_Window2* inventory = ui && (ui->flags & cUI_Manager::inGame) ? ui->window(cUI_Manager::Window::inventory) : nullptr;
-        if (g_on && foreground && inventory && inventory->visible() && !Gear::shopOpen())
+        if (g_on && foreground && inventory && inventory->visible() && !Gear::shopOpen() && !Gear::craftsmanOpen())
         {
             if (!s_inventorySince)
             {
