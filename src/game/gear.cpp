@@ -1363,6 +1363,9 @@ namespace
                 *reinterpret_cast<uint16_t*>(slot) = 1;
                 *reinterpret_cast<uint16_t*>(slot + 2) = 0x1C;
                 *reinterpret_cast<uint32_t*>(slot + 4) = rune;
+                // +8 the object's type, as the player's drop fills it (Manolito, block AK): left 0, doSwap made the
+                // result's model from nothing (A5 crashed twice in sprintf over its texture name, same runes).
+                *reinterpret_cast<uint32_t*>(slot + 8) = typeOf(rune);
                 fn<UiCall>(kLottoRefresh)(lotto, nullptr);
                 LOG("Gear: rune {:x} (type {:x}, another class) into the swap's slot {}", rune, typeOf(rune), i + 1);
                 return true;
