@@ -761,6 +761,13 @@ namespace
                 LOG("AutoAttack: well {:x} used", id);
                 return true;
             }
+            // Any other fixed object (ids 8000xxxx: levers, shrines, usable things) stays too once used; not loot left
+            // behind (the findings verifier, 2026-11-12: 3191,2773, 3279,2786 and 3504,2478 counted as «still there»).
+            if (id & kFixedId)
+            {
+                LOG("AutoAttack: fixed object {:x} used", id);
+                return true;
+            }
         }
         if (static_cast<int>(now - g_lootAtSince) > static_cast<int>(kLootAtMs))
         {

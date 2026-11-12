@@ -75,7 +75,7 @@ namespace
     // No enemy of the game takes half the hero's health each second for long: a rate above that is a misread (a
     // load, a transformation or a death landing in one look; A8's Daemon, 2026-11-12: ORC_WARRIOR learned at 720 %/s,
     // GOBLIN_CHAMP at 35 %/s, both measured under 1 %; she fled a lone goblin she kills in one blow).
-    constexpr float kMaxRate = 0.5f;
+    constexpr float kMaxRate = 0.25f;   // the findings verifier: p99 measured 6.9 %/s over 19k fights
     constexpr float kTypePrior = 3.0f;          // a kind's own measure counts as this many samples of the model's
     float g_w[kFeatures] = {std::log(0.01f + kFloor), 0.5f, 0.5f, 0.0f};
     int g_samples = 0;
@@ -731,7 +731,7 @@ void CombatLearn::observe(const Look& look)
             s.health = f.health;
             s.ranged = s.ranged || f.ranged;
             s.lastSeen = now;
-            s.predicted = std::max(0.0f, std::exp(predictLog(s, heroMax, heroLevel)) - kFloor);
+            s.predicted = std::clamp(std::exp(predictLog(s, heroMax, heroLevel)) - kFloor, 0.0f, kMaxRate);
             if (f.atHero)
             {
                 weights += std::max(s.predicted, kFloor);
