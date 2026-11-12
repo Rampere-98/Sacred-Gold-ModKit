@@ -4223,6 +4223,104 @@ namespace
         return true;
     }
 
+    // The ways out of where the hero is shut in: those MapMemory saw it jump through, plus the game's own (a tpstart
+    // tile at hand, the stairs anchors beside an interior's landing inside, a house's door in the yard).
+    // The game's own first (`gameCount` of them): MapMemory's can be wrong (a save loaded looked like a jump, A5
+    // 2026-11-12, two «portals» inside a cave tried for 10 min while the stairs anchor sat by its landing).
+    std::vector<std::pair<int, int>> waysOutAround(int layer, int htx, int hty, size_t* gameCount = nullptr)
+    {
+        std::vector<std::pair<int, int>> ways;
+        // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
+        // way out is there; Manolito, block L).
+        for (const Teleports::Interior& in : Teleports::interiors())
+        {
+            if (in.start && std::abs(in.outX - htx) <= Whereabouts::kRadius && std::abs(in.outY - hty) <= Whereabouts::kRadius)
+            {
+                ways.emplace_back(in.outX, in.outY);
+            }
+            else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
+            {
+                for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
+                {
+                    ways.push_back(a);
+                }
+            }
+            else if (!in.start && layer == 0 && std::abs(in.outX - htx) <= Whereabouts::kRadius &&
+                     std::abs(in.outY - hty) <= Whereabouts::kRadius)
+            {
+                // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
+                // stairs anchors beside it.
+                ways.emplace_back(in.outX, in.outY);
+                for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
+                {
+                    ways.push_back(a);
+                }
+            }
+        }
+        if (gameCount)
+        {
+            *gameCount = ways.size();
+        }
+        for (const auto& w : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+        {
+            if (std::find(ways.begin(), ways.end(), w) == ways.end())
+            {
+                ways.push_back(w);
+            }
+        }
+        return ways;
+    }
+
+    // Shut in with a goal outside (a farming zone, a shop, the quest): the way out first, the game's own ahead, each
+    // tried once in 2 min (A5 2026-11-12: farming sent it 3199 tiles off from inside a cave, between the quest's
+    // tries of its way out, so it never got there).
+    bool towardWayOut(DWORD now, const cCreature* self, int32_t x, int32_t y)
+    {
+        if (!Whereabouts::area().shutIn ||
+            Whereabouts::reachable(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize)) == 1)
+        {
+            return false;
+        }
+        static std::unordered_map<uint64_t, DWORD> s_tried;
+        static DWORD s_askAt = 0;
+        static uint64_t s_told = 0;
+        const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
+        const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+        for (const auto& [ex, ey] : waysOutAround(layer, htx, hty))
+        {
+            const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
+            if (const auto t = s_tried.find(wk); t != s_tried.end() && now - t->second < 120000)
+            {
+                continue;
+            }
+            if (std::abs(ex - htx) <= 1 && std::abs(ey - hty) <= 1)
+            {
+                s_tried[wk] = now;
+                continue;
+            }
+            const int32_t wx = static_cast<int32_t>((ex + 0.5) * kTileSize);
+            const int32_t wy = static_cast<int32_t>((ey + 0.5) * kTileSize);
+            if (approachStalled(wx, wy, std::hypot(static_cast<double>(wx - self->x), static_cast<double>(wy - self->y)), now))
+            {
+                s_tried[wk] = now;
+                continue;
+            }
+            if (wk != s_told)
+            {
+                s_told = wk;
+                LOG("AutoAttack: shut in, the goal at {},{} outside: to the way out at {},{} first",
+                    static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), ex, ey);
+            }
+            if (!ClickWalk::routing() && now - s_askAt > 4000)
+            {
+                s_askAt = now;
+                ClickWalk::walkTo(wx, wy, false);
+            }
+            return true;
+        }
+        return false;
+    }
+
     bool travel(DWORD now, const cCreature* self, int32_t x, int32_t y, DWORD& askAt)
     {
         if (doorOnTheWay(now, self, x, y))
@@ -4234,6 +4332,12 @@ namespace
         {
             g_travel.lastAt = now;
             g_travel.bestAt = now;      // the wait is no lack of progress
+            return true;
+        }
+        if (towardWayOut(now, self, x, y))
+        {
+            g_travel.lastAt = now;
+            g_travel.bestAt = now;      // going out first is no lack of progress
             return true;
         }
         const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(x / kTileSize)) << 32) |
@@ -4332,54 +4436,6 @@ namespace
     // a yard with no way on). Step by step, 30 s apart: first all «left for now» marks are forgotten (who was spoken
     // to, goals travel gave up on), then a walk of 15 tiles each time a new way round (the tile reachable nearest it).
     // Fights and collects (no roam for 3 s) and any jump (a portal, a teleport) start the watch again.
-    // The ways out of where the hero is shut in: those MapMemory saw it jump through, plus the game's own (a tpstart
-    // tile at hand, the stairs anchors beside an interior's landing inside, a house's door in the yard).
-    // The game's own first (`gameCount` of them): MapMemory's can be wrong (a save loaded looked like a jump, A5
-    // 2026-11-12, two «portals» inside a cave tried for 10 min while the stairs anchor sat by its landing).
-    std::vector<std::pair<int, int>> waysOutAround(int layer, int htx, int hty, size_t* gameCount = nullptr)
-    {
-        std::vector<std::pair<int, int>> ways;
-        // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
-        // way out is there; Manolito, block L).
-        for (const Teleports::Interior& in : Teleports::interiors())
-        {
-            if (in.start && std::abs(in.outX - htx) <= Whereabouts::kRadius && std::abs(in.outY - hty) <= Whereabouts::kRadius)
-            {
-                ways.emplace_back(in.outX, in.outY);
-            }
-            else if (!in.start && std::abs(in.inX - htx) <= Whereabouts::kRadius && std::abs(in.inY - hty) <= Whereabouts::kRadius)
-            {
-                for (const auto& a : Teleports::anchorsNear(layer, in.inX, in.inY, 6))
-                {
-                    ways.push_back(a);
-                }
-            }
-            else if (!in.start && layer == 0 && std::abs(in.outX - htx) <= Whereabouts::kRadius &&
-                     std::abs(in.outY - hty) <= Whereabouts::kRadius)
-            {
-                // A house's door in the yard (HQ_HE_3_3_1's tprausz tiles, Manolito): the landing itself and the
-                // stairs anchors beside it.
-                ways.emplace_back(in.outX, in.outY);
-                for (const auto& a : Teleports::anchorsNear(layer, in.outX, in.outY, 6))
-                {
-                    ways.push_back(a);
-                }
-            }
-        }
-        if (gameCount)
-        {
-            *gameCount = ways.size();
-        }
-        for (const auto& w : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
-        {
-            if (std::find(ways.begin(), ways.end(), w) == ways.end())
-            {
-                ways.push_back(w);
-            }
-        }
-        return ways;
-    }
-
     bool stuckGuard(DWORD now, const cCreature* self)
     {
         // Where the hero stood every 2 s: stuck while all of the last 60 s (or more) fit in a box of 16 tiles. Seen
