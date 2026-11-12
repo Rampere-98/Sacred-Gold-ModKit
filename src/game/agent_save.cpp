@@ -373,6 +373,21 @@ void AgentSave::onFrame()
         return;
     }
     const DWORD now = GetTickCount();
+    // A restart coming (the install asks with SacredBild-save-now beside the exe): saved first (the player, 2026-11-11:
+    // the Daemon «no sube de nivel nunca» while gaining experience, each restart loading a save an hour old; «prefiero
+    // guardar a cada reinicio», not every 10 min). Looked for every 2 s; no fight and half health enough then.
+    // First thing each frame (2026-11-12: 7 of 8 copies never saw it, an earlier return of the frame's in the way).
+    static DWORD s_flagLookAt = 0;
+    if (now - s_flagLookAt > 2000)
+    {
+        s_flagLookAt = now;
+        if (!g_flagPath.empty() && DeleteFileW(g_flagPath.c_str()))
+        {
+            g_saveWanted = true;
+            g_restartSave = true;
+            LOG("AgentSave: a restart is coming: a save due");
+        }
+    }
     cUI_Manager* ui = cUI_Manager::instance();
     cEngine* engine = FrameHooks::engine();
     const bool loading = engine && (engine->flags & cEngine::loading);
@@ -502,20 +517,6 @@ void AgentSave::onFrame()
             ExitProcess(0);
         }
         return;
-    }
-    // A restart coming (the install asks with SacredBild-save-now beside the exe): saved first (the player, 2026-11-11:
-    // the Daemon «no sube de nivel nunca» while gaining experience, each restart loading a save an hour old; «prefiero
-    // guardar a cada reinicio», not every 10 min). Looked for every 2 s; no fight and half health enough then.
-    static DWORD s_flagLookAt = 0;
-    if (now - s_flagLookAt > 2000)
-    {
-        s_flagLookAt = now;
-        if (!g_flagPath.empty() && DeleteFileW(g_flagPath.c_str()))
-        {
-            g_saveWanted = true;
-            g_restartSave = true;
-            LOG("AgentSave: a restart is coming: a save due");
-        }
     }
     // A quest done: saved once the game allows it, with no fight about and the hero alive, unless it died since.
     if (!g_saveWanted)
