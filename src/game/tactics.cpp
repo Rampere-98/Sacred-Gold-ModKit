@@ -1055,6 +1055,31 @@ namespace
             default:
                 break;
             }
+            // The Seraphim's Irritation (0x12, «cegar»: the enemy loses sight of its target and wanders) always on the
+            // enemy that takes the most of her health per second (the player, 2026-11-12: «la serafín debería cegar
+            // siempre al enemigo que le causa más DPS»), above the plain single-target arts, below a heal.
+            if (sa.art == 0x12 && HeroProfile::current().cls == HeroProfile::Class::Seraphim &&
+                Config::tactics.slots[slot] != Art::Off)
+            {
+                uint32_t worst = 0;
+                float worstRate = 0.0f;
+                for (int i = 0; i < s.count; ++i)
+                {
+                    const float rate = CombatLearn::danger(s.foes[i].id);
+                    if (rate > worstRate)
+                    {
+                        worstRate = rate;
+                        worst = s.foes[i].id;
+                    }
+                }
+                rank = 0;
+                if (worst)
+                {
+                    rank = 9;
+                    at_ = worst;
+                    reason = "blinding the enemy that hurts most";
+                }
+            }
             if (!rank)
             {
                 continue;
