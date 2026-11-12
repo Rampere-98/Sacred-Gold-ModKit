@@ -2682,6 +2682,39 @@ namespace
             {
                 continue;
             }
+            // C1 and C2 (docs/Criterios.md, 2026-11-12: enemies two levels or more above the hero gave 67 % of the
+            // near-deaths for 4 % of the experience; packs 87 % with them): never sought, only fought once they strike
+            // in the melee. Two levels above at most (one at levels 1-4); no pack of 5 above the hero, 10 at levels
+            // 1-4, 20 ever (the pack: the same leader, obj +0x24D, within 600 u of it).
+            if (foeObject && foeObject->asCreature() && heroObject && !current && !(atHero && d <= melee))
+            {
+                const auto lv = [](const cObject* o)
+                { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x3FE)); };
+                const int fl = lv(foeObject), hl = lv(heroObject);
+                if (fl >= hl + 2 || (hl <= 4 && fl >= hl + 1))
+                {
+                    continue;
+                }
+                const int32_t leader = *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(foeObject) + 0x24D);
+                if (leader > 0)
+                {
+                    int pack = 0;
+                    for (int j = 0; j < count; ++j)
+                    {
+                        const cObject* o = objects->object(foes[j].id);
+                        if (o && foes[j].health > 0 &&
+                            *reinterpret_cast<const int32_t*>(reinterpret_cast<const uint8_t*>(o) + 0x24D) == leader &&
+                            std::hypot(static_cast<double>(o->x - foeObject->x), static_cast<double>(o->y - foeObject->y)) < 600.0)
+                        {
+                            ++pack;
+                        }
+                    }
+                    if ((pack >= 5 && fl > hl) || (pack >= 10 && hl <= 4) || pack >= 20)
+                    {
+                        continue;
+                    }
+                }
+            }
             if (walledOff(foeObject, d))
             {
                 continue;
