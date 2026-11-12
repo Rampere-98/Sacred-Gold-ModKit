@@ -4252,6 +4252,9 @@ namespace
         Findings::note("door", self->x, self->y, "goal {},{}: to the way in at {},{}", gx, gy, bx, by);
         remember("usa la entrada cerca del destino");
         ClickWalk::walkTo(static_cast<int32_t>((bx + 0.5) * kTileSize), static_cast<int32_t>((by + 0.5) * kTileSize), false);
+        // The order held 20 s: the roam's travel to the goal took it over within 10 s and the hero never reached the
+        // way in (the solver's fix L, 2026-11-12: A2, A3, A4).
+        g_doorHoldUntil = now + 20000;
         return true;
     }
 
@@ -5011,6 +5014,49 @@ namespace
         g_questTravel = false;
         bool questHere = false;
         Whereabouts::update(layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize));
+        // A position watch of its own (the solver, case A7, 2026-11-12 06:52: 190 «going to look» on one spot 8 tiles
+        // from the quest's goal, the Dwarf boxed in by a bench and a fence): every quest return zeroes g_roamAt, so the
+        // roam's own progress test never ran. 25 s per step on one spot (3 tiles), no dialog and no collect: the walk
+        // cancelled, the book's goal parked 3 min per step, a walk back along the trail to a point 8+ tiles off.
+        {
+            static int32_t s_px = 0, s_py = 0;
+            static DWORD s_since = 0;
+            static int s_step = 0;
+            if (!s_since || std::hypot(static_cast<double>(self->x - s_px), static_cast<double>(self->y - s_py)) > 3.0 * kTileSize)
+            {
+                s_px = self->x;
+                s_py = self->y;
+                s_since = now;
+                s_step = 0;
+            }
+            else if (now - s_since > 25000u * static_cast<DWORD>(s_step + 1) && !UiNav::npcDialogOpen() && !g_collecting &&
+                     !Gear::shopOpen() && !Gear::craftsmanOpen())
+            {
+                ++s_step;
+                LOG("AutoAttack: no progress for {} s on this spot (step {}): the goal left {} min, a walk out",
+                    (now - s_since) / 1000, s_step, 3 * s_step);
+                Findings::note("stuck", self->x, self->y, "no progress for {} s (step {})", (now - s_since) / 1000, s_step);
+                ClickWalk::cancel();
+                if (!g_questBook.empty())
+                {
+                    const QuestGoal& g = g_questBook.front();
+                    g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(g.x / kTileSize)) << 32) |
+                                    static_cast<uint32_t>(g.y / kTileSize)] = now + 180000u * static_cast<DWORD>(s_step);
+                }
+                for (auto it = g_trail.rbegin(); it != g_trail.rend(); ++it)
+                {
+                    if (it->layer == layer &&
+                        std::hypot(static_cast<double>(it->x - self->x), static_cast<double>(it->y - self->y)) > 8.0 * kTileSize)
+                    {
+                        ClickWalk::walkTo(it->x, it->y, false);
+                        break;
+                    }
+                }
+                s_since = now;
+                g_roamAt = 0;
+                return;
+            }
+        }
         // On another layer (a house's floor, a cellar) only a goal near at hand: the journal's tiles are the
         // overworld's, but seen live (2026-11-09) the Vampiress starts in her house on layer 2 with the main quest 3
         // tiles off, and left it alone (no quest off layer 0) to roam against the walls for 20 minutes.
