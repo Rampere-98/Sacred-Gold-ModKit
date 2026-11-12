@@ -551,8 +551,12 @@ namespace
                 {
                     if (c.blocked)
                     {
-                        // Tried and never reached: a hollow diamond.
-                        dl->AddQuad(n, e, so, w, IM_COL32(120, 120, 140, 160));
+                        // Tried and never reached: a hollow diamond (over the wall colour when the game says so).
+                        if (c.scan == 2)
+                        {
+                            dl->AddQuadFilled(n, e, so, w, IM_COL32(140, 52, 36, 255));
+                        }
+                        dl->AddQuad(n, e, so, w, IM_COL32(255, 120, 200, 230), 1.5f);
                     }
                     else if (c.scan == 1)
                     {
@@ -562,8 +566,10 @@ namespace
                     }
                     else if (c.scan == 2)
                     {
-                        // Not walkable (tree, rock, water, wall).
-                        dl->AddQuadFilled(n, e, so, w, IM_COL32(28, 16, 16, 255));
+                        // Not walkable (tree, rock, water, wall): a brick red that stands out from the black of
+                        // the unexplored (the player, 2026-11-12: «las colisiones no están siendo pintadas»; it was
+                        // 28,16,16, unseen on black).
+                        dl->AddQuadFilled(n, e, so, w, IM_COL32(140, 52, 36, 255));
                     }
                     continue;
                 }
