@@ -1757,6 +1757,28 @@ namespace
             LOG("AutoAttack: {} enemies near and arts barred on horseback: fighting on foot", close);
             code = 0x20A;
         }
+        // Off events the game does not act on (A6 2026-11-12 20:03-20:08: «getting off» each 1.5 s for 5 min, the mount
+        // field still set, the hero stuck): after 4 in a row, none for a minute, the walk out going on from the saddle.
+        static int s_offSent = 0;
+        static DWORD s_offRestUntil = 0;
+        if (!mounted)
+        {
+            s_offSent = 0;
+        }
+        if (code == 0x20A && s_offRestUntil && static_cast<int>(now - s_offRestUntil) < 0)
+        {
+            code = 0;
+        }
+        else if (code == 0x20A && ++s_offSent > 4)
+        {
+            LOG("AutoAttack: 4 off events and the hero still up (mount field {:x}, controlled {:x}, horse {:x}): none for "
+                "a minute",
+                *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(self) + 0x1EC),
+                FrameHooks::engine() ? FrameHooks::engine()->controlled : 0u, horse);
+            s_offSent = 0;
+            s_offRestUntil = now + 60000;
+            code = 0;
+        }
         if (!code)
         {
             s_approachSince = 0;
