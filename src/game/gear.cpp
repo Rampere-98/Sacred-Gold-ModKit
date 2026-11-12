@@ -1332,12 +1332,87 @@ namespace
         return master;
     }
 
-    // The Dark Elf's swap result is always one of his runes, whose 3D model (PAK upgrade_delf.grn) the master's
-    // page loads and the game crashes on (Manolito, block AK: Sacred.exe+4502AE, sprintf over a texture name; A5
-    // twice, same step): no swap for him.
+    // The Dark Elf's swap result loads his rune's model (PAK upgrade_delf.grn), whose texture name crashed the game
+    // (Manolito, block AK: Sacred.exe+4502AE, sprintf over it; A5 twice). The guard on that sprintf (GrannyAsync,
+    // installModelGuard, 2026-11-12) now gives it a harmless name: his swaps back on (A5 carried 11 runes of other
+    // classes, never swapped).
     bool swapCrashes()
     {
-        return HeroProfile::current().cls == HeroProfile::Class::DarkElf;
+        return false;
+    }
+
+    // The 4:1 swap picks its rune (Manolito, block AL): the class's rune list 0x6D4160 (cdecl, a std vector of u32
+    // types, rising), the arrows' index [0x17EA250] and its reset flag [0x9E14C8], doLottoSelect 0x6D4250 (thiscall ui,
+    // heroType, short dir; 2 keeps the index). An art the hero has not learned yet is worth the fourth rune and the
+    // 2000 gold (the player, 2026-11-12: «aprender todas las artes es bueno, de los mejores upgrades»); with all of
+    // them learned, the 3:1's random rune of the class gives more levels for the runes spent.
+    using RuneList = void(__cdecl*)(void* vec, int heroType);
+    using ArtOfType = uint16_t(__fastcall*)(void* types, void*, uint32_t type);
+    using FindArt = int(__fastcall*)(void* stats, void*, short art);
+    using LottoSelect = void(__fastcall*)(uint8_t* ui, void*, int heroType, short dir);
+    using GameDelete = void(__cdecl*)(void* p);
+    constexpr uintptr_t kRuneList = 0x6D4160, kArtOfType = 0x43AF10, kFindArt = 0x581D40, kLottoSelect = 0x6D4250;
+    constexpr uintptr_t kGameDelete = 0x849410, kLottoIndex = 0x17EA250, kLottoReset = 0x9E14C8;
+
+    bool g_no41Run = false;   // a 4:1 pick that did not hold: 3:1 only for the rest of this run
+
+    struct RunePick
+    {
+        uint32_t type = 0;
+        int index = -1;
+    };
+
+    // The first rune type of the hero's class whose art he lacks, not one of `skip` (picked already this visit) nor
+    // one he carries unread.
+    RunePick unlearnedRune(cCreature* hero, uint8_t* pack, const std::vector<uint32_t>& skip)
+    {
+        RunePick pick;
+        void* types = typeMgr();
+        if (!types)
+        {
+            return pick;
+        }
+        const int heroType = *(reinterpret_cast<const uint8_t*>(hero) + 0x10);
+        uint32_t vec[4] = {};   // STLport vector: start, finish, end of storage (one spare)
+        fn<RuneList>(kRuneList)(vec, heroType);
+        const auto* first = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(vec[0]));
+        const auto* last = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(vec[1]));
+        std::vector<uint32_t> carried;
+        cObjectManager* objects = cObjectManager::instance();
+        eachItem(pack, [&](uint32_t id, int, int, int) {
+            const auto* o = objects ? reinterpret_cast<const uint8_t*>(objects->object(id)) : nullptr;
+            if (o && *reinterpret_cast<const uintptr_t*>(o) == kRuneVtable && fn<CanUse>(g_canUse)(hero, nullptr, id, 1))
+            {
+                carried.push_back(typeOf(id));
+            }
+        });
+        uint8_t* stats = reinterpret_cast<uint8_t*>(hero) + kStats;
+        const auto recBegin = *reinterpret_cast<const uintptr_t*>(stats + 0x102);
+        const auto recEnd = *reinterpret_cast<const uintptr_t*>(stats + 0x106);
+        const int count = recEnd > recBegin ? static_cast<int>((recEnd - recBegin) / 0x16) : 0;
+        if (first && last && last > first && last - first < 512)
+        {
+            for (const uint32_t* t = first; t < last; ++t)
+            {
+                const uint16_t art = fn<ArtOfType>(kArtOfType)(types, nullptr, *t);
+                if (!art || std::find(skip.begin(), skip.end(), *t) != skip.end() ||
+                    std::find(carried.begin(), carried.end(), *t) != carried.end())
+                {
+                    continue;
+                }
+                if (fn<FindArt>(kFindArt)(stats, nullptr, static_cast<short>(art)) >= count)
+                {
+                    pick.type = *t;
+                    pick.index = static_cast<int>(t - first);
+                    break;
+                }
+            }
+        }
+        if (vec[0])
+        {
+            fn<GameDelete>(kGameDelete)(reinterpret_cast<void*>(static_cast<uintptr_t>(vec[0])));
+        }
+        return pick;
     }
 
     // One step of the swap a frame; true while the master's window holds the agent.
@@ -1346,11 +1421,17 @@ namespace
         static DWORD s_openAt = 0;
         static bool s_told = false;
         uint8_t* master = masterWindow();
+        static RunePick s_pick;                 // the 4:1's rune for the swap being filled
+        static std::vector<uint32_t> s_picked;  // the types picked this visit (learned only once read)
+        static bool s_no41 = false;             // the pick did not hold: no 4:1 this visit
         if (!master)
         {
+            s_no41 = false;
             s_openAt = 0;
             s_told = false;
             g_masterDone = false;
+            s_pick = {};
+            s_picked.clear();
             return false;
         }
         if (g_masterDone)
@@ -1400,8 +1481,10 @@ namespace
                 *reinterpret_cast<uint32_t*>(lotto + kPrice) = 0;
                 fn<UiCall>(kLottoRefresh)(lotto, nullptr);
                 ++g_swapsDone;
-                LOG("Gear: rune swap done: new rune {:x} (type {:x}) in the backpack ({} swaps)", made, typeOf(made),
-                    g_swapsDone);
+                LOG("Gear: rune swap done: new rune {:x} (type {:x}) in the backpack ({} swaps){}", made, typeOf(made),
+                    g_swapsDone, s_pick.type ? (typeOf(made) == s_pick.type ? ", the art picked" : ", NOT the art picked")
+                                             : "");
+                s_pick = {};
                 g_runesTried.erase(made);
             }
             else
@@ -1418,7 +1501,25 @@ namespace
         }
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         const uint32_t price3 = *reinterpret_cast<const uint32_t*>(0xAD4B2C + 3 * 4);
-        if (filled < 3 && !swapCrashes() && countForeignRunes(hero, pack) + filled >= 3 && gold >= price3 + 300)
+        const uint32_t price4 = *reinterpret_cast<const uint32_t*>(0xAD4B2C + 4 * 4);
+        const int foreign = countForeignRunes(hero, pack);
+        // At the start of a swap: an art still to learn makes it a 4:1 for that art, with the runes and the gold.
+        if (filled == 0)
+        {
+            s_pick = {};
+            if (!s_no41 && !g_no41Run && foreign >= 4 && price4 && price4 < 100000 && gold >= price4 + 300)
+            {
+                s_pick = unlearnedRune(hero, pack, s_picked);
+                if (s_pick.type)
+                {
+                    LOG("Gear: rune swap 4:1 for type {:x} (an art not learned yet, index {} of the class's list)",
+                        s_pick.type, s_pick.index);
+                }
+            }
+        }
+        const int target = s_pick.type ? 4 : 3;
+        if (filled < target && !swapCrashes() && foreign + filled >= target &&
+            gold >= (target == 4 ? price4 : price3) + 300)
         {
             // Another rune of another class into the next free slot.
             cObjectManager* objects = cObjectManager::instance();
@@ -1451,7 +1552,45 @@ namespace
                 return true;
             }
         }
-        if (filled == 3)
+        if (filled == 4 && s_pick.type)
+        {
+            // The rune picked: the arrows' index set and kept by doLottoSelect, after the refreshes of the filling
+            // (each draws a random one); paid and swapped in the same frame, no refresh between.
+            const int heroType = *(reinterpret_cast<const uint8_t*>(hero) + 0x10);
+            {
+                const GrannyAsync::ModelLock lock;
+                *reinterpret_cast<uint32_t*>(kLottoIndex) = static_cast<uint32_t>(s_pick.index);
+                *reinterpret_cast<uint8_t*>(kLottoReset) = 0;
+                fn<LottoSelect>(kLottoSelect)(lotto, nullptr, heroType, 2);
+            }
+            const uint32_t shown = *reinterpret_cast<const uint32_t*>(lotto + kPrice);
+            if (shown != s_pick.type)
+            {
+                // The runes back and the window closed; the next visit swaps 3:1.
+                LOG("Gear: rune swap 4:1: the page shows type {:x}, not {:x}: closing, the next visit 3:1", shown,
+                    s_pick.type);
+                s_no41 = true;
+                s_pick = {};
+                g_no41Run = true;
+                fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(lotto))[0x24 / 4])(lotto, nullptr, 0);
+                fn<UiShow>((*reinterpret_cast<uintptr_t* const*>(master))[0x24 / 4])(master, nullptr, 0);
+                g_masterDone = true;
+                return true;
+            }
+            if (gold >= price4 && price4 && price4 < 100000)
+            {
+                fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price4));
+                {
+                    const GrannyAsync::ModelLock lock;
+                    fn<UiCall>(kDoSwap)(lotto, nullptr);
+                }
+                s_picked.push_back(s_pick.type);
+                LOG("Gear: 4 runes of other classes swapped for {} gold (type {:x}, an art not learned yet)", price4,
+                    s_pick.type);
+                return true;
+            }
+        }
+        if (filled == 3 && !s_pick.type)
         {
             const uint32_t price = *reinterpret_cast<const uint32_t*>(0xAD4B2C + filled * 4);
             if (gold >= price && price && price < 100000)
