@@ -30,4 +30,7 @@ namespace AutoAttack
 
     // The hero kept on foot (off the horse) for the given ms: a save waits for it.
     void footFor(unsigned long ms);
+    // Whether the hero may ride this horse, by the game's own test (Manolito, Reiten): its riding skill against the
+    // horse's class, and the horse not fleeing. False for a Dwarf.
+    bool canRide(cCreature* hero, cCreature* horse);
 }

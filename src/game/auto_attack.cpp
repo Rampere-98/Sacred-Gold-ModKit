@@ -1632,6 +1632,12 @@ namespace
                     }
                     return;
                 }
+                if (!AutoAttack::canRide(const_cast<cCreature*>(self), const_cast<cCreature*>(wild)))
+                {
+                    LOG("AutoAttack: wild horse {:x}: riding skill too low for it (the game's test): left", s_wildId);
+                    s_wildId = 0;
+                    return;
+                }
                 LOG("AutoAttack: mounting wild horse {:x}", s_wildId);
                 g_rideCode = 0x209;
                 g_rideHorse = s_wildId;
@@ -1749,6 +1755,17 @@ namespace
         }
         if (!code)
         {
+            s_approachSince = 0;
+            return;
+        }
+        if (code == 0x209 && !AutoAttack::canRide(const_cast<cCreature*>(self), const_cast<cCreature*>(steed)))
+        {
+            static DWORD s_toldAt = 0;
+            if (!s_toldAt || now - s_toldAt > 300000)
+            {
+                s_toldAt = now;
+                LOG("AutoAttack: horse {:x}: riding skill too low for it (the game's test): on foot", horse);
+            }
             s_approachSince = 0;
             return;
         }
@@ -7639,6 +7656,35 @@ void AutoAttack::onFrame()
     {
         g_target = 0;
     }
+}
+
+bool AutoAttack::canRide(cCreature* hero, cCreature* horse)
+{
+    if (!hero || !horse)
+    {
+        return false;
+    }
+    // Manolito (deduced): skill 0x16 read as ZweiWaffen is, 0x582450 thiscall(hero +0x3A8, 0x16, 0), ret 8; the horse's
+    // class its vtable +0x24 (0xD, 0); then the game's test 0x4267D0 thiscall([0xAAB5E4], skill, class, hero type
+    // +0x10), ret 0xC, the cursor's MOUSE_CANTRIDE and the stable's «riding skill too low» otherwise.
+    using Skill = uint8_t(__fastcall*)(void* stats, void*, int skill, int zero);
+    using HorseClass = int(__fastcall*)(void* creature, void*, int what, int zero);
+    using CanRide = uint8_t(__fastcall*)(void* types, void*, int skill, int cls, uint32_t heroType);
+    auto* h = reinterpret_cast<uint8_t*>(hero);
+    auto* m = reinterpret_cast<uint8_t*>(horse);
+    if (*reinterpret_cast<const uint32_t*>(m + 0x1F4) & 0xF0)
+    {
+        return false;   // fleeing
+    }
+    void* types = *reinterpret_cast<void* const*>(0xAAB5E4);
+    if (!types)
+    {
+        return false;
+    }
+    const int skill = reinterpret_cast<Skill>(0x582450)(h + 0x3A8, nullptr, 0x16, 0);
+    const auto* vt = *reinterpret_cast<const uintptr_t* const*>(horse);
+    const int cls = reinterpret_cast<HorseClass>(vt[0x24 / 4])(horse, nullptr, 0xD, 0);
+    return reinterpret_cast<CanRide>(0x4267D0)(types, nullptr, skill, cls, *reinterpret_cast<const uint32_t*>(h + 0x10)) != 0;
 }
 
 void AutoAttack::footFor(unsigned long ms)

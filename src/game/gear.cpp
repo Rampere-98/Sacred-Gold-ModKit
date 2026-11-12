@@ -1960,6 +1960,11 @@ namespace
                 d[4], d[5], d[6], d[7], d[8]);
             return close("no horse offered");
         }
+        // Not one the hero cannot ride (the game's stable says «riding skill too low»; Manolito).
+        if (!AutoAttack::canRide(hero, horse))
+        {
+            return close("riding skill too low for this horse");
+        }
         // The hero's own horse kept unless this one is clearly better (the player, 2026-11-10: «cada caballo tiene
         // sus estadísticas… que el agente hiciera comparaciones antes de cambiar de caballo»): two levels or more.
         const uint32_t ownId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
