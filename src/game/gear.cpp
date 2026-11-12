@@ -460,7 +460,10 @@ namespace
             }
             bool fits = false;
             const bool classOk = fn<CanUse>(g_canUse)(hero, nullptr, id, 1) != 0;
-            const int slot = classOk ? bestSlot(hero, id, 0.0f, nullptr, &fits) : -1;
+            // An upgrade by the same 5 % margin the equipping asks for: one better by less is never put on, and kept
+            // it only filled the backpack (the player, 2026-11-12: «A2 nunca vacía su inventario»: the Gladiator, who
+            // can use nearly all, had sold nothing in two days).
+            const int slot = classOk ? bestSlot(hero, id, 0.05f, nullptr, &fits) : -1;
             if (classOk && (!fits || slot >= 0))
             {
                 return;     // potions, runes, gems...; or an upgrade (perhaps once the hero is stronger)
