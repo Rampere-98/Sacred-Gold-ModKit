@@ -17,6 +17,7 @@
 #include <cstring>
 #include <cstdint>
 #include <mutex>
+#include <format>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -1548,7 +1549,23 @@ namespace
         const uint8_t* local = *reinterpret_cast<const uint8_t* const*>(0x182EBE8);
         const uint32_t player = local ? *reinterpret_cast<const uint32_t*>(local + 0x14) : 0;
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        const auto dumpRecords = [&](const char* when) {
+            std::string line;
+            for (int i = 0; i < records; ++i)
+            {
+                const uint8_t* r = combos + i * kComboRecord;
+                line += std::format(" [{}] key {:x} ids {:x} {:x} {:x} {:x}", i, *reinterpret_cast<const uint16_t*>(r),
+                                    *reinterpret_cast<const uint32_t*>(r + 2), *reinterpret_cast<const uint32_t*>(r + 6),
+                                    *reinterpret_cast<const uint32_t*>(r + 10), *reinterpret_cast<const uint32_t*>(r + 14));
+            }
+            LOG("Gear: combo records {} ({}, page +0x778 {:x} +0x77C {:x}, slots {:x} {:x} {:x}):{}", when, records,
+                *reinterpret_cast<const uint16_t*>(page + 0x778), *reinterpret_cast<const uint16_t*>(page + 0x77C),
+                *reinterpret_cast<const uint32_t*>(page + 0x2CC), *reinterpret_cast<const uint32_t*>(page + 0x2CC + 0x188),
+                *reinterpret_cast<const uint32_t*>(page + 0x2CC + 2 * 0x188), line);
+        };
+        dumpRecords("before");
         fn<LearnCombo>(kLearnCombo)(page, nullptr, player);
+        dumpRecords("after");
         const int after = comboCount(st);
         const uint32_t left = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         if (after > before)
