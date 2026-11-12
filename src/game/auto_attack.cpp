@@ -932,21 +932,25 @@ namespace
         const bool riding = rider && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(rider) + 0x1EC) != 0;
         if (self && isFixed(id))
         {
+            // As a click on it: the order 7 with its id and where it stands. Read first: lootDone checks the id
+            // against this place, also while the hero gets off the horse (else it reads as a shifted table, the
+            // thing is left and found again at once: 1800 times in 90 s, A5 2026-11-12).
+            int32_t x = 0, y = 0;
+            if (!fixedPosition(id, x, y))
+            {
+                return false;
+            }
             // A well, a hiding place: used on foot (the horse uses nothing; the reviewer, 2026-11-12).
             if (riding)
             {
+                g_fixedX = x;
+                g_fixedY = y;
                 AutoAttack::footFor(15000);
                 return true;
             }
             if (rider)
             {
                 self = rider;
-            }
-            // As a click on it: the order 7 with its id and where it stands.
-            int32_t x = 0, y = 0;
-            if (!fixedPosition(id, x, y))
-            {
-                return false;
             }
             // Beyond the loot range: a stale id (its table shifted), not a thing to walk to.
             if (std::abs(x - self->x) > 60 * kTileSize || std::abs(y - self->y) > 60 * kTileSize)
@@ -6364,7 +6368,8 @@ namespace
             // a used well); an item at its feet is tried again soon, one not reached a minute later.
             if (g_lootStale)
             {
-                // nothing marked: the id names another thing now, the next look finds the right one
+                // The id names another thing now: not gone for again at once (a short wait, kept by its place).
+                lootFailed(g_target, now, true);
             }
             else if (g_lootAtSince && !g_lootStill)
             {
