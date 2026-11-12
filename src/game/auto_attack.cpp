@@ -1872,7 +1872,13 @@ namespace
         // A group the fight with is foreseen hopeless is left at once, potions or not, health full or not (the
         // player, 2026-11-11: «la vampiresa siempre tiene la costumbre de morir en el mismo lugar»: into 8 at 18 % to
         // win, the potions drunk one by one, then dead; twice at the same spot).
-        const bool doomed = fc.foes >= 4 && fc.win < 0.25f && fc.loss > 1.0f;
+        // Also one or two far above the hero (A3, the Battle Mage at level 4, 2026-11-12: 9 deaths in 31 min, each a
+        // minute after loading, into one enemy foreseen at 254 % of his health lost; the «careful» after two deaths
+        // only moved the retreat by 15 points): more than one and a half lives' worth, or more than one once careful.
+        const bool careful = AgentSave::deathsSinceSave() >= 2;
+        const bool doomed = (fc.foes >= 4 && fc.win < 0.25f && fc.loss > 1.0f) ||
+                            (fc.foes > 0 && fc.loss > 1.5f && fc.win < 0.75f) ||
+                            (careful && fc.foes > 0 && fc.loss > 1.0f && fc.win < 0.85f);
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
         // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
         // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
