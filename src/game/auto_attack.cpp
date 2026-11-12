@@ -5141,8 +5141,11 @@ namespace
         };
         // A quest with its time running: never failed for a detour (the player, 2026-11-11: «prohíbe al agente
         // fracasar misiones, el fracaso cuenta como muerte»): no farming pause, no «farming first» for its ground.
+        // Only a time running short (under a game day) counts (the coordinator, 2026-11-12: A3's side quest 152 with
+        // 3952 game min left let every quest of the book past «farming first» and the outmatched hold, and the Battle
+        // Mage at level 4 walked on to the archers' camp and died there 3 times in 17 min).
         const bool deadline = std::any_of(g_questBook.begin(), g_questBook.end(),
-                                          [](const QuestGoal& g) { return g.minutesLeft > 0; });
+                                          [](const QuestGoal& g) { return g.minutesLeft > 0 && g.minutesLeft <= 1440; });
         if (deadline && g_questPauseUntil)
         {
             g_questPauseUntil = 0;
