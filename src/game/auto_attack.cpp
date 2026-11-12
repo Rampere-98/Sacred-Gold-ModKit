@@ -5041,15 +5041,18 @@ namespace
             static int32_t s_px = 0, s_py = 0;
             static DWORD s_since = 0;
             static int s_step = 0;
-            if (!s_since || std::hypot(static_cast<double>(self->x - s_px), static_cast<double>(self->y - s_py)) > 3.0 * kTileSize)
+            // Busy (collecting, talking, at a shop or a craftsman): the clock starts again (the solver, 2026-11-12: 2 of 8
+            // watch trips came right after a collection, the time spent picking up counted as standing still).
+            const bool busy = UiNav::npcDialogOpen() || g_collecting || Gear::shopOpen() || Gear::craftsmanOpen();
+            if (!s_since || busy ||
+                std::hypot(static_cast<double>(self->x - s_px), static_cast<double>(self->y - s_py)) > 3.0 * kTileSize)
             {
                 s_px = self->x;
                 s_py = self->y;
                 s_since = now;
                 s_step = 0;
             }
-            else if (now - s_since > 25000u * static_cast<DWORD>(s_step + 1) && !UiNav::npcDialogOpen() && !g_collecting &&
-                     !Gear::shopOpen() && !Gear::craftsmanOpen())
+            else if (now - s_since > 25000u * static_cast<DWORD>(s_step + 1))
             {
                 ++s_step;
                 LOG("AutoAttack: no progress for {} s on this spot (step {}): the goal left {} min, a walk out",
