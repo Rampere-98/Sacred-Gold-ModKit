@@ -51,6 +51,8 @@ namespace CombatLearn
     float relativeDanger(uint32_t id);
     // At the rate those striking the hero now hit, seconds until its health is gone (a large number for none).
     float secondsToDie();
+    // Healing potions drunk in the fight going on (0 out of a fight).
+    int fightPotions();
 
     // The forecast (the player's wish, 2026-11-10: foresee each fight's outcome from the build against the enemies).
     // Each enemy around: how fast the hero kills it (the active slot's expected blow through its resistances, times the

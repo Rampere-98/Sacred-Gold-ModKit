@@ -944,6 +944,11 @@ float CombatLearn::relativeDanger(uint32_t id)
     return it != g_relative.end() ? it->second : 1.0f;
 }
 
+int CombatLearn::fightPotions()
+{
+    return g_inFight ? g_fight.potions : 0;
+}
+
 float CombatLearn::secondsToDie()
 {
     return g_incoming > 1e-4f ? g_heroFraction / g_incoming : 1e6f;

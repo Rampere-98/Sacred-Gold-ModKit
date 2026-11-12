@@ -1922,7 +1922,10 @@ namespace
         // goblin «foreseeing defeat»: 1000 % raw, but her forecasts ran eleven times too grim, 47 % to win), and never
         // from one enemy alone the hero's blows put down in a few seconds.
         const bool quickOne = fc.foes == 1 && fc.seconds > 0.0f && fc.seconds < 6.0f;
-        const bool doomed = !quickOne &&
+        // C4 (docs/Criterios.md: 3 potions or more in a fight were 38.6 % of the near-deaths): two drunk and two or
+        // more still up, the fight is left now, whatever the health.
+        const bool drained = CombatLearn::fightPotions() >= 2 && fc.foes >= 2 && !quickOne;
+        const bool doomed = drained || !quickOne &&
                             ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
                              (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
                              (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f));
