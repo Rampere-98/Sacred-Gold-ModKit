@@ -1165,6 +1165,12 @@ void MapMemory::visit(int layer, int32_t x, int32_t y)
         c.visits = static_cast<uint8_t>(std::min(c.visits + 1, 255));
         // Reached: whatever blocked it before was the way, not the place.
         c.blocked = c.blocked > 0 ? static_cast<uint8_t>(c.blocked - 1) : 0;
+        // Stood on: walkable, whatever the tile test said (a house's floor tested with its door shut reads as not
+        // walkable; the player, 2026-11-13: the Seraphim kept from interiors so marked).
+        if (c.scan == 2)
+        {
+            c.scan = 1;
+        }
     });
 }
 
@@ -1319,6 +1325,43 @@ void MapMemory::noteDoor(int layer, int tileX, int tileY, bool opens)
     g_doorTiles[doorKey(layer, tileX, tileY)] = opens;
 }
 
+void MapMemory::doorState(int layer, int tileX, int tileY, bool open)
+{
+    // The tile test behind a shut door reads the house's floor as not walkable, and a square's test was kept for
+    // good: once a door is seen open, the squares within 14 tiles so marked are tested again (once each time it is
+    // seen open after shut).
+    static std::unordered_map<uint64_t, bool> s_seenOpen;
+    const std::lock_guard lock(g_lock);
+    const uint64_t k = doorKey(layer, tileX, tileY);
+    bool& was = s_seenOpen[k];
+    if (!open || was)
+    {
+        was = open;
+        return;
+    }
+    was = true;
+    int cleared = 0;
+    for (int dy = -14; dy <= 14; ++dy)
+    {
+        for (int dx = -14; dx <= 14; ++dx)
+        {
+            const Cell* c = find(layer, tileX + dx, tileY + dy);
+            if (c && c->scan == 2)
+            {
+                change(key(layer, tileX + dx, tileY + dy), [](Cell& cell) { cell.scan = 0; });
+                ++cleared;
+            }
+        }
+    }
+    if (cleared)
+    {
+        g_scanAt = 0;
+        g_scanDone = false;
+        LOG("MapMemory: door at {},{} open: {} squares marked not walkable around it to be tested again", tileX, tileY,
+            cleared);
+    }
+}
+
 std::vector<std::pair<int, int>> MapMemory::doorsThatOpen(int layer, int x0, int y0, int x1, int y1)
 {
     std::vector<std::pair<int, int>> out;
@@ -1377,9 +1420,13 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
                     v = 10;
                 }
 
-                else if (c.scan == 2 || c.blocked >= 2)
+                else if (c.blocked >= 2)
                 {
                     v = 0;
+                }
+                else if (c.scan == 2)
+                {
+                    v = 1;  // the tile test alone: closed, unless a door that opens is near (below)
                 }
                 step[static_cast<size_t>(ty - y0) * w + (tx - x0)] = v;
             }
@@ -1400,6 +1447,22 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
         }
     }
     lock.unlock();
+    // Barred by the tile test alone within 12 tiles of a door that opens: a house's floor, tested with its door shut,
+    // dear (40) but a way, so a route into it exists; a real wall there gets blocked on walking and closes then.
+    for (size_t i = 0; i < step.size(); ++i)
+    {
+        if (step[i] != 1)
+        {
+            continue;
+        }
+        const int x = x0 + static_cast<int>(i % w), y = y0 + static_cast<int>(i / w);
+        bool nearDoor = false;
+        for (const auto& [dx, dy, opens] : doors)
+        {
+            nearDoor = nearDoor || (opens && std::abs(dx - x) <= 12 && std::abs(dy - y) <= 12);
+        }
+        step[i] = nearDoor ? 40 : 0;
+    }
     // The roads first (the player, 2026-11-10: «las carreteras mapeadas y el agente se moviera por ellas»): on the
     // surface, by the world files (Manolito, block R2), a road tile costs 6, so far walks follow them; ground never
     // seen is judged by the files too (walkable 14, not walkable no way), unknown stays 22.

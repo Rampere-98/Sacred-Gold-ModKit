@@ -496,6 +496,7 @@ namespace
                     if (!lever)
                     {
                         MapMemory::noteDoor(doorLayer, doorX, doorY, !shutForGood);
+                        MapMemory::doorState(doorLayer, doorX, doorY, (state & 1) != 0);
                     }
                     if ((state & 1) || (!lever && (state & 0x8000) && !key))
                     {
