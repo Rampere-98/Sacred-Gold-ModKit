@@ -3166,7 +3166,10 @@ namespace
     // Pure Water before the Whiskey Supplier, Moca not to be fought...).
     int questPriority(int32_t number)
     {
-        static constexpr int32_t kFirst[] = {15009, 15015, rq(2, 4), rq(3, 1), rq(5, 1), rq(5, 2),
+        // Ravenous Beasts (R04NQ03) among them: it fails once the infected wolves have killed all of the farmer's
+        // cows (QUESTS.md «Ir rápido»; the player, 2026-11-12: «el enano no consigue hacer la misión de las vacas»,
+        // A7 went for it 95-122 tiles off among 17 goals and it failed).
+        static constexpr int32_t kFirst[] = {15009, 15015, rq(2, 4), rq(3, 1), rq(4, 3), rq(5, 1), rq(5, 2),
                                              rq(7, 3),  rq(12, 2), rq(22, 1), rq(24, 11)};
         static constexpr int32_t kLast[] = {10259, 10260, rq(6, 2), rq(13, 1), rq(22, 3)};
         if (std::find(std::begin(kFirst), std::end(kFirst), number) != std::end(kFirst))
@@ -3240,6 +3243,12 @@ namespace
 
     bool sectorLevels(const uint8_t* world, int tx, int ty, int& lo, int& hi);
 
+    // The journal quest followed, and those failed while followed (the failure loads the last save, where the quest
+    // is open again: A7 failed side quest 302 after each load, 52 failures in a day). One failed so is left: the
+    // book skips it for this run, as a player leaves a quest he cannot do.
+    int32_t g_followedNumber = 0;
+    std::vector<int32_t> g_givenUpQuests;
+
     bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius, uint32_t& who)
     {
         const DWORD now = GetTickCount();
@@ -3299,6 +3308,12 @@ namespace
                 // than this run read before, not the first read of a run nor right after a load.
                 if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging())
                 {
+                    if (g_followedNumber > 0 &&
+                        std::find(g_givenUpQuests.begin(), g_givenUpQuests.end(), g_followedNumber) == g_givenUpQuests.end())
+                    {
+                        g_givenUpQuests.push_back(g_followedNumber);
+                        LOG("AutoAttack: quest {} failed while followed: left for this run", g_followedNumber);
+                    }
                     LOG("AutoAttack: a quest failed ({} failed now): as a death, the last save loaded", failed);
                     remember("falló una misión: cuenta como muerte");
                     AgentSave::questFailed();
@@ -3348,7 +3363,9 @@ namespace
         for (QuestGoal& g : g_questBook)
         {
             g.distance = wayLength(heroX, heroY, g.x, g.y);
-            g.blocked = goalBlocked(g.x, g.y, now);
+            g.blocked = goalBlocked(g.x, g.y, now) ||
+                        (g.number > 0 &&
+                         std::find(g_givenUpQuests.begin(), g_givenUpQuests.end(), g.number) != g_givenUpQuests.end());
             if (s_followed && (g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7)) == s_followed)
             {
                 g.distance *= 0.7;
@@ -3384,6 +3401,7 @@ namespace
         }
         const QuestGoal& g = g_questBook.front();
         s_followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
+        g_followedNumber = g.kind == GoalKind::Journal ? g.number : 0;
         x = g.x;
         y = g.y;
         radius = g.radius;
