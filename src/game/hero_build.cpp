@@ -169,17 +169,20 @@ namespace
 
     // The skills each class leans on, first the most (Manolito's table, docs/AGENT_ADDRESSES.md «Clases del héroe»;
     // ids are the game's SKILL_* numbers). 0 ends a list.
+    // From the expert builds (docs/Builds.md §10.2, the player, 2026-11-13: «que el agente se comporte tal cual
+    // recomiendan las guías»): constitution and armour early for every class, the battle mage on two schools only
+    // (fire and earth), the seraphim's constitution at level 3 and her school at 6 (Builds.md §2).
     const uint8_t kSkillPlan[10][7] = {
         {0},
-        {1, 14, 12, 2, 25, 10, 0},      // seraphim: heavenly magic, magic lore, meditation
-        {2, 25, 10, 11, 9, 0},          // gladiator: weapon lore, concentration, constitution, armour, parry
-        {14, 12, 15, 17, 16, 18, 10},   // battle mage: magic lore, meditation, the four schools
-        {2, 25, 13, 27, 26, 10, 0},     // dark elf: blade combat, traps, ballistics
-        {7, 2, 25, 19, 8, 10, 0},       // wood elf: long range, moon magic, agility
-        {2, 20, 28, 25, 10, 0},         // vampiress: vampirism, blood lust
-        {2, 20, 28, 25, 10, 0},
-        {2, 29, 31, 25, 10, 0},         // dwarf: weapon technique, dwarven lore
-        {32, 14, 12, 2, 25, 10, 0},     // daemon: hell power
+        {10, 1, 14, 12, 25, 2, 11},     // seraphim: constitution, heavenly magic, magic lore, meditation
+        {2, 25, 10, 11, 8, 9, 4},       // gladiator: weapon lore, concentration, constitution, armour, agility, parry
+        {14, 12, 15, 10, 17, 8, 9},     // battle mage: magic lore, meditation, fire, constitution, earth
+        {2, 25, 10, 11, 6, 8, 9},       // dark elf
+        {7, 2, 10, 11, 25, 19, 8},      // wood elf: long range, weapon lore, constitution, armour
+        {2, 20, 10, 25, 11, 28, 5},     // vampiress: weapon lore, vampirism, constitution
+        {2, 20, 10, 25, 11, 28, 5},
+        {2, 29, 31, 25, 11, 9, 10},     // dwarf: weapon technique, dwarven lore, armour, parry
+        {2, 10, 25, 8, 11, 9, 32},      // daemon: the physical build
     };
     uint32_t g_class = 0;   // the hero's, set before the picks below
 
@@ -212,17 +215,18 @@ namespace
     // relative. Charisma only lowers prices and adds poison damage (GAME_GUIDE): the dark elf's poison only. Mental
     // regeneration recharges the arts. 1 seraphim, 2 gladiator, 3 battle mage, 4 dark elf, 5 wood elf, 6/7 vampiress,
     // 8 dwarf, 9 daemon.
+    // Builds.md §10.1: physical regeneration 3-4 for the melee classes (shorter art recharge, more health).
     const int kAttrPlan[10][6] = {
         {2, 3, 2, 1, 1, 0},     // unknown
-        {3, 3, 2, 1, 2, 0},     // seraphim
-        {4, 3, 2, 1, 0, 0},     // gladiator
-        {0, 3, 1, 0, 4, 0},     // battle mage
-        {1, 3, 4, 1, 1, 1},     // dark elf
-        {0, 3, 4, 1, 2, 0},     // wood elf
-        {4, 3, 2, 1, 0, 0},     // vampiress
-        {4, 3, 2, 1, 0, 0},     // vampiress (other form)
-        {3, 3, 2, 1, 1, 0},     // dwarf
-        {2, 3, 1, 1, 3, 0},     // daemon
+        {2, 2, 1, 3, 3, 0},     // seraphim
+        {3, 2, 1, 3, 0, 0},     // gladiator
+        {0, 2, 1, 1, 5, 0},     // battle mage
+        {2, 2, 1, 4, 0, 0},     // dark elf
+        {0, 2, 3, 3, 0, 0},     // wood elf
+        {4, 2, 1, 2, 0, 0},     // vampiress
+        {4, 2, 1, 2, 0, 0},     // vampiress (other form)
+        {3, 2, 1, 3, 0, 0},     // dwarf
+        {3, 2, 1, 3, 0, 0},     // daemon
     };
 
     std::atomic<bool> g_working{false};

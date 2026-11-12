@@ -3170,8 +3170,14 @@ namespace
         // Ravenous Beasts (R04NQ03) among them: it fails once the infected wolves have killed all of the farmer's
         // cows (QUESTS.md «Ir rápido»; the player, 2026-11-12: «el enano no consigue hacer la misión de las vacas»,
         // A7 went for it 95-122 tiles off among 17 goals and it failed).
-        static constexpr int32_t kFirst[] = {15009, 15015, rq(2, 4), rq(3, 1), rq(4, 3), rq(5, 1), rq(5, 2),
-                                             rq(7, 3),  rq(12, 2), rq(22, 1), rq(24, 11)};
+        // And the quests with a deadline (QUESTS.md, «3 días» and the rest: «entregar antes que cualquier otra
+        // cosa»), whose timer is not always read: Sheepless in Bellevue (DQ_15005, the sheep the wolves kill; the
+        // player, 2026-11-13: «la misión de la oveja nadie consiguió hacerla», A7 went for it 818-847 tiles off),
+        // Messenger, Kidnapped, Tournament, Goods Messenger, Kalim-Khor, Ancarian Snow, Gallows, the dragon's egg and
+        // the Lentil Liqueur.
+        static constexpr int32_t kFirst[] = {15005, 15009, 15015, 15036, rq(1, 2), rq(2, 4), rq(3, 1), rq(4, 3),
+                                             rq(5, 1), rq(5, 2), rq(7, 3), rq(9, 1), rq(12, 2), rq(13, 2), rq(13, 3),
+                                             rq(14, 1), rq(17, 3), rq(18, 3), rq(22, 1), rq(24, 11), rq(25, 3)};
         static constexpr int32_t kLast[] = {10259, 10260, rq(6, 2), rq(13, 1), rq(22, 3)};
         if (std::find(std::begin(kFirst), std::end(kFirst), number) != std::end(kFirst))
         {
