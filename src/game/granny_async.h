@@ -15,4 +15,16 @@ namespace GrannyAsync
     // block AI: a weapon switched mid-fight loads its .gr2 and textures, read straight from the file's memory, not
     // through a Granny import; 5 crashes in sprintf over a garbage texture name). Call inside a Detours transaction.
     void installModelGuard();
+
+    // cGranny's queue lock (Manolito, block AK: the CRITICAL_SECTION at [0xAA42C4]+0x10 guards the models released
+    // and closed by advanceTime 0x401920 / flush 0x401710 on the drawing thread). Held around a weapon switch or a
+    // rune swap, whose old models are queued and new ones loaded: the close no longer runs between them. Reentrant.
+    struct ModelLock
+    {
+        ModelLock();
+        ~ModelLock();
+        ModelLock(const ModelLock&) = delete;
+        ModelLock& operator=(const ModelLock&) = delete;
+        void* cs = nullptr;
+    };
 }

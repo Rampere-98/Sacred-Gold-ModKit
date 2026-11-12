@@ -347,3 +347,21 @@ void GrannyAsync::installModelGuard()
 {
     Patch::hook(g_origGetModel, static_cast<uintptr_t>(0x411F50), &hookGetModel, "cGrannyModelManager::getModel");
 }
+
+GrannyAsync::ModelLock::ModelLock()
+{
+    const uintptr_t granny = *reinterpret_cast<const uintptr_t*>(0xAA42C4);
+    if (granny)
+    {
+        cs = reinterpret_cast<void*>(granny + 0x10);
+        EnterCriticalSection(static_cast<CRITICAL_SECTION*>(cs));
+    }
+}
+
+GrannyAsync::ModelLock::~ModelLock()
+{
+    if (cs)
+    {
+        LeaveCriticalSection(static_cast<CRITICAL_SECTION*>(cs));
+    }
+}

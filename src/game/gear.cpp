@@ -1,6 +1,7 @@
 #include "mind.h"
 #include "hero_profile.h"
 #include "game/gear.h"
+#include "game/granny_async.h"
 #include "game/map_memory.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
@@ -1205,6 +1206,7 @@ namespace
         void* taskbar = ui ? static_cast<void*>(ui->taskbar()) : nullptr;
         if (slot < 5 && taskbar && g_selectSlot)
         {
+            const GrannyAsync::ModelLock lock;   // the old weapon's model queued, the new one loaded (block AK)
             fn<SelectSlot>(g_selectSlot)(taskbar, nullptr, slot, 1);
         }
     }
@@ -1375,7 +1377,10 @@ namespace
                 // doSwap reloads the page itself (0x6D4610(1)); a refresh right after it freed and loaded the new
                 // rune's model a second time in the same pass (Manolito, block AK: the crash in sprintf over a
                 // texture name, Sacred.exe+4502AE, came from that reload).
-                fn<UiCall>(kDoSwap)(lotto, nullptr);
+                {
+                    const GrannyAsync::ModelLock lock;
+                    fn<UiCall>(kDoSwap)(lotto, nullptr);
+                }
                 LOG("Gear: 3 runes of other classes swapped for {} gold (one of the hero's class)", price);
                 return true;
             }
