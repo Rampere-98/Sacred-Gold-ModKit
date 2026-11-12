@@ -1270,6 +1270,23 @@ namespace
     // of his health again and again, a level 4-7 region his farm and quest ground for hours, never a level up).
     std::deque<DWORD> g_hopelessAt;
     DWORD g_questNoWayUntil = 0;    // a quest with no way there: the quests left alone until then
+    // Where those hopeless fights were (tiles): a quest whose goal lies within 30 tiles of one waits 30 min (the
+    // analyst, 2026-11-12: A3 stepped back from 7 enemies at 27 % to win, then walked on to its quest 24 tiles from
+    // the archers' camp and died 16 s later).
+    struct HopelessSpot { int tx, ty; DWORD at; };
+    std::vector<HopelessSpot> g_hopelessSpots;
+    bool nearHopelessSpot(int tx, int ty, DWORD now)
+    {
+        std::erase_if(g_hopelessSpots, [now](const HopelessSpot& h) { return now - h.at > 1800000; });
+        for (const HopelessSpot& h : g_hopelessSpots)
+        {
+            if ((tx - h.tx) * (tx - h.tx) + (ty - h.ty) * (ty - h.ty) < 900)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // Two hopeless fights in 10 min: outmatched where it is; farmed and quested only where the enemies are no
     // higher than the hero, for as long as two stay within the 10 min.
@@ -2004,6 +2021,7 @@ namespace
             if (g_retreatDoomed)
             {
                 g_hopelessAt.push_back(now);
+                g_hopelessSpots.push_back({static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize), now});
                 LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health{}",
                     fc.foes, fc.win * 100.0f, health, maximum,
                     outmatched(now) ? "; outmatched here: farming and quests only where the enemies are not above the hero"
@@ -5081,6 +5099,11 @@ namespace
                     s_shunUntil = tick + 120000;
                 }
                 setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
+                return true;
+            }
+            if (nearHopelessSpot(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), tick))
+            {
+                setIntent(Intent::Farm, "the quest's goal is by a fight given up as hopeless lately: farming elsewhere first");
                 return true;
             }
             // Outmatched lately (two hopeless fights in 10 min): every quest but one at hand waits while the hero farms
