@@ -4334,9 +4334,11 @@ namespace
     // Fights and collects (no roam for 3 s) and any jump (a portal, a teleport) start the watch again.
     // The ways out of where the hero is shut in: those MapMemory saw it jump through, plus the game's own (a tpstart
     // tile at hand, the stairs anchors beside an interior's landing inside, a house's door in the yard).
-    std::vector<std::pair<int, int>> waysOutAround(int layer, int htx, int hty)
+    // The game's own first (`gameCount` of them): MapMemory's can be wrong (a save loaded looked like a jump, A5
+    // 2026-11-12, two «portals» inside a cave tried for 10 min while the stairs anchor sat by its landing).
+    std::vector<std::pair<int, int>> waysOutAround(int layer, int htx, int hty, size_t* gameCount = nullptr)
     {
-        std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius);
+        std::vector<std::pair<int, int>> ways;
         // The game's own: a tpstart tile at hand, or the stairs anchors beside an interior's landing inside (its
         // way out is there; Manolito, block L).
         for (const Teleports::Interior& in : Teleports::interiors())
@@ -4362,6 +4364,17 @@ namespace
                 {
                     ways.push_back(a);
                 }
+            }
+        }
+        if (gameCount)
+        {
+            *gameCount = ways.size();
+        }
+        for (const auto& w : MapMemory::waysOut(layer, htx, hty, Whereabouts::kRadius))
+        {
+            if (std::find(ways.begin(), ways.end(), w) == ways.end())
+            {
+                ways.push_back(w);
             }
         }
         return ways;
@@ -4493,15 +4506,18 @@ namespace
             const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
             int bx = 0, by = 0;
             double best = 1e18;
-            std::vector<std::pair<int, int>> ways = waysOutAround(layer, htx, hty);
-            for (const auto& [ex, ey] : ways)
+            size_t gameWays = 0;
+            std::vector<std::pair<int, int>> ways = waysOutAround(layer, htx, hty, &gameWays);
+            for (size_t wi = 0; wi < ways.size(); ++wi)
             {
+                const auto [ex, ey] = ways[wi];
                 const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
                 if (const auto t = s_wayTried.find(wk); t != s_wayTried.end() && now - t->second < 180000)
                 {
                     continue;
                 }
-                const double d = std::hypot(ex - htx, ey - hty);
+                // The game's own ways ahead of those MapMemory remembers, however near.
+                const double d = std::hypot(ex - htx, ey - hty) + (wi < gameWays ? 0.0 : 10000.0);
                 if (d < best)
                 {
                     best = d;
@@ -4511,6 +4527,7 @@ namespace
             }
             if (best < 1e17)
             {
+                best = std::fmod(best, 10000.0);
                 if (best <= 1.5)
                 {
                     // On it: a step off, the next stage walks back onto it.

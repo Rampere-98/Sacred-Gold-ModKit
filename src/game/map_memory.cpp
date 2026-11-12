@@ -1,4 +1,5 @@
 #include "game/map_memory.h"
+#include "game/agent_save.h"
 #include "game/combat_learn.h"
 #include "game/click_walk.h"
 #include "game/hero_profile.h"
@@ -1060,7 +1061,8 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
         const double jx = static_cast<double>(x) - g_heroX, jy = static_cast<double>(y) - g_heroY;
         const double tiles = std::sqrt(jx * jx + jy * jy) / kTileSize;
         const bool otherLayer = layer != g_heroLayer;
-        if (otherLayer || (tiles > 30.0 && tiles > 8.0 * (now - heroAt) / 1000.0))
+        // Not while a save loads (the hero «jumps» to where it was saved: A5's cave got two false portals, 2026-11-12).
+        if (!AgentSave::worldChanging() && (otherLayer || (tiles > 30.0 && tiles > 8.0 * (now - heroAt) / 1000.0)))
         {
             const MapMemory::Mark kind = otherLayer ? MapMemory::Mark::Entrance : MapMemory::Mark::Portal;
             addLandmark(kind, g_heroLayer, g_heroTx, g_heroTy);
