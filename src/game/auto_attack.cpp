@@ -1269,6 +1269,7 @@ namespace
     // Hopeless fights stepped back from (A3, the Battle Mage at level 4, 2026-11-12: away from groups of 5 at 418 %
     // of his health again and again, a level 4-7 region his farm and quest ground for hours, never a level up).
     std::deque<DWORD> g_hopelessAt;
+    bool g_collecting = false;      // collecting a quest item or loot (declared early: the position watch reads it)
     DWORD g_questNoWayUntil = 0;    // a quest with no way there: the quests left alone until then
     // Where those hopeless fights were (tiles): a quest whose goal lies within 30 tiles of one waits 30 min (the
     // analyst, 2026-11-12: A3 stepped back from 7 enemies at 27 % to win, then walked on to its quest 24 tiles from
@@ -6114,7 +6115,6 @@ namespace
     // taskbar button stay the player's, as in the plain game). The auto attack waits meanwhile; a click of the
     // player's or a hit taken ends it.
     constexpr DWORD kCollectMaxMs = 90000;
-    bool g_collecting = false;
     DWORD g_collectStart = 0;
     int g_collectHealth = 0;
 
