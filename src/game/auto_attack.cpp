@@ -35,6 +35,7 @@
 #include <imgui.h>
 #include <windows.h>
 #include <algorithm>
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1045,6 +1046,7 @@ namespace
         bool onHero;    // +0x251 the hero, +0x1F4 bit 4 (an enemy fixed), not a summon's master (bit 0x100)
     };
     std::vector<AggroFoe> g_aggroFoes;
+    std::atomic<DWORD> g_attackAt{0};    // the last attack order (read by Gear on its own thread)
     int32_t g_aggroHeroX = 0, g_aggroHeroY = 0;    // where the hero stood when g_aggroFoes was read
     constexpr double kAggroTiles = 13.0;
 
@@ -7509,6 +7511,7 @@ void AutoAttack::onFrame()
         }
         g_target = id;
         g_sentAt = now;
+        g_attackAt.store(now, std::memory_order_relaxed);
         const int repeat = Config::autoAttack.repeatMs;
         g_repeatMs = repeat > 0 ? repeat * static_cast<int>(jitter(80, 125)) / 100 : 0;
     }
@@ -7521,6 +7524,12 @@ void AutoAttack::onFrame()
 void AutoAttack::footFor(unsigned long ms)
 {
     g_onFootUntil = GetTickCount() + ms;
+}
+
+bool AutoAttack::foughtWithin(unsigned long ms)
+{
+    const DWORD at = g_attackAt.load(std::memory_order_relaxed);
+    return at && GetTickCount() - at < ms;
 }
 
 double AutoAttack::nearestHostileTiles()

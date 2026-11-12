@@ -1,5 +1,6 @@
 #include "mind.h"
 #include "hero_profile.h"
+#include "game/auto_attack.h"
 #include "game/gear.h"
 #include "game/granny_async.h"
 #include "game/map_memory.h"
@@ -2028,16 +2029,20 @@ namespace
             const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
+            // Not in a fight (the analyst, 2026-11-12: A1 swapped runes at 09:45:09-12 while fighting 8 enemies and
+            // crashed 1.7 s on, at an address in no module): the master's and the smith's work waits 15 s past the
+            // last attack.
+            const bool calm = !AutoAttack::foughtWithin(15000);
             if (buyHorse(hero))
             {
             }
-            else if (g_wantCombo && makeCombo(hero))
+            else if (calm && g_wantCombo && makeCombo(hero))
             {
             }
-            else if (g_wantSocket && socketAtSmith(hero, pack))
+            else if (calm && g_wantSocket && socketAtSmith(hero, pack))
             {
             }
-            else if (g_settings.runes && g_canUse && swapRunes(hero, pack))
+            else if (calm && g_settings.runes && g_canUse && swapRunes(hero, pack))
             {
             }
             else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))

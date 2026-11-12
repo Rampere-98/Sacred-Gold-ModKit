@@ -25,6 +25,9 @@ namespace AutoAttack
     // few seconds; 99 with none within 40 tiles).
     double nearestHostileTiles();
 
+    // The hero attacked an enemy within the given ms (read from any thread).
+    bool foughtWithin(unsigned long ms);
+
     // The hero kept on foot (off the horse) for the given ms: a save waits for it.
     void footFor(unsigned long ms);
 }
