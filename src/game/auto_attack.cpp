@@ -5124,7 +5124,20 @@ namespace
                 double qr = 0.0;
                 uint32_t qwho = 0;
                 const bool questOpen = Config::autoAttack.quests && questTarget(self->x, self->y, qx, qy, qr, qwho);
-                if (best && questOpen && bestDistance > 40.0 * kTileSize)
+                // Runes of other classes worth more swaps reach a master farther off (A5 2026-11-12: 11 runes, three
+                // new arts, the masters 65-137 tiles off, never gone to): 40 tiles and 60 more for each swap past the
+                // first, up to 200; the master already gone for, twice that (A2: off at 40 tiles, back to the quest
+                // at 158 without reaching him).
+                double reach = 40.0;
+                if (toMaster && !Gear::wantsCombo())
+                {
+                    reach = std::min(200.0, 40.0 + 60.0 * std::max(0, Gear::foreignRunes() / 3 - 1));
+                }
+                if (best && best->id == s_masterId)
+                {
+                    reach *= 2.0;
+                }
+                if (best && questOpen && bestDistance > reach * kTileSize)
                 {
                     static DWORD s_toldAt = 0;
                     if (!s_toldAt || now - s_toldAt > 300000)
