@@ -10,6 +10,11 @@
 // inventory and other windows can be used meanwhile. A mouse button hands control back at once, for [AutoAttack]
 // Pause ms. It only acts in the running game world (no menus, dialogs or popups) and never while the controller
 // drives the game.
+namespace Sacred
+{
+    struct cCreature;
+}
+
 namespace AutoAttack
 {
     // Hooks it needs; call inside a Patch transaction.
@@ -32,5 +37,5 @@ namespace AutoAttack
     void footFor(unsigned long ms);
     // Whether the hero may ride this horse, by the game's own test (Manolito, Reiten): its riding skill against the
     // horse's class, and the horse not fleeing. False for a Dwarf.
-    bool canRide(cCreature* hero, cCreature* horse);
+    bool canRide(Sacred::cCreature* hero, Sacred::cCreature* horse);
 }

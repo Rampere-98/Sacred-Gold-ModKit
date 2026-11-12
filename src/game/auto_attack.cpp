@@ -7658,7 +7658,7 @@ void AutoAttack::onFrame()
     }
 }
 
-bool AutoAttack::canRide(cCreature* hero, cCreature* horse)
+bool AutoAttack::canRide(Sacred::cCreature* hero, Sacred::cCreature* horse)
 {
     if (!hero || !horse)
     {
