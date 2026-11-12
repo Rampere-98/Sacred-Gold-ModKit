@@ -1269,6 +1269,7 @@ namespace
     // Hopeless fights stepped back from (A3, the Battle Mage at level 4, 2026-11-12: away from groups of 5 at 418 %
     // of his health again and again, a level 4-7 region his farm and quest ground for hours, never a level up).
     std::deque<DWORD> g_hopelessAt;
+    DWORD g_questNoWayUntil = 0;    // a quest with no way there: the quests left alone until then
 
     // Two hopeless fights in 10 min: outmatched where it is; farmed and quested only where the enemies are no
     // higher than the hero, for as long as two stay within the 10 min.
@@ -5036,19 +5037,14 @@ namespace
                 setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
                 return true;
             }
-            // Outmatched lately (two hopeless fights in 10 min): a quest on ground whose enemies start at the hero's level
-            // or above waits, however near, while the hero farms where it can win.
-            if (outmatched(tick))
+            // Outmatched lately (two hopeless fights in 10 min): every quest but one at hand waits while the hero farms
+            // where it can win (A3 2026-11-12: a quest of a 1-4 region still taken, its way by an archers' camp,
+            // 4 deaths in 20 min there).
+            if (outmatched(tick) &&
+                std::hypot(static_cast<double>(x - self->x), static_cast<double>(y - self->y)) > 15.0 * kTileSize)
             {
-                const uintptr_t holder0 = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
-                const uint8_t* world0 = holder0 ? *reinterpret_cast<const uint8_t* const*>(holder0) : nullptr;
-                int lo0 = 0, hi0 = 0;
-                if (world0 && sectorLevels(world0, static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), lo0, hi0) &&
-                    hi0 > heroLevel)
-                {
-                    setIntent(Intent::Farm, "outmatched here: farming where the enemies are not above the hero first");
-                    return true;
-                }
+                setIntent(Intent::Farm, "outmatched here: farming where the enemies are not above the hero first");
+                return true;
             }
             // A goal at hand is no trip into hard ground: the Daemon's start (a tutorial yard, region 59 marked
             // levels 45-80, its main quest 8 tiles off behind a script's blocker) farmed instead, shut in, 14 min.
@@ -5088,6 +5084,7 @@ namespace
             LOG("AutoAttack: 8 min with neither a fight nor a quest done: the quests left 10 min, farming");
         }
         if (Config::autoAttack.quests && !(g_questPauseUntil && static_cast<int>(now - g_questPauseUntil) < 0) &&
+            !(g_questNoWayUntil && static_cast<int>(now - g_questNoWayUntil) < 0) &&
             questTarget(self->x, self->y, qx, qy, qr, who) &&
             (layer == 0 || std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 60.0 * kTileSize) &&
             !(!deadline && Config::autoAttack.farm && g_farmKnown && questTooHard(qx, qy)))
@@ -5343,6 +5340,9 @@ namespace
                 }
                 g_questTravel = false;     // no way there for now: the rest of the agent's play meanwhile
                 questHere = false;
+                // Held 30 s (A2 2026-11-12: the quest chosen again the next frame, quest/farm flipped every 150 ms
+                // for minutes, then the 4502AE crash): the farming goes on meanwhile.
+                g_questNoWayUntil = now + 30000;
             }
             else
             {
