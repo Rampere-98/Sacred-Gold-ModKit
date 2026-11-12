@@ -4194,6 +4194,14 @@ namespace
             return false;
         }
         s_tried[(static_cast<uint64_t>(static_cast<uint32_t>(bx)) << 32) | static_cast<uint32_t>(by)] = now;
+        // Into a house on foot, as a player gets off at its door (A5 2026-11-12 01:20: on horseback by the way in at
+        // 3095,2784, 3-tile walks every 4 s that never moved it, until the 90 s rule).
+        const cObjectManager* om = cObjectManager::instance();
+        if (const cCreature* hero = om ? const_cast<cObjectManager*>(om)->hero() : nullptr;
+            hero && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC))
+        {
+            g_onFootUntil = now + 60000;
+        }
         if (std::hypot(bx - htx, by - hty) <= 1.5)
         {
             // On it already: a step off, the next try walks back onto it (a way in fires on stepping on).
@@ -4897,9 +4905,18 @@ namespace
             // Battle Mage, loaded beside an archers' camp at 3148,2722 on its quest's way and died there 5 times in
             // 32 min, out of potions each time): farming elsewhere first, as long as the place stays shunned (30 min
             // after one death, longer after more).
-            if (nearDeathSpot(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize)) ||
+            // Held 2 min once decided (the solver, 2026-11-12: A5 flipped farm/quest 19 times, A2 6, as the hero walked
+            // in and out of the shunned place's edge).
+            static DWORD s_shunUntil = 0;
+            const DWORD tick = GetTickCount();
+            if (static_cast<int>(tick - s_shunUntil) < 0 ||
+                nearDeathSpot(static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize)) ||
                 nearDeathSpot(static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize)))
             {
+                if (static_cast<int>(tick - s_shunUntil) >= 0)
+                {
+                    s_shunUntil = tick + 120000;
+                }
                 setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
                 return true;
             }
