@@ -17,6 +17,9 @@ namespace CombatState
     inline std::atomic<DWORD> measuringUntil{0};
     // When AutoPotion last found no healing potion left (the game's usePotion drank none), 0 while it has some.
     inline std::atomic<DWORD> noPotionsAt{0};
+    // A retreat from a fight foreseen lost wants a potion first (the analyst, 2026-11-12: 33 % of deaths in the
+    // recover intent): AutoPotion drinks within 2 s of this, the hero below 70 %, as in an emergency.
+    inline std::atomic<DWORD> drinkWantedAt{0};
 
     // A creature's action, the low byte of cCreature +0x150 (seen live, 2026-11-08): 0 standing, 1 walking, 3
     // fighting, 6 dead (the game's isEnemy reads it), 9 casting a combat art, from the moment the art goes out until it

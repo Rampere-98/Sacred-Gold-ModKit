@@ -2060,6 +2060,10 @@ namespace
             g_retreatExtended = 0;
             g_retreatDoomed = doomed && !(low && noPotions);
             g_retreatStartAt = now;
+            if (!noPotions)
+            {
+                CombatState::drinkWantedAt = now;   // a potion before turning the back (the analyst's criterion 2)
+            }
             if (g_retreatDoomed)
             {
                 g_hopelessAt.push_back(now);

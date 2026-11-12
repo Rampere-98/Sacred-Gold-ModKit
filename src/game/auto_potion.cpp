@@ -213,7 +213,9 @@ void AutoPotion::onFrame()
         return;
     }
     const int missing = maximum - health;
-    const bool emergency = health * 100 <= maximum * Config::autoPotion.emergencyPercent;
+    const DWORD wanted = CombatState::drinkWantedAt.load();
+    const bool emergency = health * 100 <= maximum * Config::autoPotion.emergencyPercent ||
+                           (wanted && now - wanted < 2000 && health * 100 < maximum * 70);
     // Never waiting for more than most of the maximum missing (a heal learned on a stronger hero, or larger than now).
     const bool due = g_heal > 0 ? missing >= std::min(g_heal, maximum * 60 / 100)
                                 : missing * 100 >= maximum * Config::autoPotion.firstPercent;

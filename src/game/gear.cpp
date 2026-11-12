@@ -547,8 +547,11 @@ namespace
         }
         // Short of half the stock, potions come before anything else: only 300 gold kept back (the live verifier,
         // 2026-11-11: two bought of eight with 2002 and 4842 gold left, then 14 of 15 deaths with no potion).
+        // Up to the whole stock at every visit, 300 gold kept back (the analyst, 2026-11-12, docs/Criterios.md: 99 of
+        // 190 deaths with no potion, the median gold at death 2815 and visits leaving with 4 of 5-8; the 40 % kept
+        // back bought two a visit).
         const int have = countHealing(pack);
-        const bool urgent = have * 2 < wantHealing();
+        const bool urgent = have < wantHealing();
         if (!urgent && gold < s_visitGold * 2 / 5)
         {
             return false;
@@ -2491,8 +2494,9 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         s_toldAt = GetTickCount();
         LOG("Gear: weapon slots against {:x}: {}(active {})", targetId, each, active + 1);
     }
-    // Only for a clear gain (15 %), and not within 10 s of the last switch: no switching back and forth.
-    if (best == active || bestDamage < current * 1.15f + 0.5f || GetTickCount() - g_slotSwitchAt < 10000)
+    // Only for a clear gain (30 %), and not within 20 s of the last switch: no switching back and forth (the analyst,
+    // 2026-11-12, docs/Criterios.md: the 4502AE crashes came a few ms after a slot switch; 15 % and 10 s let it flip).
+    if (best == active || bestDamage < current * 1.3f + 0.5f || GetTickCount() - g_slotSwitchAt < 20000)
     {
         return false;
     }
