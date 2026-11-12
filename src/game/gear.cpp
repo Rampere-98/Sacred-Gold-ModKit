@@ -105,6 +105,7 @@ namespace
 
     constexpr size_t kStats = 0x3A8;
     constexpr size_t kGold = kStats + 0x46;
+    std::unordered_map<uint32_t, DWORD> g_takenOff;   // items taken off by an upgrade: when (game thread only)
     constexpr size_t kItemType = 0x10;
     constexpr size_t kItemFlags = 0x14;
     constexpr uint32_t kQuestItem = 0x800;
@@ -422,6 +423,7 @@ namespace
             if (old && previous)
             {
                 fn<PutItem>(g_putItem)(pack, nullptr, free, previous, ow, oh, 1);
+                g_takenOff[previous] = GetTickCount();
             }
             LOG("Gear: put on {:x} (type {:x}) in slot {}{}", id, typeOf(id), slot, old ? ", the old one to the backpack" : "");
             done = true;
@@ -437,8 +439,17 @@ namespace
     {
         void* inv = inventory();
         bool done = false;
+        const DWORD now = GetTickCount();
+        std::erase_if(g_takenOff, [now](const auto& e) { return now - e.second > 60000; });
         eachItem(pack, [&](uint32_t id, int cell, int w, int h) {
             if (done || (flagsOf(id) & kQuestItem))
+            {
+                return;
+            }
+            // Not one taken off moments ago: its model is still queued for release on the drawing thread, and
+            // selling destroys the object under it (A4 2026-11-12: «put on 9a9 in slot 2», «sold 859» 1.5 s later,
+            // a C++ exception on the drawing thread 2 s after).
+            if (const auto t = g_takenOff.find(id); t != g_takenOff.end() && now - t->second < 15000)
             {
                 return;
             }
