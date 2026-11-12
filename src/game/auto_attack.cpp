@@ -1266,6 +1266,20 @@ namespace
     // --- Stepping back -------------------------------------------------------------------------------------------
 
     DWORD g_retreatUntil = 0;       // stepping back until then at the latest (0: not stepping back)
+    // Hopeless fights stepped back from (A3, the Battle Mage at level 4, 2026-11-12: away from groups of 5 at 418 %
+    // of his health again and again, a level 4-7 region his farm and quest ground for hours, never a level up).
+    std::deque<DWORD> g_hopelessAt;
+
+    // Two hopeless fights in 10 min: outmatched where it is; farmed and quested only where the enemies are no
+    // higher than the hero, for as long as two stay within the 10 min.
+    bool outmatched(DWORD now)
+    {
+        while (!g_hopelessAt.empty() && now - g_hopelessAt.front() > 600000)
+        {
+            g_hopelessAt.pop_front();
+        }
+        return g_hopelessAt.size() >= 2;
+    }
     DWORD g_retreatWalkAt = 0;      // the last walk order away
     DWORD g_noRetreatUntil = 0;     // after a long retreat, fight again for a while first
     constexpr DWORD kRetreatMaxMs = 12000, kRetreatPauseMs = 8000;
@@ -1988,8 +2002,11 @@ namespace
             g_retreatStartAt = now;
             if (g_retreatDoomed)
             {
-                LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health",
-                    fc.foes, fc.win * 100.0f, health, maximum);
+                g_hopelessAt.push_back(now);
+                LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health{}",
+                    fc.foes, fc.win * 100.0f, health, maximum,
+                    outmatched(now) ? "; outmatched here: farming and quests only where the enemies are not above the hero"
+                                    : "");
             }
             setIntent(Intent::Recover, "low on health, no healing potion or a fight foreseen lost: stepping back");
             LOG("AutoAttack: stepping back at {} of {} health, no healing potion, {} enemies close", health, maximum,
@@ -3500,6 +3517,10 @@ namespace
             // Careful (2+ deaths from the same save): only ground whose enemies the hero tops or matches (the analyst,
             // 2026-11-11: the Mage, level 3 with 102 health, sent to a zone of levels 4-7 and dead 15 times running).
             if (AgentSave::deathsSinceSave() >= 2 && hi > heroLevel + 1)
+            {
+                continue;
+            }
+            if (outmatched(GetTickCount()) && hi > heroLevel)
             {
                 continue;
             }
@@ -5014,6 +5035,20 @@ namespace
                 }
                 setIntent(Intent::Farm, "the quest's way is where the hero died lately: farming elsewhere first");
                 return true;
+            }
+            // Outmatched lately (two hopeless fights in 10 min): a quest on ground whose enemies start at the hero's level
+            // or above waits, however near, while the hero farms where it can win.
+            if (outmatched(tick))
+            {
+                const uintptr_t holder0 = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+                const uint8_t* world0 = holder0 ? *reinterpret_cast<const uint8_t* const*>(holder0) : nullptr;
+                int lo0 = 0, hi0 = 0;
+                if (world0 && sectorLevels(world0, static_cast<int>(x / kTileSize), static_cast<int>(y / kTileSize), lo0, hi0) &&
+                    hi0 > heroLevel)
+                {
+                    setIntent(Intent::Farm, "outmatched here: farming where the enemies are not above the hero first");
+                    return true;
+                }
             }
             // A goal at hand is no trip into hard ground: the Daemon's start (a tutorial yard, region 59 marked
             // levels 45-80, its main quest 8 tiles off behind a script's blocker) farmed instead, shut in, 14 min.
