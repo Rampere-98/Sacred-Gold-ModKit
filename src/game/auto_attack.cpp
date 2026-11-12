@@ -7172,7 +7172,10 @@ static bool keepDistance(DWORD now, uint32_t id)
         return true;    // the step under way: let it be walked
     }
     const HeroProfile::Data hero = HeroProfile::current();
-    if (!hero.valid || !hero.ranged || hero.mounted || Whereabouts::area().shutIn)
+    // The Battle Mage kites as the archers do (docs/Mentalidades.md §1: «Far», kite, 8 tiles): his spells reach
+    // as far, his health is the thinnest.
+    const bool kites = hero.ranged || hero.cls == HeroProfile::Class::BattleMage;
+    if (!hero.valid || !kites || hero.mounted || Whereabouts::area().shutIn)
     {
         return false;
     }
