@@ -214,7 +214,10 @@ namespace
         {
             const uint32_t flags = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(object) +
                                                                      kObjectFlags);
-            loot = (flags & kFixtureFlag) ? Loot::None : Loot::Item;
+            // A quest item (0x800, Gear's kQuestItem) is taken though it carries the fixture bit too (the player,
+            // 2026-11-12: A5 walked to a shining TYPE_OBJECT_QI_WATERSKIN, flags 04000801, on its quest's goal and
+            // never picked it up).
+            loot = (flags & kFixtureFlag) && !(flags & 0x800) ? Loot::None : Loot::Item;
         }
         // Each class and category once, to see in the log what is taken and what is not.
         static std::unordered_set<uint64_t> logged;
