@@ -1022,6 +1022,14 @@ namespace
 
     bool g_rangedRefused = false;   // the game took no ranged weapon into a slot: not tried again this run
 
+    // The weapon subclasses the game puts in hand 0, the bow hand (canDrop 0x6E09C0 through 0x5CEC00: 3, 7, 12); the
+    // others, the dwarf's guns (13, 14) and throwing weapons (6) among them, go to hand 1. The slot setter 0x5D8730
+    // takes either without that check.
+    bool bowHand(uint8_t kind)
+    {
+        return kind == 3 || kind == 7 || kind == 12;
+    }
+
     // Fighting from afar (the player, 2026-11-11: «las armas con mayor distancia de rango son para atacar desde lo más
     // lejos posible»): the best ranged weapon of the backpack into an empty weapon slot. First for the classes whose
     // skills are with them (Wood Elf, Dwarf); the others keep one too once they have three slots, for an enemy out of
@@ -1044,6 +1052,23 @@ namespace
         {
             if (slotRanged(pack, slot))
             {
+                // A gun put in the bow hand by an older build (shown and fought with as a crossbow): to the weapon
+                // hand, where the game itself puts it, while the slot is not in use.
+                const uint32_t gun = slotItem(pack, slot, 0);
+                if (gun && !bowHand(HeroProfile::itemWeaponKind(gun)) && !slotItem(pack, slot, 1) && slot != active)
+                {
+                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 0, 0, 1);
+                    fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 1, gun, 1);
+                    const bool moved = slotItem(pack, slot, 1) == gun;
+                    if (!moved && !slotItem(pack, slot, 0))
+                    {
+                        fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(slot), 0, gun, 1);
+                    }
+                    LOG("Gear: ranged weapon {:x} (kind {}) in weapon slot {}: bow hand -> weapon hand {}", gun,
+                        HeroProfile::itemWeaponKind(gun), slot + 1, moved ? "done" : "refused");
+                    g_rangedRefused = !moved;   // not tried again this run
+                    return moved;
+                }
                 return false;   // one there already
             }
             if (!slotItem(pack, slot, 0) && !slotItem(pack, slot, 1) && slot != active && empty < 0)
@@ -1134,7 +1159,8 @@ namespace
             return false;
         }
         fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
-        for (uint32_t hand : {0u, 1u})
+        const bool bow = bowHand(HeroProfile::itemWeaponKind(best));
+        for (uint32_t hand : {bow ? 0u : 1u, bow ? 1u : 0u})
         {
             fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, best, 1);
             if (slotItem(pack, empty, hand) == best)
