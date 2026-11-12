@@ -1563,6 +1563,30 @@ namespace
                 *reinterpret_cast<const uint32_t*>(page + 0x2CC), *reinterpret_cast<const uint32_t*>(page + 0x2CC + 0x188),
                 *reinterpret_cast<const uint32_t*>(page + 0x2CC + 2 * 0x188), line);
         };
+        // The real price (Manolito, block AJ: 0x6D23E0 fastcall(page), the arts filled times the sum of their costs):
+        // learn returns unless the gold is above it; with 3 arts too dear, 2 (twice their sum) tried.
+        using ComboPrice = uint32_t(__fastcall*)(uint8_t* page);
+        uint32_t price = fn<ComboPrice>(0x6D23E0)(page);
+        int used = n;
+        if (gold <= price && n == 3)
+        {
+            *reinterpret_cast<uint32_t*>(page + 0x2CC + 2 * 0x188) = 0;
+            *reinterpret_cast<uint16_t*>(page + 0x2D0 + 2 * 0x188) = 0;
+            ids[2] = 0;
+            levels[2] = 0;
+            used = 2;
+            price = fn<ComboPrice>(0x6D23E0)(page);
+        }
+        if (gold <= price || price >= 1000000)
+        {
+            for (int i = 0; i < 4; ++i)
+            {
+                *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = 0;
+                *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = 0;
+            }
+            LOG("Gear: combo of {} arts costs {} gold, {} in hand: not yet", used, price, gold);
+            return giveUp("too dear for now");
+        }
         dumpRecords("before");
         fn<LearnCombo>(kLearnCombo)(page, nullptr, player);
         dumpRecords("after");
