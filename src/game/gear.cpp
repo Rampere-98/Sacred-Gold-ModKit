@@ -1372,8 +1372,10 @@ namespace
             if (gold >= price && price && price < 100000)
             {
                 fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
+                // doSwap reloads the page itself (0x6D4610(1)); a refresh right after it freed and loaded the new
+                // rune's model a second time in the same pass (Manolito, block AK: the crash in sprintf over a
+                // texture name, Sacred.exe+4502AE, came from that reload).
                 fn<UiCall>(kDoSwap)(lotto, nullptr);
-                fn<UiCall>(kLottoRefresh)(lotto, nullptr);
                 LOG("Gear: 3 runes of other classes swapped for {} gold (one of the hero's class)", price);
                 return true;
             }
