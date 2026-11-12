@@ -3380,7 +3380,10 @@ namespace
             const int n = std::max(f.count, 1);
             const int cx = static_cast<int>(f.sumX / n), cy = static_cast<int>(f.sumY / n);
             int lo = 0, hi = 0;
-            if (sectorRegion(world, cx, cy) == z.region && sectorLevels(world, cx, cy, lo, hi) && lo <= heroLevel + 5)
+            // Not far below the hero either: a level 11 Dwarf «worth staying» in a 1-4 region, 269 enemies there
+            // giving next to nothing (the analyst, 2026-11-12: 54 xp/h).
+            if (sectorRegion(world, cx, cy) == z.region && sectorLevels(world, cx, cy, lo, hi) && lo <= heroLevel + 5 &&
+                hi + 4 >= heroLevel)
             {
                 z.enemies += f.count;
             }
@@ -3504,7 +3507,8 @@ namespace
             float fit = 1.0f;
             if (heroLevel > hi)
             {
-                fit = std::max(0.15f, static_cast<float>(hi) / static_cast<float>(heroLevel));
+                // Over 4 levels below: next to no experience, a last resort only (A7, level 11, in a 1-4 zone).
+                fit = hi + 4 < heroLevel ? 0.03f : std::max(0.15f, static_cast<float>(hi) / static_cast<float>(heroLevel));
             }
             else if (lo > heroLevel + 5)
             {
