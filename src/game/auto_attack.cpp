@@ -1974,6 +1974,33 @@ namespace
                 }
                 return false;
             }
+            // Cornered: a retreat that gets nowhere while the blows come is the worst of both (the player, 2026-11-12:
+            // the Daemon «se queda atascada sin poder salir, con enemigos atacándola y ella sin reaccionar», fighting
+            // back only after a potion ended the retreat, and then winning). Under 1.5 tiles in 3 s with health lost
+            // over them: back to the fight, no retreat for the pause.
+            static int32_t s_cornerX = 0, s_cornerY = 0;
+            static DWORD s_cornerAt = 0;
+            static int s_cornerHealth = 0;
+            if (!s_cornerAt || g_retreatStartAt > s_cornerAt)
+            {
+                s_cornerX = self->x, s_cornerY = self->y, s_cornerAt = now, s_cornerHealth = health;
+            }
+            else if (now - s_cornerAt >= 3000)
+            {
+                const double moved = std::hypot(static_cast<double>(self->x - s_cornerX), static_cast<double>(self->y - s_cornerY));
+                if (moved < 1.5 * kTileSize && health < s_cornerHealth && anyNear)
+                {
+                    LOG("AutoAttack: cornered while stepping back ({:.1f} tiles in 3 s, {} health lost): fighting back",
+                        moved / kTileSize, s_cornerHealth - health);
+                    remember(std::format("acorralada al huir: vuelve a luchar ({} de {} de vida)", health, maximum));
+                    s_cornerAt = 0;
+                    g_retreatUntil = 0;
+                    g_retreatDoomed = false;
+                    g_noRetreatUntil = now + kRetreatPauseMs;
+                    return false;
+                }
+                s_cornerX = self->x, s_cornerY = self->y, s_cornerAt = now, s_cornerHealth = health;
+            }
             const bool recovered =
                 health * 100 >= maximum * std::min((c.retreatPercent != 25 ? c.retreatPercent : Mind::now().retreatPercent) + 20, 90);
             bool tooLong = static_cast<int>(now - g_retreatUntil) >= 0;
