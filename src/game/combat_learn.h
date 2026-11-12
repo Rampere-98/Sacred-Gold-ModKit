@@ -65,6 +65,7 @@ namespace CombatLearn
         float loss = 0.0f;          // expected health lost, a share of the maximum
         float seconds = 0.0f;       // until all are down
         float win = 1.0f;           // chance the hero's health lasts (0..1)
+        float expected = 0.0f;      // the loss corrected by the learned bias (the median of what fights like it cost)
         uint32_t first = 0;         // the enemy to kill first
     };
     // At the last look.

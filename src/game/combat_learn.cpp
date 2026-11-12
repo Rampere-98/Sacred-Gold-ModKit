@@ -72,6 +72,10 @@ namespace
     constexpr float kFloor = 0.002f;
     constexpr float kRate = 0.05f;
     constexpr float kMinStrikeSeconds = 2.0f;
+    // No enemy of the game takes half the hero's health each second for long: a rate above that is a misread (a
+    // load, a transformation or a death landing in one look; A8's Daemon, 2026-11-12: ORC_WARRIOR learned at 720 %/s,
+    // GOBLIN_CHAMP at 35 %/s, both measured under 1 %; she fled a lone goblin she kills in one blow).
+    constexpr float kMaxRate = 0.5f;
     constexpr float kTypePrior = 3.0f;          // a kind's own measure counts as this many samples of the model's
     float g_w[kFeatures] = {std::log(0.01f + kFloor), 0.5f, 0.5f, 0.0f};
     int g_samples = 0;
@@ -247,7 +251,7 @@ namespace
             return;
         }
         s.learned = true;
-        const float rate = s.damage / static_cast<float>(heroMax) / s.strikeSeconds;
+        const float rate = std::min(kMaxRate, s.damage / static_cast<float>(heroMax) / s.strikeSeconds);
         const float y = std::log(rate + kFloor);
         const float weight = std::min(1.0f, s.strikeSeconds / 6.0f);
         float x[kFeatures];
@@ -312,6 +316,14 @@ namespace
                                  &k.maxLevel, &k.killed, name) == 7)
             {
                 k.name = name;
+                // Learned from misreads (above a quarter of the health a second): learned again from scratch.
+                if (k.logRate > std::log(0.25f + kFloor))
+                {
+                    LOG("CombatLearn: {} learned at {:.0f} %/s, implausible: learned again", k.name,
+                        std::exp(k.logRate) * 100.0f);
+                    k.samples = 0;
+                    k.logRate = 0.0f;
+                }
                 g_kinds[type] = k;
             }
         }
@@ -492,6 +504,7 @@ namespace
         {
             fc.win = heroFraction > 0.0f ? 1.0f : 0.0f;
         }
+        fc.expected = fc.loss * std::exp(g_lossBias);
         g_forecast = fc;
     }
 
@@ -671,7 +684,13 @@ void CombatLearn::observe(const Look& look)
 
     // The health the hero lost since the last look, shared among those striking it by how hard each is thought to
     // hit (at least a little each).
-    const float lost = dt > 0.0f && !potion ? static_cast<float>(std::max(0, g_lastHealth - heroHealth)) : 0.0f;
+    // Not across a change of the maximum (a transformation, a level, a load): the drop is no blow. Never more than the
+    // maximum in one look.
+    static int s_lastMax = 0;
+    const bool sameMax = s_lastMax == heroMax;
+    s_lastMax = heroMax;
+    const float lost = dt > 0.0f && !potion && sameMax
+                           ? static_cast<float>(std::min(heroMax, std::max(0, g_lastHealth - heroHealth))) : 0.0f;
     float weights = 0.0f;
     bool engaged = false;
     struct Sighting

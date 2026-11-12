@@ -1911,9 +1911,14 @@ namespace
         // minute after loading, into one enemy foreseen at 254 % of his health lost; the «careful» after two deaths
         // only moved the retreat by 15 points): more than one and a half lives' worth, or more than one once careful.
         const bool careful = AgentSave::deathsSinceSave() >= 2;
-        const bool doomed = (fc.foes >= 4 && fc.win < 0.25f && fc.loss > 1.0f) ||
-                            (fc.foes > 0 && fc.loss > 1.5f && fc.win < 0.75f) ||
-                            (careful && fc.foes > 0 && fc.loss > 1.0f && fc.win < 0.85f);
+        // On the loss corrected by what fights like it really cost (the player, 2026-11-12: the Daemon fled one thin
+        // goblin «foreseeing defeat»: 1000 % raw, but her forecasts ran eleven times too grim, 47 % to win), and never
+        // from one enemy alone the hero's blows put down in a few seconds.
+        const bool quickOne = fc.foes == 1 && fc.seconds > 0.0f && fc.seconds < 6.0f;
+        const bool doomed = !quickOne &&
+                            ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
+                             (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
+                             (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f));
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
         // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
         // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
@@ -6814,7 +6819,7 @@ static void writeMind(DWORD now, cCreature* self, int layer, int heroLevel)
     if (const CombatLearn::Forecast& fc = CombatLearn::forecast(); fc.foes > 0)
     {
         node(3, std::format("{} enemigos, ganar {:.0f} %", fc.foes, fc.win * 100.0f));
-        node(3, std::format("perdería {:.0f} % de vida en {:.0f} s", fc.loss * 100.0f, fc.seconds));
+        node(3, std::format("perdería {:.0f} % de vida en {:.0f} s", fc.expected * 100.0f, fc.seconds));
     }
     else
     {
