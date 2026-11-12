@@ -2282,11 +2282,20 @@ namespace
             const double t = wx * dx + wy * dy;
             if (t > -1.0 * kTileSize && t < 25.0 * kTileSize && std::hypot(wx - t * dx, wy - t * dy) < 1.5 * kTileSize)
             {
-                s_coming[static_cast<uint32_t>(i)] = {std::abs(t) / kTileSize, now};
-                if (const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208) & 0xFFFF)
+                // Only an enemy's arrow (the code reviewer: the hero's own and its hirelings' were followed too, and a
+                // fall of health by a blow counted as their hit).
+                const uint32_t shooter = *reinterpret_cast<const uint32_t*>(o + 0x208) & 0xFFFF;
+                cObjectManager* om = cObjectManager::instance();
+                // The shooter by its index in the object table (+0x208 holds the index, not a full id).
+                cObject* shot = shooter && shooter < entries ? reinterpret_cast<cObject*>(const_cast<uint8_t*>(table[shooter])) : nullptr;
+                cCreature* from = shot ? shot->asCreature() : nullptr;
+                cCreature* hero = om ? om->hero() : nullptr;
+                if (!from || !hero || !hero->isEnemy(from))
                 {
-                    g_shotBy[shooter] = now;
+                    continue;
                 }
+                s_coming[static_cast<uint32_t>(i)] = {std::abs(t) / kTileSize, now};
+                g_shotBy[shooter] = now;
             }
         }
     }
