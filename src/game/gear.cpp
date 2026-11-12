@@ -1965,6 +1965,107 @@ namespace
         return close("bought");
     }
 
+    // The horse's armour (category 0x1D): the agent carried one and never put it on (the player, 2026-11-12: «con la
+    // armadura de caballo en el inventario parece negarse a equiparla»). Manolito, the backpack's use on it
+    // (0x6C0D92..0x6C0EA8, deduced): canUse on the horse, unequip its slot 0, the new one out of the backpack first,
+    // the old one into the backpack, equip last, then the hero's stats recalculated. On the game's thread, under the
+    // model lock (it changes the horse's model).
+    constexpr uintptr_t kCategoryOf = 0x426220, kUnequip = 0x556A30, kRecalcStats = 0x5796A0;
+    constexpr uint8_t kHorseArmour = 0x1D;
+    using CategoryOf = uint8_t(__fastcall*)(void* typeMgr, void*, uint32_t type);
+    using Unequip = uint32_t(__fastcall*)(cCreature* c, void*, int slot, int net);
+    using RecalcStats = void(__fastcall*)(void* stats, void*, int a, int b);
+    std::unordered_map<uint32_t, DWORD> g_horseArmourTried;
+
+    // The armour of a horse armour: physical, fire, magic and poison (info +0x32, s16 x 4, what the tooltip reads).
+    int horseArmourWorth(uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* item = objects && id ? objects->object(id) : nullptr;
+        const uint8_t* info = item && g_getInfo ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr;
+        if (!info)
+        {
+            return 0;
+        }
+        int sum = 0;
+        for (int i = 0; i < 4; ++i)
+        {
+            sum += std::max<int>(0, *reinterpret_cast<const int16_t*>(info + 0x32 + 2 * i));
+        }
+        return sum;
+    }
+
+    bool equipHorseArmour(cCreature* hero, uint8_t* pack)
+    {
+        void* types = typeMgr();
+        cObjectManager* objects = cObjectManager::instance();
+        const uint32_t horseId = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570);
+        cCreature* horse = objects && horseId ? objects->creature(horseId) : nullptr;
+        if (!types || !horse || horse->health <= 0 || !g_canUse || !g_getEquipped || !g_equip)
+        {
+            return false;
+        }
+        const uint32_t current = fn<GetEquipped>(g_getEquipped)(horse, nullptr, 0);
+        const int currentWorth = current ? horseArmourWorth(current) : -1;
+        const DWORD now = GetTickCount();
+        uint32_t best = 0;
+        int bestWorth = currentWorth, bestCell = -1;
+        eachItem(pack, [&](uint32_t id, int cell, int, int) {
+            const uint32_t type = typeOf(id);
+            if (!type || fn<CategoryOf>(kCategoryOf)(types, nullptr, type) != kHorseArmour)
+            {
+                return;
+            }
+            if (const auto it = g_horseArmourTried.find(id); it != g_horseArmourTried.end() && now - it->second < 600000)
+            {
+                return;     // refused lately (a requirement): again in 10 min
+            }
+            const int w = horseArmourWorth(id);
+            if (w > bestWorth)
+            {
+                best = id, bestWorth = w, bestCell = cell;
+            }
+        });
+        if (!best)
+        {
+            return false;
+        }
+        if (!fn<CanUse>(g_canUse)(horse, nullptr, best, 0))
+        {
+            g_horseArmourTried[best] = now;
+            LOG("Gear: horse armour {:x} refused by the horse (a requirement)", best);
+            return false;
+        }
+        int ow = 0, oh = 0, nw = 0, nh = 0;
+        if ((current && !sizeOf(current, ow, oh)) || !sizeOf(best, nw, nh))
+        {
+            return false;
+        }
+        const GrannyAsync::ModelLock lock;
+        fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
+        if (current)
+        {
+            uint16_t free = 0;
+            if (!fn<FindFree>(g_findFree)(pack, nullptr, ow, oh, &free, 0))
+            {
+                fn<PutItem>(g_putItem)(pack, nullptr, bestCell, best, nw, nh, 1);    // no room for the old one: as it was
+                g_horseArmourTried[best] = now;
+                LOG("Gear: horse armour {:x}: no room in the backpack for the old one", best);
+                return false;
+            }
+            const uint32_t old = fn<Unequip>(kUnequip)(horse, nullptr, 0, 1);
+            if (old)
+            {
+                fn<PutItem>(g_putItem)(pack, nullptr, free, old, ow, oh, 1);
+            }
+        }
+        fn<Equip>(g_equip)(horse, nullptr, 0, best, 1);
+        fn<RecalcStats>(kRecalcStats)(reinterpret_cast<uint8_t*>(hero) + 0x3A8, nullptr, 0, 1);
+        LOG("Gear: horse armour {:x} (armour {}) put on the horse{}", best, bestWorth,
+            current ? std::format(", the old one ({}) to the backpack", currentWorth) : std::string());
+        return true;
+    }
+
     std::atomic<bool> g_slotsDue{false};    // work() found nothing else to do: the slots, on the game's thread
 
     void work(void*)
@@ -2198,7 +2299,7 @@ void Gear::onFrame(DWORD now, bool calm)
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         uint8_t* pack = hero && hero->health > 0 ? entryOf(static_cast<int>(hero->id)) : nullptr;
-        if (pack && !fillRangedSlot(hero, pack))
+        if (pack && !equipHorseArmour(hero, pack) && !fillRangedSlot(hero, pack))
         {
             fillWeaponSlot(hero, pack);
         }
