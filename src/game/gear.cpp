@@ -1403,15 +1403,38 @@ namespace
     // 5 copies): no more tries this run until the combo list is read right (Manolito asked).
     bool g_comboPaid = false;
 
+    // The hero's 4 combo records (Manolito, block AJ, 2026-11-12): the vector [stats+0x10E, stats+0x112), 0x26 bytes
+    // each: +0 u16 the slot's key, +2 u32 ids[4], +0x12 u16 levels[4]. A combo is learned when any id is set.
+    constexpr size_t kComboRecord = 0x26;
+
+    const uint8_t* comboRecords(const uint8_t* st, int& count)
+    {
+        const uint8_t* begin = *reinterpret_cast<uint8_t* const*>(st + 0x10E);
+        const uint8_t* end = *reinterpret_cast<uint8_t* const*>(st + 0x112);
+        count = begin && end > begin ? static_cast<int>(std::min<ptrdiff_t>((end - begin) / static_cast<ptrdiff_t>(kComboRecord), 4)) : 0;
+        return begin;
+    }
+
+    bool comboSet(const uint8_t* r)
+    {
+        for (int k = 0; k < 4; ++k)
+        {
+            if (*reinterpret_cast<const uint32_t*>(r + 2 + k * 4))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
     int comboCount(const uint8_t* st)
     {
-        const uint8_t* combos = *reinterpret_cast<uint8_t* const*>(st + 0x10E);
+        int records = 0;
+        const uint8_t* combos = comboRecords(st, records);
         int n = 0;
-        for (int i = 0; combos && i < 4; ++i)
+        for (int i = 0; i < records; ++i)
         {
-            const uint8_t* r = combos + i * 38;
-            const uint16_t id = *reinterpret_cast<const uint16_t*>(r);
-            n += id >= 0x200 && id < 0x204 && *reinterpret_cast<const uint32_t*>(r + 2) ? 1 : 0;
+            n += comboSet(combos + i * kComboRecord) ? 1 : 0;
         }
         return n;
     }
@@ -1501,9 +1524,22 @@ namespace
             return giveUp("fewer than 2 arts of one kind");
         }
         const int before = comboCount(st);
-        // The template (+0x778..+0x78B) left at zero (Manolito, block AC, 2026-11-11: filled, the price 0x6D23E0 reads
-        // 0 and the combo comes free, a cheat): only the 4 slots, as the player's drag fills them.
-        std::memset(page + 0x778, 0, 0x14);
+        // The free record's key into +0x77C: learn stores only into the record whose key matches it, else it charges
+        // and stores nothing (Manolito, block AJ: the zeroed template left it 0, 1500 gold a try lost). The template's
+        // ids and levels (+0x780..+0x78B) stay zero (block AC: filled, the price reads 0, a cheat).
+        int records = 0;
+        const uint8_t* combos = comboRecords(st, records);
+        int freeRecord = -1;
+        for (int i = 0; i < records && freeRecord < 0; ++i)
+        {
+            freeRecord = comboSet(combos + i * kComboRecord) ? -1 : i;
+        }
+        if (freeRecord < 0)
+        {
+            return giveUp("no free combo record");
+        }
+        *reinterpret_cast<uint16_t*>(page + 0x77C) = *reinterpret_cast<const uint16_t*>(combos + freeRecord * kComboRecord);
+        std::memset(page + 0x780, 0, 0x0C);
         for (int i = 0; i < 4; ++i)
         {
             *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = ids[i];
@@ -1538,7 +1574,7 @@ namespace
             *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = 0;
             *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = 0;
         }
-        std::memset(page + 0x778, 0, 0x14);
+        std::memset(page + 0x780, 0, 0x0C);
         return true;
     }
 
