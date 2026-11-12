@@ -3238,6 +3238,8 @@ namespace
     bool talkedLately(uint32_t id, DWORD now);              // spoken to a short while ago
     void forgetTalks();                                     // a quest step done: anyone may be spoken to again
 
+    bool sectorLevels(const uint8_t* world, int tx, int ty, int& lo, int& hi);
+
     bool questTarget(int32_t heroX, int32_t heroY, int32_t& x, int32_t& y, double& radius, uint32_t& who)
     {
         const DWORD now = GetTickCount();
@@ -3336,6 +3338,13 @@ namespace
         // C6 (docs/Criterios.md: A3 646 «off to the quest» over 326 goals): the goal followed now counts 30 % nearer, so
         // two goals at much the same way are not flipped between at each step.
         static uint32_t s_followed = 0;
+        // A side quest in a region far below the hero (its enemies' top level 5 or more under the hero's) counts as
+        // 2.5 times as far: done still, but after the main quest and the quests of fitting regions, which lead on to
+        // where the experience is (the player, 2026-11-12: «pasar del nivel 13 es un desafío»; five heroes of level
+        // 13 in regions of levels 1-10, 3 to 33 thousand experience an hour).
+        const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
+        const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
+        const int heroLevel = HeroProfile::current().level;
         for (QuestGoal& g : g_questBook)
         {
             g.distance = wayLength(heroX, heroY, g.x, g.y);
@@ -3343,6 +3352,13 @@ namespace
             if (s_followed && (g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7)) == s_followed)
             {
                 g.distance *= 0.7;
+            }
+            int lo = 0, hi = 0;
+            if (!g.main && g.tier <= 0 && world && heroLevel > 0 &&
+                sectorLevels(world, static_cast<int>(g.x / kTileSize), static_cast<int>(g.y / kTileSize), lo, hi) &&
+                hi + 5 <= heroLevel)
+            {
+                g.distance *= 2.5;
             }
         }
         std::stable_sort(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& a, const QuestGoal& b) {
