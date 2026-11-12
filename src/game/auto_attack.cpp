@@ -2689,7 +2689,9 @@ namespace
             // near-deaths for 4 % of the experience; packs 87 % with them): never sought, only fought once they strike
             // in the melee. Two levels above at most (one at levels 1-4); no pack of 5 above the hero, 10 at levels
             // 1-4, 20 ever (the pack: the same leader, obj +0x24D, within 600 u of it).
-            if (foeObject && foeObject->asCreature() && heroObject && !current && !(atHero && d <= melee))
+            // Never one already at the hero, however far (the code reviewer: an archer above the hero shooting from
+            // afar was never answered).
+            if (foeObject && foeObject->asCreature() && heroObject && !current && !engagedFoe)
             {
                 const auto lv = [](const cObject* o)
                 { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x3FE)); };
@@ -4085,7 +4087,9 @@ namespace
             }
         }
         // C5: 2 min, then 1 h, 6 h and a day (the old 10/30/60 min let the same cell take an hour over and over).
-        static const DWORD kLeftMs[] = {120000, 3600000, 21600000, 86400000};
+        // An hour at most from the third on (the code reviewer: a quest's goal in a cell marked three times was barred
+        // 6-24 h).
+        static const DWORD kLeftMs[] = {120000, 3600000, 3600000, 3600000};
         if (const auto it = s_left.find(key);
             it != s_left.end() && now - it->second < kLeftMs[std::min(s_times[key], 4) - 1])
         {

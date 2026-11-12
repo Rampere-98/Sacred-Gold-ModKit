@@ -718,8 +718,8 @@ namespace
                 (tried == g_runesTried.end() || tried->second < heroLevel))
             {
                 // C7 (docs/Criterios.md: 76 readings refused, 14 runes, ~7 s each): another class's rune is never read
-                // (canUseItem(id, 1) gives the complaint, 6 = the class; ITEMS_RE §3.3); it waits for the rune swap.
-                if (g_canUse && !fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) == 6)
+                // (canUseItem(id, 1), the class alone, false; the code reviewer); it waits for the rune swap.
+                if (g_canUse && !fn<CanUse>(g_canUse)(hero, nullptr, id, 0) && fn<CanUse>(g_canUse)(hero, nullptr, id, 1) == 0)
                 {
                     g_runesTried[id] = 0x7FFFFFFF;
                     return;
@@ -2080,6 +2080,18 @@ namespace
             }
         }
         fn<Equip>(g_equip)(horse, nullptr, 0, best, 1);
+        if (fn<GetEquipped>(g_getEquipped)(horse, nullptr, 0) != best)
+        {
+            // Not taken (the code reviewer): back into the backpack, never lost.
+            uint16_t back = 0;
+            if (fn<FindFree>(g_findFree)(pack, nullptr, nw, nh, &back, 0))
+            {
+                fn<PutItem>(g_putItem)(pack, nullptr, back, best, nw, nh, 1);
+            }
+            g_horseArmourTried[best] = now;
+            LOG("Gear: horse armour {:x} not taken by the horse: back to the backpack", best);
+            return false;
+        }
         fn<RecalcStats>(kRecalcStats)(reinterpret_cast<uint8_t*>(hero) + 0x3A8, nullptr, 0, 1);
         LOG("Gear: horse armour {:x} (armour {}) put on the horse{}", best, bestWorth,
             current ? std::format(", the old one ({}) to the backpack", currentWorth) : std::string());
