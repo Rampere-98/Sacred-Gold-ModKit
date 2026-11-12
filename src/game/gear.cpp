@@ -703,8 +703,22 @@ namespace
         return false;
     }
 
+    // The Vampiress in her vampire form: her creature type +0x10 is 7, not 6 (AGENT_ADDRESSES «Forma viva»), and the
+    // game's class test (canUseItem 0x54ABE0 through the item's vfunc +0x38 on that type) then refuses her own runes
+    // (the player, 2026-11-12: «tiene 3 runas que no las usa y puede»). Her runes are judged in her knight's form only.
+    bool vampireShape(const cCreature* hero)
+    {
+        const HeroProfile::Class cls = HeroProfile::current().cls;
+        return (cls == HeroProfile::Class::Vampiress || cls == HeroProfile::Class::VampiressNight) &&
+               *(reinterpret_cast<const uint8_t*>(hero) + 0x10) == 7;
+    }
+
     bool readRune(cCreature* hero, uint8_t* pack)
     {
+        if (vampireShape(hero))
+        {
+            return false;
+        }
         const int heroLevel = *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + kStats + 0x56);
         cObjectManager* objects = cObjectManager::instance();
         uint32_t rune = 0;
@@ -2181,7 +2195,7 @@ namespace
                     }
                 }
             }
-            if (g_canUse)
+            if (g_canUse && !vampireShape(hero))
             {
                 const int foreign = countForeignRunes(hero, pack);
                 if (g_foreignRunes.exchange(foreign) != foreign && foreign)
