@@ -3101,8 +3101,17 @@ namespace
                 }
                 // A quest failed: a death (the player, 2026-11-11: «el fracaso cuenta como muerte»). Only one more
                 // than this run read before, not the first read of a run nor right after a load.
-                if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging())
+                // The same failure again after the load it caused is no new one (the verifier, 2026-11-12: A3, a quest
+                // past its time in the save, failed again a minute after each load, 10 «deaths» in 21 min, the game
+                // set aside): counted once per total of failures.
+                static int s_countedFailures = -1;
+                if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging() && failed == s_countedFailures)
                 {
+                    LOG("AutoAttack: the quest failed again after the load ({} failed): not counted again", failed);
+                }
+                else if (readBefore && failed == g_questsFailed + 1 && !AgentSave::worldChanging())
+                {
+                    s_countedFailures = failed;
                     LOG("AutoAttack: a quest failed ({} failed now): as a death, the last save loaded", failed);
                     remember("falló una misión: cuenta como muerte");
                     AgentSave::questFailed();
