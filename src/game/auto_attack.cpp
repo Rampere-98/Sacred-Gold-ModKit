@@ -24,6 +24,7 @@
 #include "game/frame_hooks.h"
 #include "game/modkit_menu.h"
 #include "game/tactics.h"
+#include "game/granny_async.h"
 #include "game/ui_nav.h"
 #include "input/inject.h"
 #include "log.h"
@@ -6395,6 +6396,7 @@ void AutoAttack::install()
     ModkitMenu::add({"Teletransporte (solo jugador)", &drawTeleport, nullptr});
     AgentOverlay::install();
     Teleports::install();
+    GrannyAsync::installModelGuard();
     Tactics::install();
     LOG("AutoAttack: {} (key 0x{:x}, range {} px, pause {} ms, repeat {} ms)", g_on ? "on" : "off",
         Config::autoAttack.key, Config::autoAttack.range, Config::autoAttack.pauseMs, Config::autoAttack.repeatMs);

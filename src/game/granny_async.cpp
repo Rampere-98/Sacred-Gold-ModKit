@@ -330,3 +330,20 @@ void GrannyAsync::onFrame()
     g_jobs.exchange(0);
     frames = 0;
 }
+
+namespace
+{
+    using GetModelFn = uintptr_t(__fastcall*)(void* self, void* edx, uint32_t a, uint32_t b);   // thiscall, ret 8
+    GetModelFn g_origGetModel = nullptr;
+
+    uintptr_t __fastcall hookGetModel(void* self, void* edx, uint32_t a, uint32_t b)
+    {
+        waitIdle(reinterpret_cast<uintptr_t>(_ReturnAddress()));
+        return g_origGetModel(self, edx, a, b);
+    }
+}
+
+void GrannyAsync::installModelGuard()
+{
+    Patch::hook(g_origGetModel, static_cast<uintptr_t>(0x411F50), &hookGetModel, "cGrannyModelManager::getModel");
+}

@@ -10,4 +10,9 @@ namespace GrannyAsync
 
     // Once per presented frame: logs where the game had to wait for the worker, every few seconds.
     void onFrame();
+
+    // Detours cGrannyModelManager::getModel (ENG 00411F50) so a model is loaded only with the worker idle (Manolito,
+    // block AI: a weapon switched mid-fight loads its .gr2 and textures, read straight from the file's memory, not
+    // through a Granny import; 5 crashes in sprintf over a garbage texture name). Call inside a Detours transaction.
+    void installModelGuard();
 }
