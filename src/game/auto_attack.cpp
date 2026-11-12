@@ -1979,7 +1979,11 @@ namespace
         // C4 (docs/Criterios.md: 3 potions or more in a fight were 38.6 % of the near-deaths): two drunk and two or
         // more still up, the fight is left now, whatever the health.
         const bool drained = CombatLearn::fightPotions() >= 2 && fc.foes >= 2 && !quickOne;
-        const bool doomed = drained || (!quickOne &&
+        // More enemies on the hero than the class takes at once (docs/Mentalidades.md §3, maxFoes / maxFoesDry with
+        // no healing potion) and the fight not clearly won: left too.
+        const int foeCap = Gear::healingLeft() > 0 ? mind.maxFoes : mind.maxFoesDry;
+        const bool overrun = foeCap > 0 && fc.foes > foeCap && fc.win < 0.6f;
+        const bool doomed = drained || overrun || (!quickOne &&
                             ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
                              (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
                              (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f)));
