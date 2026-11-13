@@ -35,7 +35,7 @@ namespace
     // One cell per tile (a map coordinate).
     constexpr double kTileSize = 53.66563;
 
-    // 7 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
+    // 8 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
     struct Cell
     {
         uint8_t visits = 0;     // saturating
@@ -43,7 +43,8 @@ namespace
         uint8_t r = 0, g = 0, b = 0;
         uint8_t samples = 0;    // ground color samples averaged (0: none yet)
         uint8_t scan = 0;       // the game's tile test, run over the loaded sectors: 0 not yet, 1 walkable, 2 not
-        bool known() const { return visits || blocked || samples || scan; }
+        uint8_t kind = 0;       // ClickWalk::TileKind, read from the game's tile data (0: not read)
+        bool known() const { return visits || blocked || samples || scan || kind; }
     };
     // Squares in chunks of 32x32 (6 KB), only where something is known: a lookup is one hash and an index, and the
     // memory is what was explored, not a node per square.
@@ -271,7 +272,7 @@ namespace
                 }
                 continue;
             }
-            const int n = numbers(line, v, 8, 5);
+            const int n = numbers(line, v, 9, 5);
             if (n < 5)
             {
                 continue;
@@ -284,12 +285,17 @@ namespace
             const unsigned color = n > 5 ? static_cast<unsigned>(v[5]) : 0;
             const unsigned samples = n > 6 ? static_cast<unsigned>(v[6]) : 0;
             const unsigned scan = n > 7 ? static_cast<unsigned>(v[7]) : 0;
+            const unsigned kind = n > 8 ? static_cast<unsigned>(v[8]) : 0;
             change(key(layer, tx, ty), [&](Cell& c) {
                 c.visits = static_cast<uint8_t>(std::clamp(visits, 0, 255));
                 c.blocked = static_cast<uint8_t>(std::clamp(blocked, 0, 255));
-                if (n == 8)
+                if (n >= 8)
                 {
                     c.scan = static_cast<uint8_t>(std::min(scan, 2u));
+                }
+                if (n >= 9)
+                {
+                    c.kind = static_cast<uint8_t>(std::min(kind, 9u));
                 }
                 if (n >= 7)
                 {
@@ -563,6 +569,17 @@ namespace
                         // Walkable by the game's tile test, not walked yet: dim, ground colour if sampled.
                         dl->AddQuadFilled(n, e, so, w, c.samples ? (shown(c) & 0x00FFFFFF) | 0x80000000
                                                                  : IM_COL32(52, 58, 66, 255));
+                    }
+                    else if (c.kind >= 2 && c.kind <= 9 && c.kind != 8)
+                    {
+                        // What it is, by the game's tile data (ClickWalk::TileKind): water blue, lava orange, a
+                        // building brown, a rock or tree brick red, a door open green or shut yellow, a scripted
+                        // barrier violet.
+                        static constexpr ImU32 kKindColour[10] = {
+                            0, 0, IM_COL32(40, 90, 170, 255), IM_COL32(220, 110, 20, 255), IM_COL32(110, 70, 40, 255),
+                            IM_COL32(140, 52, 36, 255), IM_COL32(60, 170, 70, 255), IM_COL32(220, 190, 40, 255), 0,
+                            IM_COL32(150, 60, 190, 255)};
+                        dl->AddQuadFilled(n, e, so, w, kKindColour[c.kind]);
                     }
                     else if (c.scan == 2)
                     {
@@ -1115,6 +1132,7 @@ namespace
     int g_scanLayer = -1, g_scanCx = 0, g_scanCy = 0, g_scanAt = 0;
     bool g_scanDone = false;
     DWORD g_scanDoneAt = 0;
+    int g_kindSeen[10] = {};    // tile kinds read in the pass under way
 
     // Under g_lock, on the game thread.
     void scanStep(int layer, int tx, int ty)
@@ -1147,17 +1165,35 @@ namespace
                 continue;   // stood on: walkable for good
             }
             --budget;
-            const int w = ClickWalk::walkable(layer, sx, sy);
-            const uint8_t now = w > 0 ? 1 : 2;
-            if (w >= 0 && (!c || c->scan != now))
+            const int kind = ClickWalk::tileKind(layer, sx, sy);
+            if (kind >= 0 && kind < 10)
             {
-                change(k, [now](Cell& cell) { cell.scan = now; });
+                ++g_kindSeen[kind];
+            }
+            const uint8_t now = ClickWalk::kindWalkable(kind) ? 1 : 2;
+            if (kind > 0 && (!c || c->scan != now || c->kind != kind))
+            {
+                change(k, [now, kind](Cell& cell) {
+                    cell.scan = now;
+                    cell.kind = static_cast<uint8_t>(kind);
+                });
             }
         }
         if (g_scanAt >= side * side && !g_scanDone)
         {
             g_scanDone = true;
             g_scanDoneAt = GetTickCount();
+            // What the pass read, once a minute (to check the reading against the game).
+            static DWORD s_toldAt = 0;
+            if (!s_toldAt || g_scanDoneAt - s_toldAt > 60000)
+            {
+                s_toldAt = g_scanDoneAt;
+                LOG("MapMemory: tiles read around {},{} layer {}: floor {}, water {}, lava {}, building {}, obstacle {}, "
+                    "door open {}, door shut {}, barrier open {}, barrier shut {}",
+                    g_scanCx, g_scanCy, layer, g_kindSeen[1], g_kindSeen[2], g_kindSeen[3], g_kindSeen[4],
+                    g_kindSeen[5], g_kindSeen[6], g_kindSeen[7], g_kindSeen[8], g_kindSeen[9]);
+            }
+            std::fill(std::begin(g_kindSeen), std::end(g_kindSeen), 0);
         }
     }
 }
@@ -1438,6 +1474,14 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
                 {
                     v = 0;
                 }
+                else if (c.kind == static_cast<uint8_t>(ClickWalk::TileKind::GateShut))
+                {
+                    v = 40;  // a shut door or gate: opened on the way (dear, it may be locked)
+                }
+                else if (c.kind && !ClickWalk::kindWalkable(c.kind))
+                {
+                    v = 0;   // water, lava, a building, a rock, a scripted barrier: by the game's own data
+                }
                 else if (c.scan == 2)
                 {
                     v = 1;  // the tile test alone: closed, unless a door that opens is near (below)
@@ -1706,9 +1750,9 @@ namespace
                 const Cell& c = chunk.cells[i];
                 if (c.known())
                 {
-                    std::fprintf(f, "%d %d %d %u %u %06x %u %u\n", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
+                    std::fprintf(f, "%d %d %d %u %u %06x %u %u %u\n", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
                                  cy * kChunkSide + (i >> kChunkShift), c.visits, c.blocked, (c.r << 16) | (c.g << 8) | c.b,
-                                 c.samples, c.scan);
+                                 c.samples, c.scan, c.kind);
                 }
             }
         }

@@ -37,4 +37,30 @@ namespace ClickWalk
     // loaded, else as the world files have it (WorldTiles: surface only, doors counted walkable): 1 yes, 0 no, -1 not
     // known (another layer outside the loaded sectors, or no world files).
     int walkable(int layer, int tx, int ty);
+
+    // What a tile is, read from the game's own data (docs/AGENT_ADDRESSES.md «Casilla» and «Casillas dependen de
+    // objeto», Manolito): the tile's +0x1F type (low 4 bits 1 or 2: blocked; high 4 bits the ground class, 9 water,
+    // 0xA lava), +0x1E flags (8 blocked, 4 decided by the tile's record), +0x1C/+0x1D the offset to a large
+    // obstacle's anchor (a house, a wall); the record of a flag-4 tile ([0xAB44C8] tree -> [map+0x268] table, 16
+    // bytes: +6 object id, +0xA bit 0 walkable) says a door or gate (an object) or a scripted barrier (none), open or
+    // shut. So the agent knows a shut door from a wall, a house from a rock, water from a fence.
+    enum class TileKind : uint8_t
+    {
+        Unknown = 0,
+        Floor = 1,
+        Water = 2,
+        Lava = 3,
+        Building = 4,
+        Obstacle = 5,
+        GateOpen = 6,
+        GateShut = 7,
+        BarrierOpen = 8,
+        BarrierShut = 9,
+    };
+    // -1 when not known (the sector not loaded and no world file for it).
+    int tileKind(int layer, int tx, int ty);
+    inline bool kindWalkable(int kind)
+    {
+        return kind == 1 || kind == 6 || kind == 8;
+    }
 }

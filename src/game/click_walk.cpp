@@ -1019,6 +1019,104 @@ int ClickWalk::walkable(int layer, int tx, int ty)
     return g_walkable(map, nullptr, &p, 0) ? 1 : 0;
 }
 
+namespace
+{
+    // The record of a flag-4 tile, as 0x636C10 looks it up: key (((x << 14) | y) << 4) | (layer > 1 ? layer : 0)
+    // in the binary tree at [0xAB44C8] (node +4 key, +8 index, +0xC left, +0x10 right), the index into the 16-byte
+    // records at [map+0x268]. Raw reads under SEH (the render thread loads and unloads sectors).
+    int readKind(cMapData* map, const Sector* sector, int layer, int tx, int ty, int walk)
+    {
+        __try
+        {
+            const auto* t = reinterpret_cast<const uint8_t*>(sector->tiles) +
+                            ((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20;
+            const uint8_t flags = t[0x1E], type = t[0x1F];
+            const int8_t dx = static_cast<int8_t>(t[0x1C]), dy = static_cast<int8_t>(t[0x1D]);
+            const int ground = type >> 4;
+            if ((type & 0xF) == 1 || (type & 0xF) == 2 || (flags & 8))
+            {
+                return ground == 9    ? static_cast<int>(ClickWalk::TileKind::Water)
+                       : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
+                       : (dx || dy)   ? static_cast<int>(ClickWalk::TileKind::Building)
+                                      : static_cast<int>(ClickWalk::TileKind::Obstacle);
+            }
+            if (!(flags & 4))
+            {
+                return walk ? static_cast<int>(ClickWalk::TileKind::Floor) : static_cast<int>(ClickWalk::TileKind::Obstacle);
+            }
+            const uint32_t k = ((((static_cast<uint32_t>(tx) << 14) | static_cast<uint32_t>(ty)) << 4) |
+                                static_cast<uint32_t>(layer > 1 ? layer : 0));
+            const uint8_t* node = *reinterpret_cast<const uint8_t* const*>(0xAB44C8);
+            uint32_t object = 0;
+            bool found = false;
+            for (int depth = 0; node && depth < 64; ++depth)
+            {
+                const uint32_t nk = *reinterpret_cast<const uint32_t*>(node + 4);
+                if (nk == k)
+                {
+                    const uint32_t index = *reinterpret_cast<const uint32_t*>(node + 8);
+                    const auto* m = reinterpret_cast<const uint8_t*>(map);
+                    const auto* base = *reinterpret_cast<const uint8_t* const*>(m + 0x268);
+                    const auto* end = *reinterpret_cast<const uint8_t* const*>(m + 0x26C);
+                    if (base && end > base && index < static_cast<uint32_t>((end - base) / 16))
+                    {
+                        object = *reinterpret_cast<const uint32_t*>(base + index * 16 + 6);
+                    }
+                    found = true;
+                    break;
+                }
+                node = *reinterpret_cast<const uint8_t* const*>(node + (k < nk ? 0xC : 0x10));
+            }
+            if (found && !object)
+            {
+                return walk ? static_cast<int>(ClickWalk::TileKind::BarrierOpen)
+                            : static_cast<int>(ClickWalk::TileKind::BarrierShut);
+            }
+            return walk ? static_cast<int>(ClickWalk::TileKind::GateOpen) : static_cast<int>(ClickWalk::TileKind::GateShut);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -1;
+        }
+    }
+}
+
+int ClickWalk::tileKind(int layer, int tx, int ty)
+{
+    const auto fromFiles = [&] {
+        const int w = WorldTiles::walkable(layer, tx, ty);
+        return w < 0 ? -1 : w ? static_cast<int>(TileKind::Floor) : static_cast<int>(TileKind::Obstacle);
+    };
+    if (AgentSave::worldChanging())
+    {
+        return fromFiles();
+    }
+    cMapData* map = WideSectors::map();
+    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
+    if (!g_walkable || !WideSectors::active() || !map || !center)
+    {
+        return fromFiles();
+    }
+    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
+    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
+    {
+        return fromFiles();
+    }
+    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
+    const Sector* sector = WideSectors::at(slot);
+    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
+        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
+    {
+        return fromFiles();
+    }
+    TilePos p{};
+    p.x = tx;
+    p.y = ty;
+    p.layer = static_cast<uint8_t>(layer);
+    const int walk = g_walkable(map, nullptr, &p, 0) ? 1 : 0;
+    return readKind(map, sector, layer, tx, ty, walk);
+}
+
 void ClickWalk::install()
 {
     if (!Addr::cObjectManager_hero || !Addr::g_pObjectManager)
