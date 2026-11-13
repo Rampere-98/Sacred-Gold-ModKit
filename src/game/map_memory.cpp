@@ -1422,6 +1422,56 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
         return c->visits || c->scan == 1 ? 1 : c->scan == 2 ? 5 : -1;
     };
     const auto isDoor = [](int k) { return k == 6 || k == 7; };
+    // A goal inside a house's solid block (the Pay Book's 3369,2587: a block of 7 by 13 building tiles, its door in
+    // the east wall at 3373,2587; six copies walked round it for days): the block's tiles from the goal, the doors
+    // that touch it, the one on the hero's side.
+    if (const int goalKind = kindAt(goalX, goalY); goalKind == 4 || goalKind == 5)
+    {
+        constexpr int kBlock = 14, kBlockSide = 2 * kBlock + 1;
+        std::vector<uint8_t> in(kBlockSide * kBlockSide, 0);
+        std::vector<std::pair<int, int>> block{{goalX, goalY}}, gates;
+        in[kBlock * kBlockSide + kBlock] = 1;
+        static constexpr std::pair<int, int> kNear[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (size_t i = 0; i < block.size() && block.size() < 500; ++i)
+        {
+            const auto [x, y] = block[i];
+            for (const auto [dx, dy] : kNear)
+            {
+                const int nx = x + dx, ny = y + dy;
+                const int ix = nx - goalX + kBlock, iy = ny - goalY + kBlock;
+                if (ix < 0 || iy < 0 || ix >= kBlockSide || iy >= kBlockSide || in[iy * kBlockSide + ix])
+                {
+                    continue;
+                }
+                in[iy * kBlockSide + ix] = 1;
+                const int k = kindAt(nx, ny);
+                if (isDoor(k))
+                {
+                    gates.emplace_back(nx, ny);
+                }
+                else if (k == 4 || k == 5)
+                {
+                    block.emplace_back(nx, ny);
+                }
+            }
+        }
+        if (gates.empty() || block.size() >= 500)
+        {
+            return false;
+        }
+        double best = 1e9;
+        for (const auto& [x, y] : gates)
+        {
+            const double d = std::hypot(x - heroX, y - heroY) + std::hypot(x - goalX, y - goalY);
+            if (d < best)
+            {
+                best = d;
+                doorX = x;
+                doorY = y;
+            }
+        }
+        return true;
+    }
     std::vector<uint8_t> seen(kSide * kSide, 0);
     std::vector<std::pair<int, int>> todo{{goalX, goalY}}, doors;
     seen[kReach * kSide + kReach] = 1;

@@ -5554,9 +5554,29 @@ namespace
                     // door on the hero's side, not at the wall nearest the goal. Once at the door (or inside), the
                     // goal again: the door handling opens it on the way.
                     int dx = 0, dy = 0;
-                    if (std::hypot(gtx - htx, gty - hty) > 2.0 &&
-                        MapMemory::doorInto(layer, gtx, gty, htx, hty, dx, dy) &&
-                        std::hypot(dx - htx, dy - hty) > 1.5)
+                    const bool indoors = std::hypot(gtx - htx, gty - hty) > 2.0 &&
+                                         MapMemory::doorInto(layer, gtx, gty, htx, hty, dx, dy);
+                    if (indoors && std::hypot(dx - htx, dy - hty) <= 1.5)
+                    {
+                        // At the door: used if shut (each 3 s), and through it, a tile on toward the goal (a house's
+                        // inside is entered by stepping in; the walk to the goal's own tile, a wall, went nowhere).
+                        static DWORD s_usedAt = 0;
+                        if (now - s_usedAt > 3000)
+                        {
+                            s_usedAt = now;
+                            doorNearGoal(now, static_cast<int32_t>((dx + 0.5) * kTileSize),
+                                         static_cast<int32_t>((dy + 0.5) * kTileSize));
+                        }
+                        const double gl = std::max(1.0, std::hypot(gtx - dx, gty - dy));
+                        const int ix = dx + static_cast<int>(std::lround((gtx - dx) / gl)),
+                                  iy = dy + static_cast<int>(std::lround((gty - dy) / gl));
+                        setIntent(Intent::Quest, "the goal indoors: in through the door");
+                        noteDoor(dx, dy);
+                        qx = static_cast<int32_t>((ix + 0.5) * kTileSize);
+                        qy = static_cast<int32_t>((iy + 0.5) * kTileSize);
+                        qr = 0.0;
+                    }
+                    else if (indoors)
                     {
                         static int s_inToldX = -1, s_inToldY = -1;
                         if (s_inToldX != dx || s_inToldY != dy)
