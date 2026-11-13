@@ -6189,7 +6189,18 @@ namespace
                     // Not a word with enemies about it (the stuck solver, 2026-11-13: the blacksmith of R01NQ04 among
                     // wolves and goblins, six tries again and again while the agent kept clear of them): they first.
                     const AggroFoe* nearFoe = nullptr;
-                    if (g_talkTries >= 3)
+                    // At most 5 times in 3 min for one creature (the code reviewer, 2026-11-13: enemies that cannot be
+                    // reached, across water or a fence, kept the tries at zero and the quest was never left).
+                    static uint32_t s_redirWho = 0;
+                    static int s_redirs = 0;
+                    static DWORD s_redirSince = 0;
+                    if (s_redirWho != who || now - s_redirSince > 180000)
+                    {
+                        s_redirWho = who;
+                        s_redirs = 0;
+                        s_redirSince = now;
+                    }
+                    if (g_talkTries >= 3 && s_redirs < 5)
                     {
                         for (const AggroFoe& f : g_aggroFoes)
                         {
@@ -6209,6 +6220,7 @@ namespace
                             LOG("AutoAttack: quest creature {:x} does not speak with enemies about it: {:x} fought first", who,
                                 nearFoe->id);
                         }
+                        ++s_redirs;
                         g_talkTries = 0;
                         g_talkAt = now;
                         g_questSeekUntil = now + 30000;

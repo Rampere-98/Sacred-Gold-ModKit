@@ -563,8 +563,12 @@ namespace
         ++g_seenPass;
         std::fill(std::begin(g_seenNow), std::end(g_seenNow), uint8_t{0});
         g_seenNow[kSight * kSightSide + kSight] = 1;
+        // Through an open door the inside of the house is seen (the player, 2026-11-13: «la visión tiene que atravesar
+        // las puertas abiertas»): on the surface a house is one block of building tiles (its floor is another layer),
+        // so past an open door those tiles do not stop the line for 8 tiles; a rock or a shut door still does.
         const auto ray = [&](int ex, int ey) {
             const int steps = std::max(std::abs(ex), std::abs(ey));
+            int throughDoor = 0;
             for (int i = 1; i <= steps; ++i)
             {
                 const int dx = ex * i / steps, dy = ey * i / steps;
@@ -574,7 +578,16 @@ namespace
                 }
                 g_seenNow[(dy + kSight) * kSightSide + dx + kSight] = 1;
                 const Cell* c = find(layer, tx + dx, ty + dy);
-                if (c && opaqueKind(c->kind))
+                const int kind = c ? c->kind & 0xF : 0;
+                if (kind == 6)
+                {
+                    throughDoor = 8;
+                }
+                else if (throughDoor > 0 && kind == 4)
+                {
+                    --throughDoor;
+                }
+                else if (c && opaqueKind(c->kind))
                 {
                     break;
                 }
@@ -743,7 +756,8 @@ namespace
         // The senses over the squares: black where the agent never saw (whatever the game's data says is there), a
         // dark grain over what it only imagines, the lighter the surer it is; nothing over what it sees now.
         const DWORD senseNow = GetTickCount();
-        int knownInReach = 0, sureSum = 0;
+        int knownInReach = 0;
+        long long sureSum = 0;
         if (g_senses)
         {
             lastChunk = ~0ull;
@@ -966,7 +980,8 @@ namespace
             }
             char meter[160];
             std::snprintf(meter, sizeof(meter), "Vista %d casillas | certeza %d %% | oido %d ruidos, el mas fuerte %d %%", g_seenCount,
-                          knownInReach ? sureSum * 100 / (knownInReach * 255) : 0, static_cast<int>(g_pulses.size()),
+                          knownInReach ? static_cast<int>(sureSum * 100 / (static_cast<long long>(knownInReach) * 255)) : 0,
+                          static_cast<int>(g_pulses.size()),
                           static_cast<int>(loudest * 100));
             dl->AddText(ImVec2(origin.x + 4.0f, origin.y + size - 16.0f), IM_COL32(230, 230, 230, 230), meter);
         }
