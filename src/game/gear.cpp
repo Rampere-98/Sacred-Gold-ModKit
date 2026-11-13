@@ -635,6 +635,89 @@ namespace
         return done;
     }
 
+    // The other potions the guides keep (Builds.md §1.1, ITEM_FUNCTIONS.md §2): an antidote or two (E: poison), one
+    // Mentor (W: a big fight or a boss) and one concentration (R: the arts and combos recharged). Tactics drinks them;
+    // none was ever bought. Only with the healing stock full and two healing potions' gold left over, and none
+    // dearer than a healing potion's double.
+    struct ExtraPotion
+    {
+        uint32_t types[3];
+        int want;
+        const char* name;
+    };
+    constexpr ExtraPotion kExtraPotions[] = {
+        {{0x1432, 0x1418, 0x1413}, 2, "antidote"},
+        {{0x1431, 0x1417, 0x1412}, 1, "Mentor"},
+        {{0x1434, 0x141A, 0x1415}, 1, "concentration"},
+    };
+
+    bool buyExtraPotion(cCreature* hero, uint8_t* pack)
+    {
+        if (countHealing(pack) < wantHealing())
+        {
+            return false;
+        }
+        static DWORD s_lastBuy = 0;
+        const DWORD now = GetTickCount();
+        if (s_lastBuy && now - s_lastBuy < 1500)
+        {
+            return false;
+        }
+        void* inv = inventory();
+        const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+        for (const ExtraPotion& kind : kExtraPotions)
+        {
+            const auto isKind = [&](uint32_t type) {
+                return type == kind.types[0] || type == kind.types[1] || type == kind.types[2];
+            };
+            int have = 0;
+            eachItem(pack, [&](uint32_t id, int, int, int) { have += isKind(typeOf(id)) ? 1 : 0; });
+            if (have >= kind.want)
+            {
+                continue;
+            }
+            bool done = false;
+            for (int page = 0; page < kStockPages && !done; ++page)
+            {
+                uint8_t* stock = entryOf(kFirstStockPage + page);
+                if (!stock)
+                {
+                    continue;
+                }
+                eachItem(stock, [&](uint32_t id, int, int w, int h) {
+                    if (done || !isKind(typeOf(id)))
+                    {
+                        return;
+                    }
+                    const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 1);
+                    uint16_t free = 0;
+                    if (!price || price > 2 * g_potionPrice || gold < price + 2 * g_potionPrice + 300 ||
+                        !fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                    {
+                        return;
+                    }
+                    cObject* item = cObjectManager::instance()->object(id);
+                    fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
+                    fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
+                    if (uint8_t* info = item ? fn<GetInfo>(g_getInfo)(item, nullptr, -1) : nullptr)
+                    {
+                        *reinterpret_cast<uint32_t*>(info + 4) &= ~0x200000u;
+                    }
+                    fn<PutItem>(g_putItem)(pack, nullptr, free, id, w, h, 1);
+                    LOG("Gear: bought a {} potion {:x} (type {:x}) for {} gold (of {}); have {}, want {}", kind.name, id,
+                        typeOf(id), price, gold, have + 1, kind.want);
+                    done = true;
+                });
+            }
+            if (done)
+            {
+                s_lastBuy = now;
+                return true;
+            }
+        }
+        return false;
+    }
+
     // At a merchant: one item bought that would be clearly better than what the hero wears, within the gold to spend.
     bool buyOne(cCreature* hero, uint8_t* pack)
     {
@@ -2374,6 +2457,9 @@ namespace
             {
             }
             else if (shop && (g_settings.buy || trip) && buyOne(hero, pack))
+            {
+            }
+            else if (shop && (g_settings.buy || trip) && buyExtraPotion(hero, pack))
             {
             }
             else if ((g_calm || shop) && (g_settings.equip || trip) && equipOne(hero, pack))
