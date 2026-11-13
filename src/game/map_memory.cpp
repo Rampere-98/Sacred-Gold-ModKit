@@ -1144,6 +1144,7 @@ namespace
             g_scanCy = ty;
             g_scanAt = 0;
             g_scanDone = false;
+            std::fill(std::begin(g_kindSeen), std::end(g_kindSeen), 0);
         }
         if (g_scanDone)
         {

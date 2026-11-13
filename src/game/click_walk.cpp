@@ -1042,7 +1042,12 @@ namespace
             }
             if (!(flags & 4))
             {
-                return walk ? static_cast<int>(ClickWalk::TileKind::Floor) : static_cast<int>(ClickWalk::TileKind::Obstacle);
+                // Not walkable by the test with no blocking bit of its own: the ground says water or lava (the sea
+                // read as rocks, A2 2026-11-13: 30124 obstacles and no water on the coast), else an obstacle.
+                return walk           ? static_cast<int>(ClickWalk::TileKind::Floor)
+                       : ground == 9  ? static_cast<int>(ClickWalk::TileKind::Water)
+                       : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
+                                      : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
             const uint32_t k = ((((static_cast<uint32_t>(tx) << 14) | static_cast<uint32_t>(ty)) << 4) |
                                 static_cast<uint32_t>(layer > 1 ? layer : 0));
