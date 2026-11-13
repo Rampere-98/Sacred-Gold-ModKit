@@ -1049,8 +1049,11 @@ namespace
                        : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
                                       : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
+            // The key's layer is the tile's own byte +0xC when 2 or more (Manolito, static: 0x636C10), not the hero's.
+            (void)layer;
+            const uint8_t tileLayer = t[0xC];
             const uint32_t k = ((((static_cast<uint32_t>(tx) << 14) | static_cast<uint32_t>(ty)) << 4) |
-                                static_cast<uint32_t>(layer > 1 ? layer : 0));
+                                static_cast<uint32_t>(tileLayer >= 2 ? tileLayer : 0));
             const uint8_t* node = *reinterpret_cast<const uint8_t* const*>(0xAB44C8);
             uint32_t object = 0;
             bool found = false;
@@ -1078,6 +1081,21 @@ namespace
                             : static_cast<int>(ClickWalk::TileKind::BarrierShut);
             }
             return walk ? static_cast<int>(ClickWalk::TileKind::GateOpen) : static_cast<int>(ClickWalk::TileKind::GateShut);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -1;
+        }
+    }
+}
+
+namespace
+{
+    int readFlags(const Sector* sector, int tx, int ty)
+    {
+        __try
+        {
+            return reinterpret_cast<const uint8_t*>(sector->tiles)[((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20 + 0x1E];
         }
         __except (EXCEPTION_EXECUTE_HANDLER)
         {
@@ -1119,7 +1137,9 @@ int ClickWalk::tileKind(int layer, int tx, int ty)
     p.y = ty;
     p.layer = static_cast<uint8_t>(layer);
     const int walk = g_walkable(map, nullptr, &p, 0) ? 1 : 0;
-    return readKind(map, sector, layer, tx, ty, walk);
+    const int kind = readKind(map, sector, layer, tx, ty, walk);
+    const int flags = readFlags(sector, tx, ty);
+    return kind > 0 && flags >= 0 && (flags & 2) ? kind | kIndoors : kind;
 }
 
 void ClickWalk::install()

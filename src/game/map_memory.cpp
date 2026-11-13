@@ -295,7 +295,7 @@ namespace
                 }
                 if (n >= 9)
                 {
-                    c.kind = static_cast<uint8_t>(std::min(tileKind, 9u));
+                    c.kind = static_cast<uint8_t>(tileKind & 0x1F);
                 }
                 if (n >= 7)
                 {
@@ -570,7 +570,7 @@ namespace
                         dl->AddQuadFilled(n, e, so, w, c.samples ? (shown(c) & 0x00FFFFFF) | 0x80000000
                                                                  : IM_COL32(52, 58, 66, 255));
                     }
-                    else if (c.kind >= 2 && c.kind <= 9 && c.kind != 8)
+                    else if ((c.kind & 0xF) >= 2 && (c.kind & 0xF) <= 9 && (c.kind & 0xF) != 8)
                     {
                         // What it is, by the game's tile data (ClickWalk::TileKind): water blue, lava orange, a
                         // building brown, a rock or tree brick red, a door open green or shut yellow, a scripted
@@ -579,7 +579,7 @@ namespace
                             0, 0, IM_COL32(40, 90, 170, 255), IM_COL32(220, 110, 20, 255), IM_COL32(110, 70, 40, 255),
                             IM_COL32(140, 52, 36, 255), IM_COL32(60, 170, 70, 255), IM_COL32(220, 190, 40, 255), 0,
                             IM_COL32(150, 60, 190, 255)};
-                        dl->AddQuadFilled(n, e, so, w, kKindColour[c.kind]);
+                        dl->AddQuadFilled(n, e, so, w, kKindColour[c.kind & 0xF]);
                     }
                     else if (c.scan == 2)
                     {
@@ -1133,6 +1133,7 @@ namespace
     bool g_scanDone = false;
     DWORD g_scanDoneAt = 0;
     int g_kindSeen[10] = {};    // tile kinds read in the pass under way
+    int g_indoorSeen = 0;       // and those with the indoors bit
 
     // Under g_lock, on the game thread.
     void scanStep(int layer, int tx, int ty)
@@ -1167,9 +1168,10 @@ namespace
             }
             --budget;
             const int kind = ClickWalk::tileKind(layer, sx, sy);
-            if (kind >= 0 && kind < 10)
+            if (kind > 0 && (kind & 0xF) < 10)
             {
-                ++g_kindSeen[kind];
+                ++g_kindSeen[kind & 0xF];
+                g_indoorSeen += (kind & ClickWalk::kIndoors) != 0;
             }
             const uint8_t now = ClickWalk::kindWalkable(kind) ? 1 : 2;
             if (kind > 0 && (!c || c->scan != now || c->kind != kind))
@@ -1190,11 +1192,12 @@ namespace
             {
                 s_toldAt = g_scanDoneAt;
                 LOG("MapMemory: tiles read around {},{} layer {}: floor {}, water {}, lava {}, building {}, obstacle {}, "
-                    "door open {}, door shut {}, barrier open {}, barrier shut {}",
+                    "door open {}, door shut {}, barrier open {}, barrier shut {}; indoors bit {}",
                     g_scanCx, g_scanCy, layer, g_kindSeen[1], g_kindSeen[2], g_kindSeen[3], g_kindSeen[4],
-                    g_kindSeen[5], g_kindSeen[6], g_kindSeen[7], g_kindSeen[8], g_kindSeen[9]);
+                    g_kindSeen[5], g_kindSeen[6], g_kindSeen[7], g_kindSeen[8], g_kindSeen[9], g_indoorSeen);
             }
             std::fill(std::begin(g_kindSeen), std::end(g_kindSeen), 0);
+            g_indoorSeen = 0;
         }
     }
 }
@@ -1391,7 +1394,7 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
         }
         if (c->kind)
         {
-            return c->kind;
+            return c->kind & 0xF;
         }
         return c->visits || c->scan == 1 ? 1 : c->scan == 2 ? 5 : -1;
     };
@@ -1443,7 +1446,9 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
             return false;   // too wide for a room
         }
     }
-    if (heroIn || doors.empty() || walls < 4)
+    const Cell* goalCell = find(layer, goalX, goalY);
+    const bool goalIndoors = goalCell && (goalCell->kind & ClickWalk::kIndoors);
+    if (heroIn || doors.empty() || (walls < 4 && !goalIndoors))
     {
         return false;
     }
@@ -1561,7 +1566,7 @@ bool MapMemory::route(int layer, int fromX, int fromY, int toX, int toY, std::ve
                 {
                     v = 0;
                 }
-                else if (c.kind == static_cast<uint8_t>(ClickWalk::TileKind::GateShut))
+                else if ((c.kind & 0xF) == static_cast<uint8_t>(ClickWalk::TileKind::GateShut))
                 {
                     v = 40;  // a shut door or gate: opened on the way (dear, it may be locked)
                 }

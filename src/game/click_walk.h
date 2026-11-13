@@ -57,10 +57,14 @@ namespace ClickWalk
         BarrierOpen = 8,
         BarrierShut = 9,
     };
-    // -1 when not known (the sector not loaded and no world file for it).
+    // -1 when not known (the sector not loaded and no world file for it). Bit 0x10 over the kind: the tile's +0x1E
+    // bit 2, Manolito's candidate for «inside a building» (0x593CE0 calls the building enter/leave 0x63D180 when it
+    // changes between two tiles; not confirmed live).
+    constexpr int kIndoors = 0x10;
     int tileKind(int layer, int tx, int ty);
     inline bool kindWalkable(int kind)
     {
+        kind &= 0xF;
         return kind == 1 || kind == 6 || kind == 8;
     }
 }
