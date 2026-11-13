@@ -27,6 +27,11 @@ namespace MapMemory
     // A door's state as seen (open or shut): seen open after shut, the squares around marked not walkable by the
     // tile test are tested again.
     void doorState(int layer, int tileX, int tileY, bool open);
+    // A goal indoors on this layer (a house's floor shut in by its walls, read from the game's tile data): the door
+    // to go in by, the one on the way from the hero (the player, 2026-11-13: «el agente tiene que saber que va a
+    // entrar en el interior y necesita entrar por algún lado; buscamos una puerta en la dirección del interior»).
+    // False when the goal is not shut in, the hero is already inside, or no door of it is known.
+    bool doorInto(int layer, int goalX, int goalY, int heroX, int heroY, int& doorX, int& doorY);
     // The doors that open, known on `layer` within the box [x0, x1) x [y0, y1): their tiles.
     std::vector<std::pair<int, int>> doorsThatOpen(int layer, int x0, int y0, int x1, int y1);
     // The walk's length in tiles along a route (the player, 2026-11-11: «la distancia de la ruta entera», not the

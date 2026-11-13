@@ -5460,6 +5460,30 @@ namespace
                         s_onDoorSince = 0;
                     }
                 }
+                else
+                {
+                    // A goal inside a house on this layer, shut in by its walls (the game's tile data): in by the
+                    // door on the hero's side, not at the wall nearest the goal. Once at the door (or inside), the
+                    // goal again: the door handling opens it on the way.
+                    int dx = 0, dy = 0;
+                    if (std::hypot(gtx - htx, gty - hty) > 2.0 &&
+                        MapMemory::doorInto(layer, gtx, gty, htx, hty, dx, dy) &&
+                        std::hypot(dx - htx, dy - hty) > 1.5)
+                    {
+                        static int s_inToldX = -1, s_inToldY = -1;
+                        if (s_inToldX != dx || s_inToldY != dy)
+                        {
+                            s_inToldX = dx;
+                            s_inToldY = dy;
+                            LOG("AutoAttack: the goal {},{} lies indoors: in by the door at {},{}", gtx, gty, dx, dy);
+                        }
+                        setIntent(Intent::Quest, "the goal indoors: to the house's door");
+                        noteDoor(dx, dy);
+                        qx = static_cast<int32_t>((dx + 0.5) * kTileSize);
+                        qy = static_cast<int32_t>((dy + 0.5) * kTileSize);
+                        qr = 0.0;
+                    }
+                }
             }
             // A quest zone (a wide radius, e.g. the arena's 22 tiles) is reached on its edge too: its centre can be
             // a wall (seen live: the arena's 3786,330), so travel there fails while the hero already stands in it.

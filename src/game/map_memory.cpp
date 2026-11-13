@@ -1375,6 +1375,92 @@ void MapMemory::noteDoor(int layer, int tileX, int tileY, bool opens)
     g_doorTiles[doorKey(layer, tileX, tileY)] = opens;
 }
 
+bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, int& doorX, int& doorY)
+{
+    // The room: the walkable squares reached from the goal without crossing a door, a wall or a building, within
+    // 24 tiles. Reaching the box's edge or an unread square means open ground, not indoors.
+    constexpr int kReach = 24, kSide = 2 * kReach + 1;
+    const std::lock_guard lock(g_lock);
+    ensureLoaded();
+    const auto kindAt = [&](int x, int y) -> int {
+        const Cell* c = find(layer, x, y);
+        if (!c)
+        {
+            return -1;
+        }
+        if (c->kind)
+        {
+            return c->kind;
+        }
+        return c->visits || c->scan == 1 ? 1 : c->scan == 2 ? 5 : -1;
+    };
+    const auto isDoor = [](int k) { return k == 6 || k == 7; };
+    std::vector<uint8_t> seen(kSide * kSide, 0);
+    std::vector<std::pair<int, int>> todo{{goalX, goalY}}, doors;
+    seen[kReach * kSide + kReach] = 1;
+    bool heroIn = false;
+    int walls = 0;
+    for (size_t i = 0; i < todo.size(); ++i)
+    {
+        const auto [x, y] = todo[i];
+        heroIn = heroIn || (x == heroX && y == heroY);
+        static constexpr std::pair<int, int> kSteps[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+        for (const auto [dx, dy] : kSteps)
+        {
+            const int nx = x + dx, ny = y + dy;
+            const int ix = nx - goalX + kReach, iy = ny - goalY + kReach;
+            if (ix < 0 || iy < 0 || ix >= kSide || iy >= kSide)
+            {
+                return false;   // out of the box: open ground
+            }
+            uint8_t& s = seen[iy * kSide + ix];
+            if (s)
+            {
+                continue;
+            }
+            s = 1;
+            const int k = kindAt(nx, ny);
+            if (k < 0)
+            {
+                return false;   // not read: it may be the way out
+            }
+            if (isDoor(k))
+            {
+                doors.emplace_back(nx, ny);
+            }
+            else if (ClickWalk::kindWalkable(k))
+            {
+                todo.emplace_back(nx, ny);
+            }
+            else
+            {
+                walls += k == 4 || k == 5;
+            }
+        }
+        if (todo.size() > 900)
+        {
+            return false;   // too wide for a room
+        }
+    }
+    if (heroIn || doors.empty() || walls < 4)
+    {
+        return false;
+    }
+    // The door on the hero's way in: the shortest walk hero -> door -> goal.
+    double best = 1e9;
+    for (const auto& [x, y] : doors)
+    {
+        const double d = std::hypot(x - heroX, y - heroY) + std::hypot(x - goalX, y - goalY);
+        if (d < best)
+        {
+            best = d;
+            doorX = x;
+            doorY = y;
+        }
+    }
+    return true;
+}
+
 void MapMemory::doorState(int layer, int tileX, int tileY, bool open)
 {
     // The tile test behind a shut door reads the house's floor as not walkable, and a square's test was kept for
