@@ -1742,7 +1742,6 @@ namespace
         }
         else if (mounted && onFoot && now - s_at > 1500)
         {
-            LOG("AutoAttack: on foot a while (a walk that got no nearer, a quest creature to speak to, or a save): off the horse");
             code = 0x20A;
         }
         // Every class fights mounted (Mind: dismountTiles 0), the off branch kept for a class given a distance.
@@ -3636,6 +3635,15 @@ namespace
             {
                 const double d = std::hypot(static_cast<double>(sign.x - heroX), static_cast<double>(sign.y - heroY));
                 if (talkedLately(sign.id, now) || goalBlocked(sign.x, sign.y, now) || (z.next && d >= z.nextDistance))
+                {
+                    continue;
+                }
+                // Not back to a region far below the hero for a quest merely offered (docs/Estudio-mejoras.md P2: the
+                // Daemon, level 13, from region 2 of levels 4-7 back to region 1); a report is still handed in.
+                int signLo = 0, signHi = 0;
+                if (sign.kind != GoalKind::Report &&
+                    sectorLevels(world, static_cast<int>(sign.x / kTileSize), static_cast<int>(sign.y / kTileSize), signLo, signHi) &&
+                    signHi + 5 <= heroLevel)
                 {
                     continue;
                 }
@@ -6013,6 +6021,34 @@ namespace
             // At the quest's goal: still the quest, looking around it (not «explore»: the analyst saw the two
             // swapping every second, 172 lines in 10 minutes).
             setIntent(Intent::Quest, "at the quest's goal: looking around it");
+            // A goal that is never met (docs/Estudio-mejoras.md P1: A5 two hours around 3468,2753, 590 «going to
+            // look», 40 experience an hour; the stuck guard saw the hero moving): 6 min around one goal with neither
+            // a fight nor the journal moving, and it is left for 30 min, the next goal or the farming instead.
+            if (!g_questBook.empty())
+            {
+                static uint64_t s_lookKey = 0;
+                static DWORD s_lookSince = 0;
+                const QuestGoal& looked = g_questBook.front();
+                const uint64_t lookKey = (static_cast<uint64_t>(static_cast<uint32_t>(looked.x / kTileSize)) << 32) |
+                                         static_cast<uint32_t>(looked.y / kTileSize);
+                if (lookKey != s_lookKey || !s_lookSince || (g_lastTargetAt && static_cast<int>(g_lastTargetAt - s_lookSince) > 0) ||
+                    (g_questsDoneAt && static_cast<int>(g_questsDoneAt - s_lookSince) > 0))
+                {
+                    s_lookKey = lookKey;
+                    s_lookSince = now;
+                }
+                else if (now - s_lookSince > 360000)
+                {
+                    g_travelBlocked[lookKey] = now + 1800000;
+                    s_lookSince = 0;
+                    LOG("AutoAttack: 6 min around the goal {},{} (quest {}) with neither a fight nor the journal moving: "
+                        "left 30 min",
+                        static_cast<int>(looked.x / kTileSize), static_cast<int>(looked.y / kTileSize), looked.number);
+                    Findings::note("quest", looked.x, looked.y, "a goal never met: 6 min around it, left 30 min");
+                    g_roamAt = 0;
+                    return;
+                }
+            }
             // Within the goal's ring but walled off from it (the player, 2026-11-12: A5 behind a house by the grave
             // digger's yard at 3190,2773, asking for the goal every 4 s for minutes): after 30 s still 3 tiles or more
             // off, the way in near the goal, as travel() does when no walk gets nearer.
@@ -7614,8 +7650,23 @@ void AutoAttack::onFrame()
             if (now - s_inventoryClosedAt > 1500 &&
                 (g_collecting || (now - s_inventorySince > 3000 && !playerBusy)))
             {
-                LOG("AutoAttack: the inventory is open{}: closed", g_collecting ? " while collecting" : "");
+                // The key that does not close it (docs/Estudio-mejoras.md P5: A8 17 times in 30 s, A4 12; a copy
+                // plays without the focus): after 3 presses, the windows' own close (0x7325C0 thiscall(window, bits
+                // to clear from +0x10), as the horse window is closed).
+                static int s_inventoryKeys = 0;
+                static DWORD s_inventoryKeyAt = 0;
+                s_inventoryKeys = now - s_inventoryKeyAt < 5000 ? s_inventoryKeys + 1 : 1;
+                s_inventoryKeyAt = now;
+                LOG("AutoAttack: the inventory is open{}: closed{}", g_collecting ? " while collecting" : "",
+                    s_inventoryKeys > 3 ? " (by the window's own close)" : "");
                 s_inventoryClosedAt = now;
+                if (s_inventoryKeys > 3)
+                {
+                    using ClearFlags = void(__fastcall*)(void* window, void*, uint32_t bits);
+                    reinterpret_cast<ClearFlags>(0x7325C0)(inventory, nullptr, 1);
+                    s_inventoryKeys = 0;
+                    return;
+                }
                 Inject::key('I', true);
                 Inject::key('I', false);
             }
