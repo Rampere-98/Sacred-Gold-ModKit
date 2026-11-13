@@ -22,6 +22,7 @@
 #include <mutex>
 #include <thread>
 #include <atomic>
+#include <format>
 #include <string>
 #include <deque>
 #include <memory>
@@ -1134,6 +1135,7 @@ namespace
     DWORD g_scanDoneAt = 0;
     int g_kindSeen[10] = {};    // tile kinds read in the pass under way
     int g_indoorSeen = 0;       // and those with the indoors bit
+    int g_obstacleGround[17] = {};  // the obstacles' ground class (tile +0x1F >> 4; 16: from the world files)
 
     // Under g_lock, on the game thread.
     void scanStep(int layer, int tx, int ty)
@@ -1172,6 +1174,11 @@ namespace
             {
                 ++g_kindSeen[kind & 0xF];
                 g_indoorSeen += (kind & ClickWalk::kIndoors) != 0;
+                if ((kind & 0xF) == 5)
+                {
+                    const int ground = ClickWalk::tileGround(layer, sx, sy);
+                    ++g_obstacleGround[ground < 0 ? 16 : ground & 0xF];
+                }
             }
             const uint8_t now = ClickWalk::kindWalkable(kind) ? 1 : 2;
             if (kind > 0 && (!c || c->scan != now || c->kind != kind))
@@ -1198,6 +1205,19 @@ namespace
             }
             std::fill(std::begin(g_kindSeen), std::end(g_kindSeen), 0);
             g_indoorSeen = 0;
+            if (g_scanDoneAt == s_toldAt)
+            {
+                std::string grounds;
+                for (int g = 0; g < 17; ++g)
+                {
+                    if (g_obstacleGround[g])
+                    {
+                        grounds += std::format(" {:x}:{}", g, g_obstacleGround[g]);
+                    }
+                }
+                LOG("MapMemory: the obstacles' ground classes (10 = from the world files):{}", grounds);
+            }
+            std::fill(std::begin(g_obstacleGround), std::end(g_obstacleGround), 0);
         }
     }
 }

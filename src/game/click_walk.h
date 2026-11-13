@@ -62,6 +62,8 @@ namespace ClickWalk
     // changes between two tiles; not confirmed live).
     constexpr int kIndoors = 0x10;
     int tileKind(int layer, int tx, int ty);
+    // The tile's ground class (its +0x1F high 4 bits), -1 when its sector is not loaded: for the scan's log.
+    int tileGround(int layer, int tx, int ty);
     inline bool kindWalkable(int kind)
     {
         kind &= 0xF;

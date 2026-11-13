@@ -11,6 +11,7 @@
 #include "game/hero_build.h"
 #include "game/lore.h"
 #include "game/click_walk.h"
+#include "game/hero_move.h"
 #include "game/map_memory.h"
 #include "game/whereabouts.h"
 #include "game/findings.h"
@@ -1784,6 +1785,23 @@ namespace
             s_approachSince = 0;
             return;
         }
+        // The game does not get off with a walk under way (the stuck solver, 2026-11-13: every ignored 0x20A came
+        // each 1.5 s with ClickWalk's route on): the route cancelled and the hero stopped first, the event 0.4 s on.
+        static DWORD s_stoppedAt = 0;
+        if (code == 0x20A)
+        {
+            if (ClickWalk::routing())
+            {
+                ClickWalk::cancel();
+                HeroMove::stop();
+                s_stoppedAt = now;
+                return;
+            }
+            if (now - s_stoppedAt < 400)
+            {
+                return;
+            }
+        }
         if (code == 0x209 && !AutoAttack::canRide(const_cast<cCreature*>(self), const_cast<cCreature*>(steed)))
         {
             static DWORD s_toldAt = 0;
@@ -1805,7 +1823,7 @@ namespace
             {
                 // More than 10 tiles back: left behind, on foot (the Daemon walked 24 tiles back to it after each
                 // fight, the player: «no está teniendo mucha eficiencia»).
-                if (off > 10.0 * kTileSize)
+                if (off > 5.0 * kTileSize)
                 {
                     // Far: called as the horseshoe calls it (on the surface, the hero's handler checks the rest), and
                     // mounted once it has come up; never walked back for.
@@ -1821,8 +1839,14 @@ namespace
                 }
                 else if (now - s_approachSince > 20000)
                 {
-                    LOG("AutoAttack: horse {:x} not reached in 20 s ({:.1f} tiles): on foot", horse, off / kTileSize);
-                    s_restUntil = now + 60000;  // a minute before the next try
+                    // Two walks in a row that did not reach it (A3: 49 tries, 10 never there): 10 min on foot.
+                    static int s_notReached = 0;
+                    static DWORD s_notReachedAt = 0;
+                    s_notReached = now - s_notReachedAt < 180000 ? s_notReached + 1 : 1;
+                    s_notReachedAt = now;
+                    LOG("AutoAttack: horse {:x} not reached in 20 s ({:.1f} tiles): on foot{}", horse, off / kTileSize,
+                        s_notReached >= 2 ? " for 10 min" : "");
+                    s_restUntil = now + (s_notReached >= 2 ? 600000 : 60000);
                     s_approachSince = 0;
                     return;
                 }
@@ -1844,6 +1868,13 @@ namespace
             nearest < 1e8 ? nearest / kTileSize : 99.0);
         g_rideCode = code;
         g_rideHorse = horse;
+        if (code == 0x209)
+        {
+            // The route under way is dropped: travel() asks for it again from the saddle (54 % of the mounts with no
+            // fight ended «20 s in one place on horseback», one walk order sent and routing() still true).
+            ClickWalk::cancel();
+            g_doorHoldUntil = now + 2500;
+        }
         Inject::call(&sendRide, nullptr);
     }
 

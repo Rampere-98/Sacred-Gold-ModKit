@@ -1091,6 +1091,18 @@ namespace
 
 namespace
 {
+    int readByte(const Sector* sector, int tx, int ty, int at)
+    {
+        __try
+        {
+            return reinterpret_cast<const uint8_t*>(sector->tiles)[((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20 + at];
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -1;
+        }
+    }
+
     int readFlags(const Sector* sector, int tx, int ty)
     {
         __try
@@ -1107,6 +1119,11 @@ namespace
 int ClickWalk::tileKind(int layer, int tx, int ty)
 {
     const auto fromFiles = [&] {
+        // No sector there (outside the world) is not known, not an obstacle (the stuck solver, 2026-11-13).
+        if (WorldTiles::ground(layer, tx, ty) < 0)
+        {
+            return -1;
+        }
         const int w = WorldTiles::walkable(layer, tx, ty);
         return w < 0 ? -1 : w ? static_cast<int>(TileKind::Floor) : static_cast<int>(TileKind::Obstacle);
     };
@@ -1140,6 +1157,30 @@ int ClickWalk::tileKind(int layer, int tx, int ty)
     const int kind = readKind(map, sector, layer, tx, ty, walk);
     const int flags = readFlags(sector, tx, ty);
     return kind > 0 && flags >= 0 && (flags & 2) ? kind | kIndoors : kind;
+}
+
+int ClickWalk::tileGround(int layer, int tx, int ty)
+{
+    (void)layer;
+    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
+    if (AgentSave::worldChanging() || !WideSectors::active() || !center)
+    {
+        return -1;
+    }
+    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
+    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
+    {
+        return -1;
+    }
+    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
+    const Sector* sector = WideSectors::at(slot);
+    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
+        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
+    {
+        return -1;
+    }
+    const int type = readByte(sector, tx, ty, 0x1F);
+    return type < 0 ? -1 : type >> 4;
 }
 
 void ClickWalk::install()
