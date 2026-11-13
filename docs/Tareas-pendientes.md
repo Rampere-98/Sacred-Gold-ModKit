@@ -58,7 +58,7 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 | Libro de cuentas (15004) | 0/6 | libro en el suelo dentro de una casa | clic a 6 casillas y puerta de interior por comprobar; quizá falte recoger con más alcance |
 | Despacho a Arogarn (9005) | 0/5 | personaje dentro de una posada | por comprobar |
 | Mensajero (152) | 0/3, 1 fallada | personaje en la taberna de Silver Creek; plazo de 3 días | por comprobar |
-| Oso de batalla (15003) | 1/7 | no llega a la meta; sospecha: verja del cementerio | **sin arreglar**: registrar puertas y palancas cerca y pasarlo a Manolito |
+| Oso de batalla (15003) | 1/7 | no llega a la meta 3558,2462; **no hay verja de guion** (Manolito, bloque AM): el bloqueo es del mapa (muro, desnivel o puerta del cementerio) | **sin arreglar**: mirar en vivo las casillas alrededor de la meta con el mapa nuevo (tipos de casilla) y la ruta que intenta |
 | ¿Dónde está el herrero? (154) | 1/5 | se para en un paso intermedio (lobos o espada del jefe goblin) | **sin arreglar**: registrar el texto del objetivo en cada paso |
 | Ojos de lobo (151) | 2/4 | jefe en un claro junto a la meta | ronda de 25 casillas por comprobar |
 | Trágica pérdida (15011) | 2/4 | jefe al que se llega por el oeste; puerta o edificio | ronda de 25 por comprobar; puede faltar la ruta |
@@ -77,7 +77,7 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 
 - [ ] **Instalado y sin verificar a ojo**: tipos de casilla por dirección (agua, lava, edificio, puerta, barrera) y colores del visor. Falta que el dueño lo mire en el visor.
 - [ ] **Mar abierto = suelo de clase 3 no pisable**: es una deducción (23 628 de 27 446 «obstáculos» en la costa); confirmarlo con Manolito (`drawWaterTiles 0x62DD00`).
-- [ ] **Marca «dentro de casa»** (`+0x1E` bit 2): sale en miles de casillas por pueblo; no sirve sola. Buscar la marca real de interior o de techo.
+- [ ] **Marca «dentro de casa»**: `+0x1E` bit 2 es la **zona segura del poblado** (Manolito: ahí no nacen criaturas y los amistosos están protegidos), no el techo. Lo que oculta el tejado sigue sin localizar. Idea: usar la zona segura como destino de las retiradas.
 - [ ] **Entrar a una casa por su puerta**: 8 veces visto «lies indoors»; falta ver una entrada completa hasta el objetivo.
 - [ ] **Rutas precalculadas** (red de navegación) en lugar de A* grande en vivo.
 - [ ] **AgentCursor fase 2**: clics reales por la entrada del juego y tramos de ClickWalk.

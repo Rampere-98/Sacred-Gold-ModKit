@@ -58,8 +58,9 @@ namespace ClickWalk
         BarrierShut = 9,
     };
     // -1 when not known (the sector not loaded and no world file for it). Bit 0x10 over the kind: the tile's +0x1E
-    // bit 2, Manolito's candidate for «inside a building» (0x593CE0 calls the building enter/leave 0x63D180 when it
-    // changes between two tiles; not confirmed live).
+    // bit 2, the safe zone of a settlement (Manolito, static, 2026-11-13: 0x4D4DA0 shields players and friends in
+    // it, FillRegion spawns no creatures there). Not «under a roof»: what hides a roof is not found yet. The name
+    // kIndoors is from the first guess.
     constexpr int kIndoors = 0x10;
     int tileKind(int layer, int tx, int ty);
     // The tile's ground class (its +0x1F high 4 bits), -1 when its sector is not loaded: for the scan's log.

@@ -1466,9 +1466,8 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
             return false;   // too wide for a room
         }
     }
-    const Cell* goalCell = find(layer, goalX, goalY);
-    const bool goalIndoors = goalCell && (goalCell->kind & ClickWalk::kIndoors);
-    if (heroIn || doors.empty() || (walls < 4 && !goalIndoors))
+    // (The tile's +0x1E bit 2 is the safe zone of a settlement, not a roof: Manolito, 2026-11-13. Not used here.)
+    if (heroIn || doors.empty() || walls < 4)
     {
         return false;
     }
