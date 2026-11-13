@@ -56,6 +56,23 @@ Idea central: montado, `engine->controlled` es el caballo (AD/AG), y el montado 
 
 **Lo que está bien:** `ride` usa el héroe (no `controlled`) para `+0x570`/posición/capa; `mounted` = `hero+0x1EC`; el 0x116 respeta las condiciones del bloque Y (firma comprobada, 30 s entre llamadas, capa 0); `mendHalfOff` copia el reseteo de `0x6173E7` y manda el 0x20A con el id correcto (`hero+0x570`); AgentSave espera con `footFor(20000)` y registra; `dodgeArrow` ya compara contra ambos ids; `engaged(…, controlled, hero->id)` trata los dos.
 
+**Estado a 8b7062f (2026-11-13), contrastado con el código actual (sin probar en vivo):**
+| # | Estado | Dónde se cerró |
+|---|---|---|
+| 1 ClickWalk montado | ✔ cerrado | `click_walk.cpp:554-562` `controls()` (montado = `+0x1EC` y `controlled` existe), usado en 831 y 861; las órdenes van al héroe (`sendLeg`) |
+| 2 Tactics montado | ✔ cerrado | `tactics.cpp:538-542` (`sendArt` al jinete), `838-847` (`riding` = `+0x1EC`) |
+| 3 recoger montado | ✔ cerrado salvo un resto 🟡 | `auto_attack.cpp:993-1009`: botín con la A, el resto a pie. Resto: medio desmontado (`controlled` = caballo, `+0x1EC` = 0) un objeto no criatura aún va con `self` = caballo (987 solo cambia a `rider` para criaturas) |
+| 4 cosas fijas | ✔ cerrado | `auto_attack.cpp:950-960` (montado: a pie; si no, `self = rider`) |
+| 5 montar sin habilidad | ✔ cerrado en lo comprobable | `canRide` (7994) con el test del juego `0x4267D0` en 1645, 1809 y `gear.cpp:2228`. Sigue siendo un evento interno (la orden del jugador no está localizada, P): aceptado |
+| 6 medio desmontado por construcción | ✔ cerrado | `sendRide` devuelve el control al héroe tras el 0x20A (1440-1446) |
+| 7 caballo salvaje sin vincular | ✔ cerrado | `ride` 1543-1546 (`+0x570` o `+0x1EC`) |
+| 8 caballo muerto | ✔ cerrado | `ride` 1691 (`steed->health <= 0`) |
+| 9 `mendHalfOff` mudo | 🟡 resto menor | con 6 desaparece el estado; sigue el `return` de 5 s en 1554-1564 |
+| 10 rebote | ✔ cerrado | `s_hardAt` y `settled` (1727-1738) |
+| 11 comentarios | 💭 abierto | `auto_attack.cpp:1406` aún dice `+0x200 & 0x10` |
+| 🟡 C5 veta metas de misión 6-24 h | ✔ cerrado | `auto_attack.cpp:4287` tope de 1 h |
+| 🟡 `CanUse == 6` | ✔ cerrado | ya no aparece en `gear.cpp` |
+
 ## 2026-11-11
 
 ### 90c8661: compra urgente de pociones, retirada alargada, veto por pronóstico
