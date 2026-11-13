@@ -7523,6 +7523,34 @@ static void watchStuck(DWORD now, const cCreature* self)
     const bool shop = Gear::shopOpen();
     s_shopSince = shop ? (s_shopSince ? s_shopSince : now) : 0;
     const bool busy = AgentSave::worldChanging() || (shop && now - s_shopSince < 180000) || !heroAlive();
+    // Idle though moving (the live verifier and the stuck solver, 2026-11-13: A2, a new Gladiator shut in the
+    // colosseum, 66 min with no experience, walking the yard, which started the clock above again each time): 15 min
+    // with neither a fight, a pick up nor a quest done is told as stuck; 25 min, the last save is loaded (as for 5 min
+    // on one spot).
+    {
+        static DWORD s_idleSince = 0, s_idleTarget = 0, s_idleLoot = 0, s_idleQuests = 0, s_idleTold = 0;
+        if (!s_idleSince || busy || g_lastTargetAt != s_idleTarget || g_lootCount != s_idleLoot || g_questsDoneAt != s_idleQuests)
+        {
+            s_idleSince = now;
+            s_idleTarget = g_lastTargetAt;
+            s_idleLoot = g_lootCount;
+            s_idleQuests = g_questsDoneAt;
+            s_idleTold = 0;
+        }
+        else if (now - s_idleSince > 900000 && !s_idleTold)
+        {
+            s_idleTold = now;
+            LOG("AgentStuck: 15 min with neither a fight, a pick up nor a quest done (layer {}), though moving",
+                reinterpret_cast<const uint8_t*>(self)[0x24]);
+            Findings::note("stuck", self->x, self->y, "15 min with neither a fight, a pick up nor a quest done");
+        }
+        else if (now - s_idleSince > 1500000)
+        {
+            LOG("AgentStuck: 25 min with neither a fight, a pick up nor a quest done: the last save loaded");
+            s_idleSince = now;
+            AgentSave::reloadStuck();
+        }
+    }
     if (!s_since || moved || busy || g_lastHurtAt != s_hurt || g_lootCount != s_loot || g_questsDoneAt != s_quests)
     {
         s_x = self->x;
