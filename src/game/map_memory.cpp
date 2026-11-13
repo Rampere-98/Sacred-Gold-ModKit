@@ -285,7 +285,7 @@ namespace
             const unsigned color = n > 5 ? static_cast<unsigned>(v[5]) : 0;
             const unsigned samples = n > 6 ? static_cast<unsigned>(v[6]) : 0;
             const unsigned scan = n > 7 ? static_cast<unsigned>(v[7]) : 0;
-            const unsigned kind = n > 8 ? static_cast<unsigned>(v[8]) : 0;
+            const unsigned tileKind = n > 8 ? static_cast<unsigned>(v[8]) : 0;
             change(key(layer, tx, ty), [&](Cell& c) {
                 c.visits = static_cast<uint8_t>(std::clamp(visits, 0, 255));
                 c.blocked = static_cast<uint8_t>(std::clamp(blocked, 0, 255));
@@ -295,7 +295,7 @@ namespace
                 }
                 if (n >= 9)
                 {
-                    c.kind = static_cast<uint8_t>(std::min(kind, 9u));
+                    c.kind = static_cast<uint8_t>(std::min(tileKind, 9u));
                 }
                 if (n >= 7)
                 {
