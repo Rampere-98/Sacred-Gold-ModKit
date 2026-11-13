@@ -36,7 +36,7 @@ namespace
     // One cell per tile (a map coordinate).
     constexpr double kTileSize = 53.66563;
 
-    // 8 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
+    // 9 bytes a square (the game is 32 bit: the whole world explored must fit beside it). All zero: unexplored.
     struct Cell
     {
         uint8_t visits = 0;     // saturating
@@ -45,7 +45,10 @@ namespace
         uint8_t samples = 0;    // ground color samples averaged (0: none yet)
         uint8_t scan = 0;       // the game's tile test, run over the loaded sectors: 0 not yet, 1 walkable, 2 not
         uint8_t kind = 0;       // ClickWalk::TileKind, read from the game's tile data (0: not read)
-        bool known() const { return visits || blocked || samples || scan || kind; }
+        // How well the agent imagines the square when it does not see it (docs/Sentidos.md, the player, 2026-11-13):
+        // 0 never seen (fog), 20 seen in passing ... 100 a place it spent minutes looking at.
+        uint8_t sure = 0;
+        bool known() const { return visits || blocked || samples || scan || kind || sure; }
     };
     // Squares in chunks of 32x32 (6 KB), only where something is known: a lookup is one hash and an index, and the
     // memory is what was explored, not a node per square.
@@ -276,7 +279,7 @@ namespace
                 }
                 continue;
             }
-            const int n = numbers(line, v, 9, 5);
+            const int n = numbers(line, v, 10, 5);
             if (n < 5)
             {
                 continue;
@@ -300,6 +303,10 @@ namespace
                 if (n >= 9)
                 {
                     c.kind = static_cast<uint8_t>(tileKind & 0x1F);
+                }
+                if (n >= 10)
+                {
+                    c.sure = static_cast<uint8_t>(std::clamp(v[9], 0L, 100L));
                 }
                 if (n >= 7)
                 {
@@ -494,6 +501,142 @@ namespace
         ImGui::EndChild();
     }
 
+    // --- The agent's senses on its map (docs/Sentidos.md; the player, 2026-11-13: «añade el medidor de visión y
+    // sonido en el mapa del agente para que no consiga adivinar lo que va a ver en cada lugar, apenas lo que conoce y
+    // lo que va a conocer»). Sight: every way round, kSight tiles, stopped by walls, buildings, rocks, shut doors and
+    // barriers; water and lava are seen across. What is not seen now is imagined, the better the longer it was looked
+    // at (Cell::sure). Hearing: an enemy not seen sounds, the less the farther and the more walls between; a sound
+    // clears the noise about it for a while. All under g_lock.
+    constexpr int kSight = 24, kSightSide = 2 * kSight + 1;
+    uint8_t g_seenNow[kSightSide * kSightSide] = {};    // 1: in sight at the last pass, around g_seenTx, g_seenTy
+    int g_seenLayer = -1, g_seenTx = 0, g_seenTy = 0, g_seenCount = 0;
+    DWORD g_seenAt = 0;
+    unsigned g_seenPass = 0;
+    bool g_senses = true;   // the fog and the noise drawn on the map
+    struct Pulse
+    {
+        int tx, ty;
+        float loud;     // 0..1 as it reached the hero
+        DWORD at;
+    };
+    std::vector<Pulse> g_pulses;
+    constexpr DWORD kPulseMs = 4000;
+
+    bool opaqueKind(int kind)
+    {
+        kind &= 0xF;
+        return kind == 4 || kind == 5 || kind == 7 || kind == 9;
+    }
+
+    bool seenNow(int layer, int tx, int ty)
+    {
+        const int ix = tx - g_seenTx + kSight, iy = ty - g_seenTy + kSight;
+        return layer == g_seenLayer && ix >= 0 && iy >= 0 && ix < kSightSide && iy < kSightSide &&
+               g_seenNow[iy * kSightSide + ix] != 0;
+    }
+
+    // Walls on the straight line between two tiles (the ends not counted).
+    int wallsBetween(int layer, int x0, int y0, int x1, int y1)
+    {
+        int walls = 0;
+        const int steps = std::max(std::abs(x1 - x0), std::abs(y1 - y0));
+        for (int i = 1; i < steps; ++i)
+        {
+            const Cell* c = find(layer, x0 + (x1 - x0) * i / steps, y0 + (y1 - y0) * i / steps);
+            walls += c && opaqueKind(c->kind);
+        }
+        return walls;
+    }
+
+    // The squares in sight from the hero's, by lines to the rim of the square of kSight tiles: a line goes on over
+    // open ground and water and ends on the first wall (which is seen). Every 200 ms.
+    void senseStep(int layer, int tx, int ty, DWORD now)
+    {
+        if (g_seenAt && now - g_seenAt < 200 && layer == g_seenLayer)
+        {
+            return;
+        }
+        g_seenAt = now;
+        g_seenLayer = layer;
+        g_seenTx = tx;
+        g_seenTy = ty;
+        ++g_seenPass;
+        std::fill(std::begin(g_seenNow), std::end(g_seenNow), uint8_t{0});
+        g_seenNow[kSight * kSightSide + kSight] = 1;
+        const auto ray = [&](int ex, int ey) {
+            const int steps = std::max(std::abs(ex), std::abs(ey));
+            for (int i = 1; i <= steps; ++i)
+            {
+                const int dx = ex * i / steps, dy = ey * i / steps;
+                if (dx * dx + dy * dy > kSight * kSight)
+                {
+                    break;
+                }
+                g_seenNow[(dy + kSight) * kSightSide + dx + kSight] = 1;
+                const Cell* c = find(layer, tx + dx, ty + dy);
+                if (c && opaqueKind(c->kind))
+                {
+                    break;
+                }
+            }
+        };
+        for (int k = -kSight; k <= kSight; ++k)
+        {
+            ray(k, -kSight);
+            ray(k, kSight);
+            ray(-kSight, k);
+            ray(kSight, k);
+        }
+        // What is seen is remembered: 20 at first sight, then a point every 1.2 s in sight, up to 100.
+        const bool tick = g_seenPass % 6 == 0;
+        g_seenCount = 0;
+        for (int iy = 0; iy < kSightSide; ++iy)
+        {
+            for (int ix = 0; ix < kSightSide; ++ix)
+            {
+                if (!g_seenNow[iy * kSightSide + ix])
+                {
+                    continue;
+                }
+                ++g_seenCount;
+                const int cx = tx + ix - kSight, cy = ty + iy - kSight;
+                const Cell* c = find(layer, cx, cy);
+                const int sure = c ? c->sure : 0;
+                if (sure == 0 || (tick && sure < 100))
+                {
+                    change(key(layer, cx, cy), [sure](Cell& cell) { cell.sure = static_cast<uint8_t>(sure == 0 ? 20 : sure + 1); });
+                }
+            }
+        }
+        std::erase_if(g_pulses, [now](const Pulse& p) { return now - p.at > kPulseMs; });
+    }
+
+    // How sure the agent is of a square now, 0..255: 255 in sight; else what it remembers of it (Cell::sure), raised
+    // for a while by a sound near it.
+    int certainty(int layer, int tx, int ty, const Cell& c, DWORD now)
+    {
+        if (seenNow(layer, tx, ty))
+        {
+            return 255;
+        }
+        if (!c.sure)
+        {
+            return 0;
+        }
+        float boost = 0.0f;
+        for (const Pulse& p : g_pulses)
+        {
+            const float r = 1.0f + 5.0f * p.loud;
+            const float d = static_cast<float>(std::hypot(tx - p.tx, ty - p.ty));
+            if (d < r)
+            {
+                const float fade = 1.0f - static_cast<float>(now - p.at) / kPulseMs;
+                boost = std::max(boost, p.loud * (1.0f - 0.5f * d / r) * std::max(0.0f, fade));
+            }
+        }
+        return std::min(240, c.sure + static_cast<int>(boost * 150.0f));
+    }
+
     int g_zoom = 4;     // pixels per square
     bool g_hud = true;  // the map on the screen's side, the menu closed too
 
@@ -595,6 +738,62 @@ namespace
                     continue;
                 }
                 dl->AddQuadFilled(n, e, so, w, c.samples ? shown(c) : IM_COL32(90, 90, 90, 255));
+            }
+        }
+        // The senses over the squares: black where the agent never saw (whatever the game's data says is there), a
+        // dark grain over what it only imagines, the lighter the surer it is; nothing over what it sees now.
+        const DWORD senseNow = GetTickCount();
+        int knownInReach = 0, sureSum = 0;
+        if (g_senses)
+        {
+            lastChunk = ~0ull;
+            chunk = nullptr;
+            for (int dy = -reach; dy <= reach; ++dy)
+            {
+                for (int dx = -reach; dx <= reach; ++dx)
+                {
+                    const int tx = g_heroTx + dx, ty = g_heroTy + dy;
+                    const uint64_t ck = chunkKey(g_heroLayer, tx, ty);
+                    if (ck != lastChunk)
+                    {
+                        lastChunk = ck;
+                        const auto it = g_chunks.find(ck);
+                        chunk = it == g_chunks.end() ? nullptr : it->second.get();
+                    }
+                    if (!chunk)
+                    {
+                        continue;
+                    }
+                    const Cell& c = chunk->cells[((ty & (kChunkSide - 1)) << kChunkShift) | (tx & (kChunkSide - 1))];
+                    if (!c.known())
+                    {
+                        continue;
+                    }
+                    const ImVec2 centre = project(tx + 0.5, ty + 0.5);
+                    if (!inside(centre, s))
+                    {
+                        continue;
+                    }
+                    const int sure = certainty(g_heroLayer, tx, ty, c, senseNow);
+                    knownInReach += sure > 0;
+                    sureSum += sure;
+                    if (sure >= 250)
+                    {
+                        continue;
+                    }
+                    const ImVec2 n = project(tx, ty), e = project(tx + 1, ty), so = project(tx + 1, ty + 1),
+                                 w = project(tx, ty + 1);
+                    if (sure == 0)
+                    {
+                        dl->AddQuadFilled(n, e, so, w, IM_COL32(0, 0, 0, 255));
+                        continue;
+                    }
+                    // The grain: a square in three darker than the rest, moving twice a second.
+                    const uint32_t h = (static_cast<uint32_t>(tx) * 73856093u) ^ (static_cast<uint32_t>(ty) * 19349663u) ^
+                                       ((senseNow / 500) * 83492791u);
+                    const int veil = (255 - sure) * 170 / 255 + ((h >> 3) % 3 == 0 ? (255 - sure) * 60 / 255 : 0);
+                    dl->AddQuadFilled(n, e, so, w, IM_COL32(8, 8, 14, std::min(veil, 235)));
+                }
             }
         }
         dl->Flags = flags;
@@ -739,9 +938,37 @@ namespace
             case MapMemory::Blip::Hireling:
                 dl->AddCircleFilled(p, dot, IM_COL32(60, 150, 255, 255));
                 break;
+            case MapMemory::Blip::Heard:
+                dl->AddCircle(p, dot * 1.6f, IM_COL32(255, 200, 90, 200), 0, 1.5f);
+                break;
             default:
                 break;
             }
+        }
+        // The sounds heard: a wave widening from where each came, fading in 4 s; and the senses' meter.
+        if (g_senses)
+        {
+            float loudest = 0.0f;
+            for (const Pulse& p : g_pulses)
+            {
+                const float age = static_cast<float>(senseNow - p.at) / kPulseMs;
+                if (age >= 1.0f)
+                {
+                    continue;
+                }
+                loudest = std::max(loudest, p.loud);
+                const ImVec2 c = project(p.tx + 0.5, p.ty + 0.5);
+                if (inside(c, dot))
+                {
+                    dl->AddCircle(c, (1.0f + 5.0f * p.loud) * s * (0.4f + 0.6f * age), IM_COL32(255, 200, 90, static_cast<int>(200 * (1.0f - age))),
+                                  0, 1.5f);
+                }
+            }
+            char meter[160];
+            std::snprintf(meter, sizeof(meter), "Vista %d casillas | certeza %d %% | oido %d ruidos, el mas fuerte %d %%", g_seenCount,
+                          knownInReach ? sureSum * 100 / (knownInReach * 255) : 0, static_cast<int>(g_pulses.size()),
+                          static_cast<int>(loudest * 100));
+            dl->AddText(ImVec2(origin.x + 4.0f, origin.y + size - 16.0f), IM_COL32(230, 230, 230, 230), meter);
         }
         // Quests: the journal's targets as rings (at the rim when off the radar), the givers' and receivers' signs.
         {
@@ -852,6 +1079,7 @@ namespace
         ImGui::TextWrapped("Lo explorado alrededor del héroe, una casilla por coordenada: en el color del suelo que pisó; "
                            "transparente donde no consiguió pasar; negro lo inexplorado.");
         ImGui::Checkbox("Mostrar en un lado de la pantalla", &g_hud);
+        ImGui::Checkbox("Sentidos: niebla donde no ha visto, ruido donde imagina, ondas de lo que oye", &g_senses);
         ImGui::SliderInt("Tamaño de casilla (px)", &g_zoom, 2, 10);
         const std::lock_guard lock(g_lock);
         ensureLoaded();
@@ -1232,6 +1460,7 @@ void MapMemory::visit(int layer, int32_t x, int32_t y)
     const std::lock_guard lock(g_lock);
     ensureLoaded();
     scanStep(layer, tileOf(x), tileOf(y));
+    senseStep(layer, tileOf(x), tileOf(y), GetTickCount());
     const uint64_t k = keyAt(layer, x, y);
     if (k == g_lastKey)
     {
@@ -1917,9 +2146,9 @@ namespace
                 const Cell& c = chunk.cells[i];
                 if (c.known())
                 {
-                    std::fprintf(f, "%d %d %d %u %u %06x %u %u %u\n", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
+                    std::fprintf(f, "%d %d %d %u %u %06x %u %u %u %u\n", layer, cx * kChunkSide + (i & (kChunkSide - 1)),
                                  cy * kChunkSide + (i >> kChunkShift), c.visits, c.blocked, (c.r << 16) | (c.g << 8) | c.b,
-                                 c.samples, c.scan, c.kind);
+                                 c.samples, c.scan, c.kind, c.sure);
                 }
             }
         }
@@ -2003,6 +2232,67 @@ void MapMemory::setQuestMarks(std::vector<QuestMark> marks)
 void MapMemory::endRadar()
 {
     const std::lock_guard lock(g_lock);
+    // The senses: an enemy or a thing shows where the hero sees it; an enemy he does not see sounds (its own noise 1
+    // at 0 tiles, gone at 30, a quarter less for each wall between, a third less by running water at the hero's
+    // feet) and shows as a ring about where it is, the vaguer the fainter; the rest is not on his map.
+    if (g_senses && g_seenLayer == g_heroLayer)
+    {
+        const DWORD now = GetTickCount();
+        int water = 0;
+        for (int dy = -3; dy <= 3; ++dy)
+        {
+            for (int dx = -3; dx <= 3; ++dx)
+            {
+                const Cell* c = find(g_heroLayer, g_heroTx + dx, g_heroTy + dy);
+                water += c && (c->kind & 0xF) == 2;
+            }
+        }
+        const float river = water >= 6 ? 0.33f : 0.0f;
+        std::vector<BlipAt> kept;
+        for (const BlipAt& b : g_blipsBuilding)
+        {
+            const int tx = tileOf(b.x), ty = tileOf(b.y);
+            if (b.kind == Blip::Hireling || seenNow(g_heroLayer, tx, ty))
+            {
+                kept.push_back(b);
+                continue;
+            }
+            if (b.kind != Blip::Enemy && b.kind != Blip::Target)
+            {
+                continue;   // a thing out of sight
+            }
+            const float d = static_cast<float>(std::hypot(tx - g_heroTx, ty - g_heroTy));
+            const float loud = 1.0f - d / 30.0f - 0.25f * wallsBetween(g_heroLayer, g_heroTx, g_heroTy, tx, ty) - river;
+            if (loud <= 0.1f)
+            {
+                continue;   // too faint: nothing
+            }
+            // About where it sounds: off by up to (1 - loud) * 4 tiles, the same way for 2 s (no trembling).
+            const uint32_t h = (static_cast<uint32_t>(tx) * 2654435761u) ^ (static_cast<uint32_t>(ty) * 40503u) ^ (now / 2000);
+            const float off = (1.0f - loud) * 4.0f;
+            const int hx = tx + static_cast<int>(((h & 0xFF) / 127.5f - 1.0f) * off);
+            const int hy = ty + static_cast<int>((((h >> 8) & 0xFF) / 127.5f - 1.0f) * off);
+            kept.push_back({Blip::Heard, static_cast<int32_t>((hx + 0.5) * kTileSize), static_cast<int32_t>((hy + 0.5) * kTileSize)});
+            bool merged = false;
+            for (Pulse& p : g_pulses)
+            {
+                if (std::abs(p.tx - hx) <= 2 && std::abs(p.ty - hy) <= 2)
+                {
+                    if (now - p.at > 1500)
+                    {
+                        p = {hx, hy, loud, now};
+                    }
+                    merged = true;
+                    break;
+                }
+            }
+            if (!merged && g_pulses.size() < 32)
+            {
+                g_pulses.push_back({hx, hy, loud, now});
+            }
+        }
+        g_blipsBuilding.swap(kept);
+    }
     g_blips.swap(g_blipsBuilding);
 }
 
