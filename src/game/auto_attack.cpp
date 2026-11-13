@@ -3411,6 +3411,37 @@ namespace
             {
                 g.distance *= 0.7;
             }
+            // The campaign's last quest (HQ_8_1_1 «Shaddar», docs/QUESTS.md) only once every other quest is done (the
+            // player, 2026-11-13: «el agente solo puede superar la campaña y pasar para el próximo nivel de dificultad
+            // cuando complete todas las misiones del juego»): held while the journal has a side quest open or failed,
+            // or a quest is on offer anywhere known.
+            if (g.main && g.kind == GoalKind::Journal)
+            {
+                static std::unordered_map<uint32_t, bool> s_isLast;
+                auto last = s_isLast.find(g.titleKey);
+                if (last == s_isLast.end())
+                {
+                    last = s_isLast.emplace(g.titleKey, Lore::textUtf8(g.titleKey) == "Shaddar").first;
+                }
+                if (last->second)
+                {
+                    const bool sideOpen = std::any_of(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& o) {
+                        return o.kind != GoalKind::Journal || !o.main;
+                    });
+                    if (sideOpen || !g_signs.empty() || g_questsFailed > 0)
+                    {
+                        g.blocked = true;
+                        static DWORD s_toldAt = 0;
+                        if (!s_toldAt || now - s_toldAt > 600000)
+                        {
+                            s_toldAt = now;
+                            LOG("AutoAttack: the campaign's last quest is held: quests still open, on offer or failed "
+                                "({} goals in the book, {} signs, {} failed)",
+                                g_questBook.size(), g_signs.size(), g_questsFailed);
+                        }
+                    }
+                }
+            }
             int lo = 0, hi = 0;
             if (!g.main && g.tier <= 0 && world && heroLevel > 0 &&
                 sectorLevels(world, static_cast<int>(g.x / kTileSize), static_cast<int>(g.y / kTileSize), lo, hi) &&
