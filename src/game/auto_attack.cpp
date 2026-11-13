@@ -5679,7 +5679,14 @@ namespace
                                 // contact 6 tiles off inside: in, a walk, out, in again every 10 s for an hour).
                                 : speakTo ? (layer != 0 ? 15.0 : 6.0) * kTileSize
                                           : fixedGoal ? std::min(qr, 2.0 * kTileSize) : qr;
-            if (!speakTo && !zone)
+            // Inside a house (a layer other than the surface) the goal is walked up to, 1.5 tiles: «there» by the
+            // journal's wide radius, the hero looked around from the doorway and the first step of the look took him
+            // out (A7, 18:12: in at 3171,2796, «going to look», out at 3175,2800 one second on, 25 times).
+            if (layer != 0 && !speakTo)
+            {
+                there = 1.5 * kTileSize;
+            }
+            else if (!speakTo && !zone)
             {
                 if (qd <= there && (s_arrivedKey != goalKey || now - s_arrivedAt > 600000))
                 {
