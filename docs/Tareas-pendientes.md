@@ -11,7 +11,7 @@ Cómo se elige la siguiente: primero lo que **rompe** (caídas, cortes), luego l
 | Qué | Quién | Estado |
 |---|---|---|
 | Tanda de misiones (oveja, clic a 6 casillas, ronda de 25, última misión bloqueada): commits dd45044, 9da596b, f55652c | coordinador | compilando en la CI; instalar y comprobar en los registros |
-| Quién mata las 8 copias cada ~31 min | auditor del entorno | vigilancia de procesos en marcha desde las 12:37; esperar un ciclo |
+| Quién mataba las 8 copias cada ~31 min | auditor del entorno | **resuelto**: `rotate.sh` del coordinador, parado a las 13:50 |
 | Pasada 4 de la descompilación (lotes 303-364, 2461 funciones) | Manolito | parada: Codex y Gemini sin cuota; retomar al volver la cuota o el domingo 15 a las 21:00 |
 
 ## Reparto entre sesiones (2026-11-13, 13:40)
@@ -32,7 +32,7 @@ El dueño (13-11, 12:50): por ahora **solo cuenta el límite de 5 horas**, no el
 
 ## 1. Roturas (lo primero)
 
-- [ ] **Las 8 copias mueren a la vez cada ~31 min, sin guardar** (08:49, 09:21, 11:02, 11:33, 12:05 del 13-11). Descartado: instalaciones, tareas programadas, `vigilante.ps1`, `agentes.sh`, Pulso, `ExitProcess` del mod, falta de memoria. Sospecha: Steam (mismo identificador de juego 12320 en las 8 copias y en el juego del dueño). Mientras dure, ninguna medición de 90 min es válida y las reglas de «6 minutos» casi no llegan a contar.
+- [x] **Las 8 copias morían a la vez cada ~31 min, sin guardar**: era `rotate.sh 30`, un guion del coordinador del 10-11 (de cuando había un solo juego) que seguía vivo: a los 30 min del primer Sacred.exe mataba todos y arrancaba el juego del dueño. Lo encontró el auditor; parado y retirado el 13-11 a las 13:50. Comprobar que a las 14:05 no hay corte.
 - [ ] **Comprobar que no vuelven las 3 caídas del 13-11** (dos al leer sectores del mapa, una en la lista de runas del canje 4:1), corregidas en d2981b2. Mirar los `.dmp` nuevos y el registro de eventos tras 3 horas.
 - [x] **Dos corrupciones de memoria** que encontró el revisor (pila al cargar el mapa, montón en el canje 4:1): corregidas en b02bd72 (13-11).
 - [x] **Auditoría del caballo del 12-11**: el revisor la contrastó con el código actual (13-11): los 5 🔴 y casi todos los 🟡 ya estaban cerrados. Quedan dos restos menores en [[Revisiones]] («Estado a 8b7062f»): un objeto no criatura recogido en estado medio desmontado, y un `return` de 5 s en `mendHalfOff`.
