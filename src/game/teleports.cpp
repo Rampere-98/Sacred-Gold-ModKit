@@ -41,7 +41,7 @@ namespace
         for (const wchar_t* cls : kClasses)
         {
             std::vector<char> data;
-            const std::wstring file = gameDir() + L"bin\\" + cls + L"\DefPos.bin";
+            const std::wstring file = gameDir() + L"bin\\" + cls + L"\\DefPos.bin";
             if (FILE* f = _wfopen(file.c_str(), L"rb"))
             {
                 std::fseek(f, 0, SEEK_END);
