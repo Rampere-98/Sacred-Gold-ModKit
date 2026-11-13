@@ -14,6 +14,22 @@ Cómo se elige la siguiente: primero lo que **rompe** (caídas, cortes), luego l
 | Quién mata las 8 copias cada ~31 min | auditor del entorno | vigilancia de procesos en marcha desde las 12:37; esperar un ciclo |
 | Pasada 4 de la descompilación (lotes 303-364, 2461 funciones) | Manolito | parada: Codex y Gemini sin cuota; retomar al volver la cuota o el domingo 15 a las 21:00 |
 
+## Reparto entre sesiones (2026-11-13, 13:40)
+
+Cuota semanal al **89 %** (tope de trabajo complejo: 95 %; renovación: domingo 15-11 a las 21:00). Por eso solo hay dos encargos nuevos en marcha y el resto queda asignado para después de la renovación. Solo el coordinador edita `src/` e instala.
+
+| Sesión | Modelo | Encargo | Cuándo |
+|---|---|---|---|
+| Coordinador (esta) | Fable | instalar la tanda de misiones, comprobarla en los registros, aplicar lo que devuelvan las demás | ahora |
+| Revisor de código | Sonnet | revisar el código de hoy que lee memoria del juego (mapa, canje 4:1) en busca de caídas | **en marcha** |
+| Solucionador de atascos | Sonnet | «20 s quieto a caballo» (A3, A8) y quién abre el inventario | **en marcha** |
+| Auditor del entorno | Sonnet | quién mata las 8 copias cada ~31 min | **en marcha** (vigilancia) |
+| Analista | Sonnet | medir exp./hora y misiones (`Misiones-medir.py`) antes y después; misiones sin coger frente a [[QUESTS]] | cuando no haya cortes o tras la renovación |
+| Investigador web | Sonnet | plantillas de combo por clase con sus artes; estrategia de Adelina; caballos gratis | tras la renovación |
+| Bóveda de Sacred | Sonnet | los 61 corchetes falsos; qué se sube a git de `docs/` | tras la renovación |
+| Manolito | Opus + Codex | pasada 4 (lotes 303-364); verja del cementerio (oso); clase de suelo 3 = mar; marca real de interior; `0x54FBC0` | cuando vuelvan Codex y Gemini o tras la renovación |
+| Verificador de hallazgos | Sonnet | comprobar en vivo lo instalado hoy (§4 y §5 «verificar») | tras la renovación |
+
 ## 1. Roturas (lo primero)
 
 - [ ] **Las 8 copias mueren a la vez cada ~31 min, sin guardar** (08:49, 09:21, 11:02, 11:33, 12:05 del 13-11). Descartado: instalaciones, tareas programadas, `vigilante.ps1`, `agentes.sh`, Pulso, `ExitProcess` del mod, falta de memoria. Sospecha: Steam (mismo identificador de juego 12320 en las 8 copias y en el juego del dueño). Mientras dure, ninguna medición de 90 min es válida y las reglas de «6 minutos» casi no llegan a contar.
