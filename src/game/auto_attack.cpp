@@ -3401,8 +3401,21 @@ namespace
         const uintptr_t holder = *reinterpret_cast<const uintptr_t*>(0xAD5C40);
         const uint8_t* world = holder ? *reinterpret_cast<const uint8_t* const*>(holder) : nullptr;
         const int heroLevel = HeroProfile::current().level;
+        // A hero who has outgrown the region he stands in (its top level 3 or more under his) follows the main quest
+        // first: it leads to the next towns, where the quests not yet taken are given (the analyst, 2026-11-13: no
+        // copy had taken Porto Vallum's three quests nor five more of zones up to 14, heroes of level 13-15 still
+        // around Bellevue and Silver Creek).
+        int hereLo = 0, hereHi = 0;
+        const bool outgrown = world && heroLevel > 0 &&
+                              sectorLevels(world, static_cast<int>(heroX / kTileSize), static_cast<int>(heroY / kTileSize),
+                                           hereLo, hereHi) &&
+                              hereHi + 3 <= heroLevel;
         for (QuestGoal& g : g_questBook)
         {
+            if (g.main && outgrown && g.tier == 0)
+            {
+                g.tier = 1;
+            }
             g.distance = wayLength(heroX, heroY, g.x, g.y);
             g.blocked = goalBlocked(g.x, g.y, now) ||
                         (g.number > 0 &&

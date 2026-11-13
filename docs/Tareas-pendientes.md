@@ -65,7 +65,7 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 | Adelina (201) | 2/3, 1 fallada | la escoltada muere; los 13 lobos están a la ida, la vuelta va limpia; montar su caballo saca 3 lobos más | escolta siempre a pie (por instalar); falta matar a los 13 lobos antes de hacerle clic y curarla (tecla B) |
 | Mensaje del mercader (10258), 44, 31 | 0/3, 0/3, 0/2 | zona de nivel 25 | aparcadas hasta tener nivel; no es fallo |
 
-- [ ] **Misiones sin coger**: comparar el diario con las 251 de [[QUESTS]] por región visitada, para saber cuáles no se han aceptado nunca.
+- [ ] **Misiones sin coger** (analista, 13-11, `docs/Misiones-linea-base.md`): ninguna copia tiene DQ_15001 Enredadera (monasterio), DQ_15014 La camisa favorita y R03NQ01-03 (Porto Vallum), DQ_15029 (Florentina), DQ_15038 y DQ_15039 (Faeries Crossing). Causa: las copias de nivel 13-15 siguen por Bellevue y Silver Creek. Arreglo por instalar: superada la región, la principal va primero. Falta: recorrer los pueblos conocidos sin visitar cuando no quede misión alcanzable.
 - [ ] **Poner nombre a los números 9, 20, 31, 43, 44** (hace falta la clave de texto `+0x24` del registro contra `global.res`; por la web no sale).
 - [ ] **Bloqueo del final de campaña**: hoy solo cuenta las misiones que el agente ha visto. Falta compararlo con la lista completa, y cubrir el jefe final de Underworld (Anducar).
 - [ ] **PNJ de misión por dirección** (Manolito, estático): no hace falta llamar a `0x54FBC0`; cada criatura lleva su misión en `+0x245` y las marcas de icono en `+0x200` (bits 8/9 y 12-14/26). Usarlo para saber quién da o cierra cada misión.
