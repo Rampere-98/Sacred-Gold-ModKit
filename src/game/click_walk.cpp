@@ -1025,7 +1025,19 @@ namespace
             p.x = tx;
             p.y = ty;
             p.layer = static_cast<uint8_t>(layer);
-            const int walk = g_walkable(map, nullptr, &p, 0) ? 1 : 0;
+            // A floor inside a building is not in the outer grid: the test takes the floor's «layer record» as its
+            // last argument (Manolito, block AN, 2026-11-13, checked in the disassembly: cWorld::tileLayerRecord
+            // 0x6354D0 is thiscall(world, pos*, layer), ret 8; it returns the record's id, 0 where no building stands,
+            // and writes the sector it resolves into the position given, so a copy goes in). With 0 the test «does not
+            // know» a house's ground, which sent the agent out of every house.
+            uint32_t record = 0;
+            if (layer > 0)
+            {
+                using LayerRecord = uint32_t(__fastcall*)(cMapData* world, void* edx, TilePos* pos, uint32_t layer);
+                TilePos copy = p;
+                record = reinterpret_cast<LayerRecord>(0x6354D0)(map, nullptr, &copy, static_cast<uint32_t>(layer));
+            }
+            const int walk = g_walkable(map, nullptr, &p, record) ? 1 : 0;
             if (sectorOut)
             {
                 *sectorOut = sector;
@@ -1170,6 +1182,11 @@ int ClickWalk::tileKind(int layer, int tx, int ty)
     if (walk == -2 || !sector)
     {
         return fromFiles();
+    }
+    // On a floor of a building the tile is in the floor's own chunk, not the outer grid read below: walkable or not.
+    if (layer > 0)
+    {
+        return walk ? static_cast<int>(TileKind::Floor) : static_cast<int>(TileKind::Obstacle);
     }
     const int kind = readKind(WideSectors::map(), sector, layer, tx, ty, walk);
     const int flags = readFlags(sector, tx, ty);
