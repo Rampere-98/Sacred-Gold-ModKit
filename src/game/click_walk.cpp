@@ -987,6 +987,53 @@ bool ClickWalk::walking()
     return g_active && g_fromMap;
 }
 
+namespace
+{
+    // The live sectors are read on the game's thread while the render thread loads and unloads them (A1 2026-11-13
+    // 11:51: c0000005 in ClickWalk::walkable, the map's scan asking 37000 tiles every 15 s): the whole live read under
+    // SEH, in a function with no C++ objects to unwind. 1 or 0, or -2 when the tile's sector is not live (or the read
+    // faulted): the world files then.
+    int liveWalkable(int layer, int tx, int ty, const Sector** sectorOut)
+    {
+        __try
+        {
+            cMapData* map = WideSectors::map();
+            const Sector* center = WideSectors::at(WideSectors::kCount / 2);
+            if (!g_walkable || !WideSectors::active() || !map || !center)
+            {
+                return -2;
+            }
+            const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
+            if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
+            {
+                return -2;
+            }
+            const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
+            const Sector* sector = WideSectors::at(slot);
+            if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
+                sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) ||
+                !sector->tiles)
+            {
+                return -2;
+            }
+            TilePos p{};
+            p.x = tx;
+            p.y = ty;
+            p.layer = static_cast<uint8_t>(layer);
+            const int walk = g_walkable(map, nullptr, &p, 0) ? 1 : 0;
+            if (sectorOut)
+            {
+                *sectorOut = sector;
+            }
+            return walk;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            return -2;
+        }
+    }
+}
+
 int ClickWalk::walkable(int layer, int tx, int ty)
 {
     // Not the live sectors while a game loads: the world files only.
@@ -994,29 +1041,8 @@ int ClickWalk::walkable(int layer, int tx, int ty)
     {
         return WorldTiles::walkable(layer, tx, ty);
     }
-    cMapData* map = WideSectors::map();
-    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
-    if (!g_walkable || !WideSectors::active() || !map || !center)
-    {
-        return WorldTiles::walkable(layer, tx, ty);
-    }
-    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
-    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
-    {
-        return WorldTiles::walkable(layer, tx, ty);
-    }
-    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
-    const Sector* sector = WideSectors::at(slot);
-    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
-        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
-    {
-        return WorldTiles::walkable(layer, tx, ty);
-    }
-    TilePos p{};
-    p.x = tx;
-    p.y = ty;
-    p.layer = static_cast<uint8_t>(layer);
-    return g_walkable(map, nullptr, &p, 0) ? 1 : 0;
+    const int live = liveWalkable(layer, tx, ty, nullptr);
+    return live == -2 ? WorldTiles::walkable(layer, tx, ty) : live;
 }
 
 namespace
@@ -1133,51 +1159,21 @@ int ClickWalk::tileKind(int layer, int tx, int ty)
     {
         return fromFiles();
     }
-    cMapData* map = WideSectors::map();
-    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
-    if (!g_walkable || !WideSectors::active() || !map || !center)
+    const Sector* sector = nullptr;
+    const int walk = liveWalkable(layer, tx, ty, &sector);
+    if (walk == -2 || !sector)
     {
         return fromFiles();
     }
-    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
-    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
-    {
-        return fromFiles();
-    }
-    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
-    const Sector* sector = WideSectors::at(slot);
-    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
-        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
-    {
-        return fromFiles();
-    }
-    TilePos p{};
-    p.x = tx;
-    p.y = ty;
-    p.layer = static_cast<uint8_t>(layer);
-    const int walk = g_walkable(map, nullptr, &p, 0) ? 1 : 0;
-    const int kind = readKind(map, sector, layer, tx, ty, walk);
+    const int kind = readKind(WideSectors::map(), sector, layer, tx, ty, walk);
     const int flags = readFlags(sector, tx, ty);
     return kind > 0 && flags >= 0 && (flags & 2) ? kind | kIndoors : kind;
 }
 
 int ClickWalk::tileGround(int layer, int tx, int ty)
 {
-    (void)layer;
-    const Sector* center = WideSectors::at(WideSectors::kCount / 2);
-    if (AgentSave::worldChanging() || !WideSectors::active() || !center)
-    {
-        return -1;
-    }
-    const int baseX = center->originX - 2 * 64, baseY = center->originY - 2 * 64;
-    if (tx < baseX || ty < baseY || tx >= baseX + kSide || ty >= baseY + kSide)
-    {
-        return -1;
-    }
-    const int slot = (ty - baseY) / 64 * WideSectors::kSide + (tx - baseX) / 64;
-    const Sector* sector = WideSectors::at(slot);
-    if (!sector || sector->originX != baseX + slot % WideSectors::kSide * 64 ||
-        sector->originY != baseY + slot / WideSectors::kSide * 64 || !(sector->flags & Sector::loaded) || !sector->tiles)
+    const Sector* sector = nullptr;
+    if (AgentSave::worldChanging() || liveWalkable(layer, tx, ty, &sector) == -2 || !sector)
     {
         return -1;
     }

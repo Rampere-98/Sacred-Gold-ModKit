@@ -1456,7 +1456,10 @@ namespace
             return pick;
         }
         const int heroType = *(reinterpret_cast<const uint8_t*>(hero) + 0x10);
-        uint32_t vec[4] = {};   // STLport vector: start, finish, end of storage (one spare)
+        // STLport vector: start, finish, end of storage. Off the stack and wide (A6 2026-11-13 12:24: a stack
+        // cookie failure at the runes' page, the game's list writing past the four dwords it was given here).
+        static uint32_t vec[32];
+        std::fill(std::begin(vec), std::end(vec), 0u);
         fn<RuneList>(kRuneList)(vec, heroType);
         const auto* first = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(vec[0]));
         const auto* last = reinterpret_cast<const uint32_t*>(static_cast<uintptr_t>(vec[1]));

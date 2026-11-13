@@ -5702,6 +5702,33 @@ namespace
                 // Held 30 s (A2 2026-11-12: the quest chosen again the next frame, quest/farm flipped every 150 ms
                 // for minutes, then the 4502AE crash): the farming goes on meanwhile.
                 g_questNoWayUntil = now + 30000;
+                // The same goal with no way three times in 10 min is left 20 min (the analyst, 2026-11-13: A3 between
+                // «quest» to 3259,2889 and «farm» every 30 s for an hour, 44 experience an hour: 30 s is not enough
+                // to reach the farming zone, and the same goal was chosen again).
+                {
+                    static uint64_t s_noWayKey = 0;
+                    static int s_noWayTimes = 0;
+                    static DWORD s_noWayFirst = 0;
+                    const QuestGoal* front = g_questBook.empty() ? nullptr : &g_questBook.front();
+                    const int32_t gx = front ? front->x : qx, gy = front ? front->y : qy;
+                    const uint64_t key = (static_cast<uint64_t>(static_cast<uint32_t>(gx / kTileSize)) << 32) |
+                                         static_cast<uint32_t>(gy / kTileSize);
+                    if (key != s_noWayKey || now - s_noWayFirst > 600000)
+                    {
+                        s_noWayKey = key;
+                        s_noWayTimes = 1;
+                        s_noWayFirst = now;
+                    }
+                    else if (++s_noWayTimes >= 3)
+                    {
+                        g_travelBlocked[key] = now + 1200000;
+                        g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
+                                        static_cast<uint32_t>(qy / kTileSize)] = now + 1200000;
+                        s_noWayTimes = 0;
+                        LOG("AutoAttack: no way to the goal {},{} three times in 10 min: left 20 min",
+                            static_cast<int>(gx / kTileSize), static_cast<int>(gy / kTileSize));
+                    }
+                }
             }
             else
             {
