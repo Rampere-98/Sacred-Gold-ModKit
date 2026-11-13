@@ -1425,7 +1425,10 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
     // A goal inside a house's solid block (the Pay Book's 3369,2587: a block of 7 by 13 building tiles, its door in
     // the east wall at 3373,2587; six copies walked round it for days): the block's tiles from the goal, the doors
     // that touch it, the one on the hero's side.
-    if (const int goalKind = kindAt(goalX, goalY); goalKind == 4 || goalKind == 5)
+    // Building tiles only (kind 4): through rocks and trees (5) a goal in a wood was joined to the door of a house
+    // 14 tiles off, and the hero went into the wrong house and out again (A1, 2026-11-13: in at 3094,2784 for a
+    // goal 64 tiles away).
+    if (const int goalKind = kindAt(goalX, goalY); goalKind == 4)
     {
         constexpr int kBlock = 14, kBlockSide = 2 * kBlock + 1;
         std::vector<uint8_t> in(kBlockSide * kBlockSide, 0);
@@ -1449,7 +1452,7 @@ bool MapMemory::doorInto(int layer, int goalX, int goalY, int heroX, int heroY, 
                 {
                     gates.emplace_back(nx, ny);
                 }
-                else if (k == 4 || k == 5)
+                else if (k == 4)
                 {
                     block.emplace_back(nx, ny);
                 }

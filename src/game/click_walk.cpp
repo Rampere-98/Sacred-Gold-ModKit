@@ -592,8 +592,13 @@ namespace
                 const double dy = static_cast<double>(order->y) - creature->y;
                 const double tiles = std::max(std::abs(dx), std::abs(dy)) / kTileSize;
                 bool own = false;
+                // Inside a house or a cellar (a layer other than the surface) a short walk is the game's own: the
+                // route planned here took the hero out by the door and round the house (the player, 2026-11-13: «llegan
+                // a entrar pero salen al momento»; A1: in at 3171,2796, a route of 6 tiles to the goal inside whose
+                // first leg was a tile in the street, out, in again, every 10 s).
+                const bool indoorsShort = layerOf(creature) != 0 && tiles <= 12.0;
                 if (!ours && g_asking && !g_askByPlayer && Config::autoAttack.ownPaths && tiles > 3.0 &&
-                    tiles <= kMaxTiles)
+                    tiles <= kMaxTiles && !indoorsShort)
                 {
                     // The agent's walk on its own route, not the game's path finder (which keeps the doors and stairs
                     // into houses: when no route is found on the hero's layer, the order goes to the game as it is).

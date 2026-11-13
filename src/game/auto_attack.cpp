@@ -4540,6 +4540,12 @@ namespace
         {
             return false;
         }
+        // Inside already (a layer other than the surface) with the goal at hand: the way in under the hero's feet is
+        // the way out, and «a step off to step on again» put him back in the street (A1, 16:16:56).
+        if (layer != 0 && std::hypot(gx - htx, gy - hty) <= 20.0)
+        {
+            return false;
+        }
         std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10);
         for (const Teleports::Interior& in : Teleports::interiors())
         {
@@ -5387,7 +5393,9 @@ namespace
                 s_since = now;
                 s_step = 0;
             }
-            else if (now - s_since > 25000u * static_cast<DWORD>(s_step + 1))
+            // Inside a house the rooms are 3 tiles across: 90 s there, not 25, before it is taken for a jam (A1,
+            // 16:17:01: «no progress for 25 s» three seconds after going in, the goal left and a walk out).
+            else if (now - s_since > (layer != 0 ? 90000u : 25000u) * static_cast<DWORD>(s_step + 1))
             {
                 ++s_step;
                 LOG("AutoAttack: no progress for {} s on this spot (step {}): the goal left {} min, a walk out",
