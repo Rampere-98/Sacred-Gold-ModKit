@@ -5587,7 +5587,32 @@ namespace
             }
             const double qd = std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y));
             const bool zone = qr >= 8.0 * kTileSize && !speakTo && !fixedGoal;
-            if (qd > (zone ? qr + 10.0 * kTileSize : speakTo || fixedGoal ? std::min(qr, (speakTo ? 3.0 : 2.0) * kTileSize) : qr))
+            // How near counts as there. A creature to speak to: 6 tiles, the click on it does the rest (the stuck
+            // solver, 2026-11-13: a merchant behind his counter 3 tiles off, the hero sent to his tile every 0.7 s for
+            // 30 s; goals inside houses in 15004, 9005, 152). A fixed goal: 2 tiles to arrive, then 25 for 4 min, so the
+            // look around it reaches what the quest wants (Wolf's Eyes' boss in the clearing beside the goal, the bear
+            // by the graveyard: the hero was called back each time it stepped 2 tiles off, «going to look (1 tiles
+            // from where it began)» for hours).
+            static uint64_t s_arrivedKey = 0;
+            static DWORD s_arrivedAt = 0;
+            const uint64_t goalKey = (static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
+                                     static_cast<uint32_t>(qy / kTileSize);
+            double there = zone ? qr + 10.0 * kTileSize
+                                : speakTo ? std::min(std::max(qr, 6.0 * kTileSize), 6.0 * kTileSize)
+                                          : fixedGoal ? std::min(qr, 2.0 * kTileSize) : qr;
+            if (!speakTo && !zone)
+            {
+                if (qd <= there && (s_arrivedKey != goalKey || now - s_arrivedAt > 600000))
+                {
+                    s_arrivedKey = goalKey;
+                    s_arrivedAt = now;
+                }
+                if (s_arrivedKey == goalKey && now - s_arrivedAt < 240000)
+                {
+                    there = std::max(there, 25.0 * kTileSize);
+                }
+            }
+            if (qd > there)
             {
                 g_questTravel = true;
                 if (qx != g_questX || qy != g_questY)
