@@ -241,7 +241,10 @@ namespace
             // sscanf took over a second for a large file: the fields read by hand.
             int layer, tx, ty, visits, blocked, kind;
             unsigned type = 0;
-            long v[8];
+            // Room to spare: numbers() writes out[n] before it checks for the line's end, and a square's line has 9
+            // fields since the tile kinds (the code reviewer, 2026-11-13: v[8] written past an array of 8, the stack
+            // broken at every load of the map; A6's stack cookie failure at 12:24, A3 hung at its start).
+            long v[16] = {};
             if (line[0] == 'E')
             {
                 if (numbers(line + 1, v, 4) == 4)

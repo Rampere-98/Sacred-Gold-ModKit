@@ -1494,10 +1494,9 @@ namespace
                 }
             }
         }
-        if (vec[0])
-        {
-            fn<GameDelete>(kGameDelete)(reinterpret_cast<void*>(static_cast<uintptr_t>(vec[0])));
-        }
+        // The list is left to the game's heap, not freed here (the code reviewer, 2026-11-13: 0x6D4160 grows it with
+        // the game's allocator, blocks up to 0x80 bytes from its node pool; operator delete 0x849410 on one of those
+        // hands HeapFree a pointer inside a pool page). At most 512 bytes a swap.
         return pick;
     }
 
