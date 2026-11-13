@@ -5916,7 +5916,11 @@ namespace
             const auto fails = g_talkFails.find(who);
             const int failed = fails != g_talkFails.end() ? fails->second : 0;
             const DWORD again = failed >= 4 ? 0xFFFFFFFFu : kTalkAgainMs << (2 * std::max(failed - 1, 0));
-            const bool talkNow = talkable(npc) && !isHireling(who) && failed < 4 &&
+            // The quest's own creature is spoken to whatever its side (the player, 2026-11-13: the lost sheep Erica,
+            // DQ_15005, «!» over it and the agent standing by: an animal's side is none of the townsfolk's, 8 «talkable
+            // false» in a morning); an enemy was attacked above.
+            const bool questCreature = speakTo && npc && npc->asCreature();
+            const bool talkNow = (talkable(npc) || questCreature) && !isHireling(who) && failed < 4 &&
                                  (talked == g_talkedAt.end() || now - talked->second > again);
             if (speakTo && !talkNow)
             {
