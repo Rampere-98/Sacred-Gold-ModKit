@@ -56,14 +56,14 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 
 | Misión | Hechas/abiertas (13-11) | Causa | Estado |
 |---|---|---|---|
-| Oveja perdida (15005) | 0/6 | no hablaba con animales; luego es escolta lenta | arreglo dd45044 por comprobar; falta ver la entrega a Hank |
-| Libro de cuentas (15004) | 0/6 | libro en el suelo dentro de una casa | clic a 6 casillas y puerta de interior por comprobar; quizá falte recoger con más alcance |
-| Despacho a Arogarn (9005) | 0/5 | personaje dentro de una posada | por comprobar |
-| Mensajero (152) | 0/3, 1 fallada | personaje en la taberna de Silver Creek; plazo de 3 días | por comprobar |
+| Oveja perdida (15005) | **6 hechas** (14:46; antes 0) | no hablaba con animales | ✔ **resuelta** (dd45044) |
+| Libro de cuentas (15004) | 0 hechas / 7 abiertas | la meta está dentro del bloque macizo de una casa (7×13), puerta en la pared este (3373,2587) | arreglo 1be4a488 (entrar por la puerta que toca el bloque): instalándose a las 14:47, por comprobar |
+| Despacho a Arogarn (9005) | **4 hechas** (antes 0) | personaje dentro de una posada | ✔ sale (clic a 6 casillas, f55652c) |
+| Mensajero (152) | 0 hechas, 1 fallada | meta 3174,2794 dentro de un edificio sin puerta a la vista; «sin camino» ×5 en A1 y A2; plazo de 3 días | **sin arreglar**: entrada por marca (escaleras) cerca de 3171,2796 |
 | Oso de batalla (15003) | 1/7 | no llega a la meta 3558,2462; **no hay verja de guion** (Manolito, bloque AM): el bloqueo es del mapa (muro, desnivel o puerta del cementerio) | **sin arreglar**: mirar en vivo las casillas alrededor de la meta con el mapa nuevo (tipos de casilla) y la ruta que intenta |
 | ¿Dónde está el herrero? (154) | 1/5 | se para en un paso intermedio (lobos o espada del jefe goblin) | **sin arreglar**: registrar el texto del objetivo en cada paso |
-| Ojos de lobo (151) | 2/4 | jefe en un claro junto a la meta | ronda de 25 casillas por comprobar |
-| Trágica pérdida (15011) | 2/4 | jefe al que se llega por el oeste; puerta o edificio | ronda de 25 por comprobar; puede faltar la ruta |
+| Ojos de lobo (151) | **4 hechas** (antes 2) | jefe en un claro junto a la meta | ✔ sale (ronda de 25 y buscar pelea) |
+| Trágica pérdida (15011) | 3 hechas (antes 2) | jefe al que se llega por el oeste | mejora; seguir midiendo |
 | Adelina (201) | 2/3, 1 fallada | la escoltada muere; los 13 lobos están a la ida, la vuelta va limpia; montar su caballo saca 3 lobos más | escolta siempre a pie (por instalar); falta matar a los 13 lobos antes de hacerle clic y curarla (tecla B) |
 | Mensaje del mercader (10258), 44, 31 | 0/3, 0/3, 0/2 | zona de nivel 25 | aparcadas hasta tener nivel; no es fallo |
 
