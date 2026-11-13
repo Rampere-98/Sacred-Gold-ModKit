@@ -4137,7 +4137,7 @@ namespace
         // ~1.9 h lost, the same tiles again and again, 3174,2794 39 times in one copy): 2, 10, 30 min, then an hour.
         static std::unordered_map<uint64_t, int> s_times;
         static std::unordered_set<uint64_t> s_offFor;     // tiles tried again on foot already
-        // Kept on disk beside the game (SacredBild-parked.txt: key, times), so a restart does not try them all again
+        // Kept on disk beside the game (SacredBild-parked2.txt: key, times), so a restart does not try them all again
         // (the analyst, 2026-11-11: the count of «no nearer» went up with each reinstall).
         static std::wstring s_file;
         if (s_file.empty())
@@ -4145,7 +4145,7 @@ namespace
             wchar_t exe[MAX_PATH] = {};
             GetModuleFileNameW(nullptr, exe, MAX_PATH);
             s_file = exe;
-            s_file = s_file.substr(0, s_file.find_last_of(L"\\/") + 1) + L"SacredBild-parked.txt";
+            s_file = s_file.substr(0, s_file.find_last_of(L"\\/") + 1) + L"SacredBild-parked2.txt";
             if (FILE* f = _wfopen(s_file.c_str(), L"rb"))
             {
                 unsigned long long k = 0;
@@ -4173,7 +4173,7 @@ namespace
                     {
                         continue;
                     }
-                    if (FILE* f = _wfopen((dir + L"\\SacredBild-parked.txt").c_str(), L"rb"))
+                    if (FILE* f = _wfopen((dir + L"\\SacredBild-parked2.txt").c_str(), L"rb"))
                     {
                         unsigned long long k = 0;
                         int n = 0;

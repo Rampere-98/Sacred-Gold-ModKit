@@ -199,7 +199,7 @@ namespace
         wchar_t exe[MAX_PATH] = {};
         GetModuleFileNameW(nullptr, exe, MAX_PATH);
         std::wstring p = exe;
-        return p.substr(0, p.find_last_of(L"\\/") + 1) + L"SacredBild-map.txt";
+        return p.substr(0, p.find_last_of(L"\\/") + 1) + L"SacredBild-map2.txt";  // map2, 2026-11-13: begun again (the player: "borra el registro actual")
     }
 
     // Up to `max` whitespace separated integers (decimal, or hex for the one at `hexAt`); how many were read.
@@ -1105,12 +1105,16 @@ void MapMemory::setHero(int layer, int32_t x, int32_t y)
 namespace
 {
     // The terrain scan: the game's tile test over the square around the hero, a slice a frame, so the map shows
-    // what can be walked (and what not) without walking it. Restarts when the hero moves on.
+    // what can be walked (and what not) without walking it. Restarts when the hero moves on, and every 15 s where
+    // he stays: the test changes with the world (a door opened or shut, a house's floor read through its shut
+    // door), so the latest reading wins; only a square stood on stays walkable whatever it says.
     constexpr int kScanReach = 96;              // tiles each way (the loaded sectors reach ~160)
     constexpr int kScanPerFrame = 2500;
     constexpr int kScanRestart = 24;            // tiles the hero moves before the square is scanned again
+    constexpr DWORD kScanAgainMs = 15000;       // a scan done is run again after this long
     int g_scanLayer = -1, g_scanCx = 0, g_scanCy = 0, g_scanAt = 0;
     bool g_scanDone = false;
+    DWORD g_scanDoneAt = 0;
 
     // Under g_lock, on the game thread.
     void scanStep(int layer, int tx, int ty)
@@ -1125,7 +1129,12 @@ namespace
         }
         if (g_scanDone)
         {
-            return;
+            if (GetTickCount() - g_scanDoneAt < kScanAgainMs)
+            {
+                return;
+            }
+            g_scanAt = 0;
+            g_scanDone = false;
         }
         constexpr int side = 2 * kScanReach + 1;
         for (int budget = kScanPerFrame; budget > 0 && g_scanAt < side * side; ++g_scanAt)
@@ -1133,18 +1142,23 @@ namespace
             const int sx = g_scanCx - kScanReach + g_scanAt % side, sy = g_scanCy - kScanReach + g_scanAt / side;
             const uint64_t k = key(layer, sx, sy);
             const Cell* c = find(k);
-            if (c && c->scan)
+            if (c && c->visits)
             {
-                continue;   // a square's ground does not change
+                continue;   // stood on: walkable for good
             }
             --budget;
             const int w = ClickWalk::walkable(layer, sx, sy);
-            if (w >= 0)
+            const uint8_t now = w > 0 ? 1 : 2;
+            if (w >= 0 && (!c || c->scan != now))
             {
-                change(k, [w](Cell& cell) { cell.scan = w ? 1 : 2; });
+                change(k, [now](Cell& cell) { cell.scan = now; });
             }
         }
-        g_scanDone = g_scanAt >= side * side;
+        if (g_scanAt >= side * side && !g_scanDone)
+        {
+            g_scanDone = true;
+            g_scanDoneAt = GetTickCount();
+        }
     }
 }
 
