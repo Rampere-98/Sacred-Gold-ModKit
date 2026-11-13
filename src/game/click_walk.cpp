@@ -1058,24 +1058,25 @@ namespace
                             ((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20;
             const uint8_t flags = t[0x1E], type = t[0x1F];
             const int8_t dx = static_cast<int8_t>(t[0x1C]), dy = static_cast<int8_t>(t[0x1D]);
-            // Ground class 9 is the shore's water; 3, where not walkable, the open sea (inferred, 2026-11-13: 23628
-            // of 27446 «obstacles» by the coast at 3470,2756 were class 3; the stuck solver found that square at sea).
-            const int ground = type >> 4;
-            if ((type & 0xF) == 1 || (type & 0xF) == 2 || (flags & 8))
+            // Water by the game's own tests (Manolito, static, 2026-11-13): the walker 0x4EBCA0 bars low nibble 1
+            // (blocked) and 2 (deep water, but for water creatures); 0x54FFC0 says «in water» for the ground classes
+            // (high nibble) 6, 9 and 0xA; WideSectors draws water for 9. 0xA is the lava of the fire regions. Class 3
+            // is NOT water (it was painted so on a guess for a few hours).
+            const int ground = type >> 4, low = type & 0xF;
+            const bool liquid = low == 2 || ground == 9 || ground == 10;
+            const int liquidKind = ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
+                                                : static_cast<int>(ClickWalk::TileKind::Water);
+            if (low == 1 || low == 2 || (flags & 8))
             {
-                return (ground == 9 || ground == 3) ? static_cast<int>(ClickWalk::TileKind::Water)
-                       : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
-                       : (dx || dy)   ? static_cast<int>(ClickWalk::TileKind::Building)
-                                      : static_cast<int>(ClickWalk::TileKind::Obstacle);
+                return liquid       ? liquidKind
+                       : (dx || dy) ? static_cast<int>(ClickWalk::TileKind::Building)
+                                    : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
             if (!(flags & 4))
             {
-                // Not walkable by the test with no blocking bit of its own: the ground says water or lava (the sea
-                // read as rocks, A2 2026-11-13: 30124 obstacles and no water on the coast), else an obstacle.
-                return walk           ? static_cast<int>(ClickWalk::TileKind::Floor)
-                       : (ground == 9 || ground == 3) ? static_cast<int>(ClickWalk::TileKind::Water)
-                       : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
-                                      : static_cast<int>(ClickWalk::TileKind::Obstacle);
+                return walk     ? static_cast<int>(ClickWalk::TileKind::Floor)
+                       : liquid ? liquidKind
+                                : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
             // The key's layer is the tile's own byte +0xC when 2 or more (Manolito, static: 0x636C10), not the hero's.
             (void)layer;
