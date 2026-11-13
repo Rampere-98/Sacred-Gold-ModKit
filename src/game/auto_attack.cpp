@@ -5635,6 +5635,34 @@ namespace
             // 1586 «going to look», the creature at 3091,2783 never spoken to by any copy). Once loaded, the talk below.
             // Loaded within 60 tiles, the creature itself is the goal (the stuck solver's check at 21:15: 90 % of «going
             // to look» still in the 29-35 tile ring, the creatures loaded, so the zone's edge counted as there).
+            // A fixed goal with someone under a quest sign beside it: he is the one to speak to (the Messenger,
+            // R01NQ02: the journal gives a spot in the tavern, «the contact will reveal himself»: a creature with «!»
+            // two steps off; A1 stood on the spot, looked around and walked out, 2026-11-13). Within 10 tiles of the
+            // goal and of the hero, not spoken to lately.
+            if (who == 0xFFFFFFFFu &&
+                std::hypot(static_cast<double>(qx - self->x), static_cast<double>(qy - self->y)) < 10.0 * kTileSize)
+            {
+                double nearest = 10.0 * kTileSize;
+                for (const Sign& sign : g_signs)
+                {
+                    const double toGoal = std::hypot(static_cast<double>(sign.x - qx), static_cast<double>(sign.y - qy));
+                    if (toGoal < nearest && !talkedLately(sign.id, now) && !isHireling(sign.id))
+                    {
+                        nearest = toGoal;
+                        who = sign.id;
+                    }
+                }
+                if (who != 0xFFFFFFFFu)
+                {
+                    static uint32_t s_toldSign = 0;
+                    if (s_toldSign != who)
+                    {
+                        s_toldSign = who;
+                        LOG("AutoAttack: at the quest's spot {},{}: {:x} under a quest sign {:.0f} tiles from it: spoken to",
+                            static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize), who, nearest / kTileSize);
+                    }
+                }
+            }
             const bool speakTo = who && who != 0xFFFFFFFFu;
             const cObject* speaker = speakTo && objects ? objects->object(who) : nullptr;
             if (speaker && std::max(std::abs(static_cast<double>(speaker->x - self->x)),
@@ -6269,6 +6297,22 @@ namespace
             // At the quest's goal: still the quest, looking around it (not «explore»: the analyst saw the two
             // swapping every second, 172 lines in 10 minutes).
             setIntent(Intent::Quest, "at the quest's goal: looking around it");
+            // Inside a house the look around is the way out: 30 s standing at the goal first (a dialog, a pick up, a
+            // sign to appear), then the look.
+            if (layer != 0)
+            {
+                static DWORD s_insideSince = 0, s_insideSeen = 0;
+                if (now - s_insideSeen > 5000)
+                {
+                    s_insideSince = now;
+                }
+                s_insideSeen = now;
+                if (now - s_insideSince < 30000)
+                {
+                    g_roamAt = now;
+                    return;
+                }
+            }
             // By the journal's text, or by the quest's number (docs/QUESTS.md's table, the «matar» rows: the text's
             // kind is often not told, «sin saber»).
             static constexpr int32_t kKillQuests[] = {
