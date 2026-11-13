@@ -1032,10 +1032,12 @@ namespace
                             ((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20;
             const uint8_t flags = t[0x1E], type = t[0x1F];
             const int8_t dx = static_cast<int8_t>(t[0x1C]), dy = static_cast<int8_t>(t[0x1D]);
+            // Ground class 9 is the shore's water; 3, where not walkable, the open sea (inferred, 2026-11-13: 23628
+            // of 27446 «obstacles» by the coast at 3470,2756 were class 3; the stuck solver found that square at sea).
             const int ground = type >> 4;
             if ((type & 0xF) == 1 || (type & 0xF) == 2 || (flags & 8))
             {
-                return ground == 9    ? static_cast<int>(ClickWalk::TileKind::Water)
+                return (ground == 9 || ground == 3) ? static_cast<int>(ClickWalk::TileKind::Water)
                        : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
                        : (dx || dy)   ? static_cast<int>(ClickWalk::TileKind::Building)
                                       : static_cast<int>(ClickWalk::TileKind::Obstacle);
@@ -1045,7 +1047,7 @@ namespace
                 // Not walkable by the test with no blocking bit of its own: the ground says water or lava (the sea
                 // read as rocks, A2 2026-11-13: 30124 obstacles and no water on the coast), else an obstacle.
                 return walk           ? static_cast<int>(ClickWalk::TileKind::Floor)
-                       : ground == 9  ? static_cast<int>(ClickWalk::TileKind::Water)
+                       : (ground == 9 || ground == 3) ? static_cast<int>(ClickWalk::TileKind::Water)
                        : ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
                                       : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
