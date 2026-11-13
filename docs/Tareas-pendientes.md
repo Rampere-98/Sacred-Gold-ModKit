@@ -16,7 +16,7 @@ Cómo se elige la siguiente: primero lo que **rompe** (caídas, cortes), luego l
 
 ## Reparto entre sesiones (2026-11-13, 13:40)
 
-Cuota semanal al **89 %** (tope de trabajo complejo: 95 %; renovación: domingo 15-11 a las 21:00). Por eso solo hay dos encargos nuevos en marcha y el resto queda asignado para después de la renovación. Solo el coordinador edita `src/` e instala.
+El dueño (13-11, 12:50): por ahora **solo cuenta el límite de 5 horas**, no el semanal. Con eso se lanzaron ya Manolito, el analista y el investigador; la bóveda y el verificador van al renovarse las 5 horas (15:10). Solo el coordinador edita `src/` e instala.
 
 | Sesión | Modelo | Encargo | Cuándo |
 |---|---|---|---|
@@ -24,11 +24,11 @@ Cuota semanal al **89 %** (tope de trabajo complejo: 95 %; renovación: domingo 
 | Revisor de código | Sonnet | revisar el código de hoy que lee memoria del juego (mapa, canje 4:1) en busca de caídas | **en marcha** |
 | Solucionador de atascos | Sonnet | «20 s quieto a caballo» (A3, A8) y quién abre el inventario | **en marcha** |
 | Auditor del entorno | Sonnet | quién mata las 8 copias cada ~31 min | **en marcha** (vigilancia) |
-| Analista | Sonnet | medir exp./hora y misiones (`Misiones-medir.py`) antes y después; misiones sin coger frente a [[QUESTS]] | cuando no haya cortes o tras la renovación |
-| Investigador web | Sonnet | plantillas de combo por clase con sus artes; estrategia de Adelina; caballos gratis | tras la renovación |
-| Bóveda de Sacred | Sonnet | los 61 corchetes falsos; qué se sube a git de `docs/` | tras la renovación |
-| Manolito | Opus + Codex | pasada 4 (lotes 303-364); verja del cementerio (oso); clase de suelo 3 = mar; marca real de interior; `0x54FBC0` | cuando vuelvan Codex y Gemini o tras la renovación |
-| Verificador de hallazgos | Sonnet | comprobar en vivo lo instalado hoy (§4 y §5 «verificar») | tras la renovación |
+| Analista | Sonnet | medir exp./hora y misiones (`Misiones-medir.py`) antes y después; misiones sin coger frente a [[QUESTS]] | **en marcha** (línea base 12:50, comparación 14:30) |
+| Investigador web | Sonnet | plantillas de combo por clase con sus artes; estrategia de Adelina; caballos gratis | **en marcha** |
+| Bóveda de Sacred | Sonnet | los 61 corchetes falsos; qué se sube a git de `docs/` | al renovarse las 5 horas |
+| Manolito | Opus + Codex | pasada 4 (lotes 303-364); verja del cementerio (oso); clase de suelo 3 = mar; marca real de interior; `0x54FBC0` | las 4 preguntas **en marcha**; la pasada 4 cuando vuelvan Codex y Gemini |
+| Verificador de hallazgos | Sonnet | comprobar en vivo lo instalado hoy (§4 y §5 «verificar») | al renovarse las 5 horas |
 
 ## 1. Roturas (lo primero)
 

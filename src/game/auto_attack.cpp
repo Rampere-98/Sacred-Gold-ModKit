@@ -7286,10 +7286,18 @@ static void watchStuck(DWORD now, const cCreature* self)
     // 20 s still on horseback off it (the solver, 2026-11-12: a 2-tile lane at 3189,2812 held A1, A3 and A6 mounted
     // 90 s each time; a player gets off at once), at 5 min the last save loaded.
     static DWORD s_offFor = 0, s_reloadFor = 0;
-    if (now - s_since >= 20000 && s_offFor != s_since && HeroProfile::current().mounted)
+    // The stuck solver, 2026-11-13 (67 of these in an hour, A8 from 1 to 24 an hour): 20 s in the saddle, not 20 s
+    // still of which the last second mounted (the wait for a companion, a shop, a pick up, then up); only on a walk
+    // that goes nowhere, not looking around a quest's goal within 2-3 tiles (that is no jam); and 5 min on foot after
+    // it, not one (down, up again, down: a loop).
+    static DWORD s_mountedSince = 0;
+    const bool mountedNow = HeroProfile::current().mounted;
+    s_mountedSince = mountedNow ? (s_mountedSince ? s_mountedSince : now) : 0;
+    if (now - s_since >= 20000 && s_offFor != s_since && mountedNow && now - s_mountedSince >= 20000 &&
+        (ClickWalk::routing() || g_questTravel))
     {
         s_offFor = s_since;
-        g_onFootUntil = now + 60000;
+        g_onFootUntil = now + 300000;
         LOG("AgentStuck: 20 s in one place on horseback (layer {}): off the horse", reinterpret_cast<const uint8_t*>(self)[0x24]);
     }
     if (now - s_since >= 300000 && s_reloadFor != s_since)
@@ -7758,7 +7766,9 @@ void AutoAttack::onFrame()
     {
         cUI_Manager* ui = cUI_Manager::instance();
         cUI_Window2* inventory = ui && (ui->flags & cUI_Manager::inGame) ? ui->window(cUI_Manager::Window::inventory) : nullptr;
-        if (g_on && foreground && inventory && inventory->visible() && !Gear::shopOpen() && !Gear::craftsmanOpen())
+        // Without the focus too (the stuck solver, 2026-11-13: the game opens it itself on a pick up, a chest, a
+        // door; a copy without the focus never closed it, the key does nothing there: runs of 5-15).
+        if (g_on && inventory && inventory->visible() && !Gear::shopOpen() && !Gear::craftsmanOpen())
         {
             if (!s_inventorySince)
             {
@@ -7776,9 +7786,9 @@ void AutoAttack::onFrame()
                 s_inventoryKeys = now - s_inventoryKeyAt < 5000 ? s_inventoryKeys + 1 : 1;
                 s_inventoryKeyAt = now;
                 LOG("AutoAttack: the inventory is open{}: closed{}", g_collecting ? " while collecting" : "",
-                    s_inventoryKeys > 3 ? " (by the window's own close)" : "");
+                    s_inventoryKeys > 3 || !foreground ? " (by the window's own close)" : "");
                 s_inventoryClosedAt = now;
-                if (s_inventoryKeys > 3)
+                if (s_inventoryKeys > 3 || !foreground)
                 {
                     using ClearFlags = void(__fastcall*)(void* window, void*, uint32_t bits);
                     reinterpret_cast<ClearFlags>(0x7325C0)(inventory, nullptr, 1);
