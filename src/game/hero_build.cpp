@@ -303,7 +303,10 @@ namespace
                 {
                     continue;
                 }
-                const float share = static_cast<float>(base) / skillWeight(id);
+                // Weapon Lore past 12 is worth little (attack speed tops at 220; Builds.md §0.3 and §10.3): its points
+                // go to constitution and armour.
+                const float weight = id == 2 && base >= 12 ? 0.5f : skillWeight(id);
+                const float share = static_cast<float>(base) / weight;
                 if (best < 0 || share < bestShare)
                 {
                     best = slot;

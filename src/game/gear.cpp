@@ -2309,10 +2309,15 @@ namespace
                 }
                 // A horse wanted: none yet, gold enough to spare half on it.
                 // Never for the Dwarf: he does not ride (Builds.md; the player, 2026-11-10: no riding animation).
+                // Builds.md §1.4: from level 4, with the potion stock full and two potions' gold left over the horse
+                // (≈ 1318): before that the potions are worth more.
+                const int heroLevel = *reinterpret_cast<const uint16_t*>(st + 0x56);
                 const bool horse = HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
+                                   (heroLevel >= 4 || g_horseUpgrade) && countHealing(pack) >= wantHealing() &&
+                                   gold >= std::max(2000u, 1400u + 2 * g_potionPrice) &&
                                    (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 ||
                                     g_horseUpgrade) &&
-                                   gold >= 2000 && (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
+                                   (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
                 if (horse != g_wantHorse.exchange(horse) && horse)
                 {
                     LOG("Gear: {} and {} gold: off to a stable", g_horseUpgrade ? "a better horse there" : "no horse", gold);

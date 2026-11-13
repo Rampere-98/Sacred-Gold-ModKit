@@ -1032,7 +1032,10 @@ namespace
                     (!learned(sa.art).lastCast ||
                      static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
                 {
-                    rank = 4;
+                    // The class guides open every fight with its buffs (Builds.md §11.2: Heroic Courage, Dwarven
+                    // Steel, Quick as a Flash...; the near-deaths came in fights begun without them): above the main
+                    // attack (6). The panic art is kept for the panic (rank 11 below), not spent opening.
+                    rank = sa.art == Mind::now().panicArt ? 4 : 7;
                     // At the enemy fought when there is one near: a buff still lands on the hero, and an art taken
                     // for a buff by mistake (one that strikes) shows what it does.
                     at_ = aimable ? target->id : 0;
