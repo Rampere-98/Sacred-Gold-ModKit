@@ -355,6 +355,10 @@ namespace
     // behind but when it does not fit). Never further than kLootMaxTiles (a fixed thing's place read wrong put one
     // 3000 tiles off). g_questTravel: the hero is on a trip.
     bool g_questTravel = false;
+    // At the goal of a quest that asks for a kill: the fights around it are sought until then (the bear of DQ_15003,
+    // the wolves' leader of R01NQ01, Gnarf of DQ_15011: the hero stood 2 tiles from the goal and fought only what
+    // struck first; 1 of 8, 2 of 6 and 2 of 6 copies had them done, 2026-11-13).
+    DWORD g_questSeekUntil = 0;
     constexpr double kLootMaxTiles = 60.0;
     // On a trip (a quest's goal, a merchant) the focus is the trip (the player, 2026-11-10: «si pretende hacer quest el
     // foco no es batallar necesariamente»): only loot at hand is taken on the way.
@@ -2830,8 +2834,9 @@ namespace
             // Farming is seeking the enemies (the intent); elsewhere only as the setting says, never on a trip.
         // C8 (docs/Criterios.md): no fight of its choosing under 60 % of health; those that come are fought all the same.
         const bool fitToSeek = !heroObject || heroObject->maxHealth <= 0 || heroObject->health * 100 >= heroObject->maxHealth * 60;
-        const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm) && !Gear::wantsShop() && !g_questTravel &&
-                          fitToSeek;
+        const bool questSeek = g_questSeekUntil && static_cast<int>(GetTickCount() - g_questSeekUntil) < 0;
+        const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm || questSeek) && !Gear::wantsShop() &&
+                          !g_questTravel && fitToSeek;
             if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
@@ -6156,6 +6161,25 @@ namespace
             // At the quest's goal: still the quest, looking around it (not «explore»: the analyst saw the two
             // swapping every second, 172 lines in 10 minutes).
             setIntent(Intent::Quest, "at the quest's goal: looking around it");
+            // By the journal's text, or by the quest's number (docs/QUESTS.md's table, the «matar» rows: the text's
+            // kind is often not told, «sin saber»).
+            static constexpr int32_t kKillQuests[] = {
+                151,   251,   253,   301,   303,   351,   352,   402,   453,   503,   552,   553,   601,   653,
+                701,   703,   751,   752,   802,   851,   1001,  1002,  1051,  1101,  1103,  1201,  1252,  1313,
+                1353,  10250, 10251, 10252, 10253, 10259, 15003, 15007, 15011, 15012, 15013, 15015, 15018, 15020,
+                15024, 15028, 15029, 15030, 15032, 15034, 15038, 15041, 15042, 15043, 15047, 15048, 15050, 15056,
+                15057, 15058, 15059, 15063, 15068, 15073, 15074, 15075, 15076, 15078, 15081, 15082};
+            const bool killByNumber = !g_questBook.empty() && g_questBook.front().kind == GoalKind::Journal &&
+                                      std::find(std::begin(kKillQuests), std::end(kKillQuests), g_questBook.front().number) !=
+                                          std::end(kKillQuests);
+            if (Lore::questKind() == Lore::QuestKind::Kill || killByNumber)
+            {
+                if (!g_questSeekUntil || static_cast<int>(now - g_questSeekUntil) > 60000)
+                {
+                    LOG("AutoAttack: the quest asks for a kill: the fights around its goal are sought");
+                }
+                g_questSeekUntil = now + 8000;
+            }
             // A goal that is never met (docs/Estudio-mejoras.md P1: A5 two hours around 3468,2753, 590 «going to
             // look», 40 experience an hour; the stuck guard saw the hero moving): 6 min around one goal with neither
             // a fight nor the journal moving, and it is left for 30 min, the next goal or the farming instead.
@@ -6427,7 +6451,8 @@ namespace
         }
         bool found = !rethink;
         int32_t bestX = keptX, bestY = keptY;
-        const bool avoidAggro = g_intent != Intent::Farm && !Config::autoAttack.seek && !g_aggroFoes.empty();
+        const bool avoidAggro = g_intent != Intent::Farm && !Config::autoAttack.seek && !g_aggroFoes.empty() &&
+                                !(g_questSeekUntil && static_cast<int>(now - g_questSeekUntil) < 0);
         float aggroCost[16] = {};
         int bestK = -1;
         for (int k = 0; k < 16 && rethink; ++k)
