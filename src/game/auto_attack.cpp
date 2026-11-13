@@ -5648,7 +5648,10 @@ namespace
             // 32-38 tiles out, A7 and A8 for hours), and reached within 2 tiles of it. The zone's wide edge only shut
             // in (the arena behind its gate).
             bool fixedGoal = false;
-            if (!speakTo && !Whereabouts::area().shutIn)
+            // On the surface only: inside a house the tile test does not know the floor, the one tile it calls
+            // reachable is the way in itself, and the hero walked back onto it and out (the player, 2026-11-13: «llegan
+            // a entrar pero salen al momento»; A7 in and out 69 times in half an hour, 2 s inside each).
+            if (!speakTo && !Whereabouts::area().shutIn && layer == 0)
             {
                 int nx = 0, ny = 0;
                 if (Whereabouts::nearestReachable(static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize), nx, ny))
@@ -5731,7 +5734,11 @@ namespace
                 // only shuffles; the reachable tile nearest the target (by the gate, where a script may open the
                 // way), and the rest of the agent's play inside (chests, fights) from there.
                 bool waitShut = false;
-                if (const Whereabouts::Area& where = Whereabouts::area(); where.shutIn)
+                // Not inside a house with the goal at hand (within 20 tiles on a layer other than the surface): there
+                // the goal is in the room, and the «way out» is the door the hero came in by.
+                const bool goalInRoom = layer != 0 && std::hypot(static_cast<double>(qx - self->x),
+                                                                 static_cast<double>(qy - self->y)) <= 20.0 * kTileSize;
+                if (const Whereabouts::Area& where = Whereabouts::area(); where.shutIn && !goalInRoom)
                 {
                     const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
                     int nx = 0, ny = 0;
@@ -5912,7 +5919,7 @@ namespace
             // A fixed destination (no creature): the journal's radius is wide (the arena's 22 tiles) but the script
             // may want the hero much nearer its centre (Manolito, FunkCode op 0x3F: the arena fight starts within 10
             // tiles of 3786,330, a wall). To the reachable tile nearest the centre, then the rest of the play there.
-            if (who == 0xFFFFFFFFu)
+            if (who == 0xFFFFFFFFu && layer == 0)
             {
                 const int gtx = static_cast<int>(qx / kTileSize), gty = static_cast<int>(qy / kTileSize);
                 int nx = 0, ny = 0;
