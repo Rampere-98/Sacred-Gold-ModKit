@@ -34,6 +34,8 @@ El dueño (13-11, 12:50): por ahora **solo cuenta el límite de 5 horas**, no el
 
 - [ ] **Las 8 copias mueren a la vez cada ~31 min, sin guardar** (08:49, 09:21, 11:02, 11:33, 12:05 del 13-11). Descartado: instalaciones, tareas programadas, `vigilante.ps1`, `agentes.sh`, Pulso, `ExitProcess` del mod, falta de memoria. Sospecha: Steam (mismo identificador de juego 12320 en las 8 copias y en el juego del dueño). Mientras dure, ninguna medición de 90 min es válida y las reglas de «6 minutos» casi no llegan a contar.
 - [ ] **Comprobar que no vuelven las 3 caídas del 13-11** (dos al leer sectores del mapa, una en la lista de runas del canje 4:1), corregidas en d2981b2. Mirar los `.dmp` nuevos y el registro de eventos tras 3 horas.
+- [x] **Dos corrupciones de memoria** que encontró el revisor (pila al cargar el mapa, montón en el canje 4:1): corregidas en b02bd72 (13-11).
+- [ ] **Hallazgos abiertos del revisor** en [[Revisiones]]: la auditoría del caballo del 12-11 tiene 5 🔴 sin cerrar (ClickWalk montado, Tactics montado, recoger montado atrapa puertas y cofres, cosas fijas usadas con la orden al caballo, montar sin mirar Equitación) y varios 🟡 (C2/C1 veta al arquero fuerte, C5 veta metas de misión 6-24 h, `CanUse == 6` no hace nada, armadura de caballo perdida si falla el equipar).
 - [ ] **Caída 4502AE del Elfo oscuro en el canje** (modelo de la runa): se reactivó el canje confiando en la protección; vigilar.
 - [ ] **A3 no guardó antes del reinicio** en dos instalaciones: una copia en pelea o con poca vida no llega a guardar en 90 s. Valorar esperar más o guardar al salir de la pelea.
 
