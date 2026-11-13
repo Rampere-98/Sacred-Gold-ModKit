@@ -33,10 +33,15 @@ namespace
         static const wchar_t* const kClasses[] = {L"TYPE_NPC_ELVE",      L"TYPE_NPC_GLADIATOR", L"TYPE_NPC_SERAPHIM",
                                                   L"TYPE_NPC_MAGICIAN",  L"TYPE_NPC_DARKELVE",  L"TYPE_NPC_ZWERG",
                                                   L"TYPE_NPC_DAEMONIN",  L"TYPE_NPC_VAMPIRELADY"};
-        std::vector<char> data;
+        // Every class's DefPos, merged (the stuck solver, 2026-11-13: only the first found was read, the Wood Elf's;
+        // the colosseum's ways out tpstart_g_03/04 are in the Gladiator's alone, and a new Gladiator walked its yard
+        // 66 min with no way out).
+        std::map<std::string, std::pair<int, int>> start, target, in, out;
+        size_t n = 0;
         for (const wchar_t* cls : kClasses)
         {
-            const std::wstring file = gameDir() + L"bin\\" + cls + L"\\DefPos.bin";
+            std::vector<char> data;
+            const std::wstring file = gameDir() + L"bin\\" + cls + L"\DefPos.bin";
             if (FILE* f = _wfopen(file.c_str(), L"rb"))
             {
                 std::fseek(f, 0, SEEK_END);
@@ -46,41 +51,39 @@ namespace
                 const size_t got = std::fread(data.data(), 1, data.size(), f);
                 std::fclose(f);
                 data.resize(got);
-                break;
             }
-        }
-        // Each name, NUL-led, then x and y at +0x40/+0x44 of its record.
-        std::map<std::string, std::pair<int, int>> start, target, in, out;
-        const size_t n = data.size();
-        for (size_t i = 1; i + 0x48 <= n; ++i)
-        {
-            if (data[i - 1] != 0 || data[i] != 't' || data[i + 1] != 'p')
+            n += data.size();
+            // Each name, NUL-led, then x and y at +0x40/+0x44 of its record.
+            for (size_t i = 1; i + 0x48 <= data.size(); ++i)
             {
-                continue;
-            }
-            const size_t len = strnlen(data.data() + i, 0x40);
-            if (len >= 0x40)
-            {
-                continue;
-            }
-            const std::string name(data.data() + i, len);
-            int x = 0, y = 0;
-            std::memcpy(&x, data.data() + i + 0x40, 4);
-            std::memcpy(&y, data.data() + i + 0x44, 4);
-            if (x <= 0 || y <= 0 || x >= 8192 || y >= 8192)
-            {
-                continue;
-            }
-            auto take = [&](const char* prefix, std::map<std::string, std::pair<int, int>>& into) {
-                const size_t p = std::strlen(prefix);
-                if (name.compare(0, p, prefix) == 0)
+                if (data[i - 1] != 0 || data[i] != 't' || data[i + 1] != 'p')
                 {
-                    into[name.substr(p)] = {x, y};
-                    return true;
+                    continue;
                 }
-                return false;
-            };
-            take("tpstart_", start) || take("tptarget_", target) || take("tpreinz", in) || take("tprausz", out);
+                const size_t len = strnlen(data.data() + i, 0x40);
+                if (len >= 0x40)
+                {
+                    continue;
+                }
+                const std::string name(data.data() + i, len);
+                int x = 0, y = 0;
+                std::memcpy(&x, data.data() + i + 0x40, 4);
+                std::memcpy(&y, data.data() + i + 0x44, 4);
+                if (x <= 0 || y <= 0 || x >= 8192 || y >= 8192)
+                {
+                    continue;
+                }
+                auto take = [&](const char* prefix, std::map<std::string, std::pair<int, int>>& into) {
+                    const size_t p = std::strlen(prefix);
+                    if (name.compare(0, p, prefix) == 0)
+                    {
+                        into.emplace(name.substr(p), std::pair{x, y});   // the first class's wins
+                        return true;
+                    }
+                    return false;
+                };
+                take("tpstart_", start) || take("tptarget_", target) || take("tpreinz", in) || take("tprausz", out);
+            }
         }
         for (const auto& [suffix, o] : out)
         {
@@ -94,6 +97,12 @@ namespace
             if (const auto it = target.find(suffix); it != target.end())
             {
                 g_interiors.push_back({it->second.first, it->second.second, s.first, s.second, true});
+            }
+            else
+            {
+                // A way out whose landing has another name (the colosseum's g_03 and g_04 land on g_02): the tile to
+                // step on is known all the same, for the ways out of where the hero is shut in.
+                g_interiors.push_back({0, 0, s.first, s.second, true});
             }
         }
         LOG("Teleports: {} interiors and jumps read ({} bytes of DefPos)", g_interiors.size(), n);
