@@ -354,6 +354,22 @@ namespace
     // All the loot seen is taken before the hero goes on, on a trip too (the player's wish, 2026-11-09: none left
     // behind but when it does not fit). Never further than kLootMaxTiles (a fixed thing's place read wrong put one
     // 3000 tiles off). g_questTravel: the hero is on a trip.
+    // A creature's level as it will be fought (Manolito, block AP, 2026-11-13: cCreature::scaleLevelToHero 0x550E50):
+    // one not yet scaled (no flag 0x200 at +0x1F4, its level 1 or 1000) becomes the hero's level + 2 once it is, so
+    // its «level 1» is no weakling's. The hero's own is read as it is.
+    int scaledLevel(const void* creature)
+    {
+        const auto* c = reinterpret_cast<const uint8_t*>(creature);
+        const int level = *reinterpret_cast<const uint16_t*>(c + 0x3FE);
+        cObjectManager* objects = cObjectManager::instance();
+        const void* hero = objects ? objects->hero() : nullptr;
+        if (!hero || creature == hero || (*reinterpret_cast<const uint32_t*>(c + 0x1F4) & 0x200) || (level != 1 && level != 1000))
+        {
+            return level;
+        }
+        return *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x3FE) + 2;
+    }
+
     bool g_questTravel = false;
     // At the goal of a quest that asks for a kill: the fights around it are sought until then (the bear of DQ_15003,
     // the wolves' leader of R01NQ01, Gnarf of DQ_15011: the hero stood 2 tiles from the goal and fought only what
@@ -2782,8 +2798,7 @@ namespace
             // above the hero's level are sought; a stronger one only once it strikes the hero in the melee.
             if (AgentSave::deathsSinceSave() >= 2 && foeObject && foeObject->asCreature() && heroObject && !current &&
                 !(atHero && d <= melee) &&
-                *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(foeObject) + 0x3FE) >
-                    *reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(heroObject) + 0x3FE))
+                scaledLevel(foeObject) > scaledLevel(heroObject))
             {
                 continue;
             }
@@ -2795,8 +2810,7 @@ namespace
             // afar was never answered).
             if (foeObject && foeObject->asCreature() && heroObject && !current && !engagedFoe)
             {
-                const auto lv = [](const cObject* o)
-                { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(o) + 0x3FE)); };
+                const auto lv = [](const cObject* o) { return scaledLevel(o); };
                 const int fl = lv(foeObject), hl = lv(heroObject);
                 if (fl >= hl + 2 || (hl <= 4 && fl >= hl + 1))
                 {
@@ -6062,8 +6076,7 @@ namespace
             // With no potion only one not clearly weaker is left (the reviewer: a foe far below the hero would hold
             // the quest forever when there is no gold for potions either).
             cCreature* questFoe = npc ? npc->asCreature() : nullptr;
-            const auto levelOf = [](const cCreature* c)
-            { return static_cast<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(c) + 0x3FE)); };
+            const auto levelOf = [](const cCreature* c) { return scaledLevel(c); };
             // Nor into a fight foreseen under 30 % to win (the live verifier, 2026-11-11: attacked at 8 % among six).
             const CombatLearn::Forecast& questFc = CombatLearn::forecast();
             const bool questLost = questFc.foes > 0 && questFc.win < 0.3f;
