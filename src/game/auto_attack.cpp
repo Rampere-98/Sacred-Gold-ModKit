@@ -1776,7 +1776,12 @@ namespace
         // saddle's quicker blows end anyway.
         else if (mounted && hardOnFoot && now - s_at > 1500)
         {
-            LOG("AutoAttack: {} enemies near and arts barred on horseback: fighting on foot", close);
+            static DWORD s_barredToldAt = 0;
+            if (now - s_barredToldAt > 30000)
+            {
+                s_barredToldAt = now;
+                LOG("AutoAttack: {} enemies near and arts barred on horseback: fighting on foot", close);
+            }
             code = 0x20A;
         }
         // Off events the game does not act on (A6 2026-11-12 20:03-20:08: «getting off» each 1.5 s for 5 min, the mount
@@ -3320,11 +3325,16 @@ namespace
         if (begin && end > begin && !((end - begin) % kRecord) && (end - begin) / kRecord <= 512)
         {
             int done = 0, failed = 0;
+            std::vector<int32_t> failedNumbers;
             for (const uint8_t* r = begin; r < end; r += kRecord)
             {
                 const int32_t kind = *reinterpret_cast<const int32_t*>(r), state = *reinterpret_cast<const int32_t*>(r + 4);
                 done += state == 100;
                 failed += state == 101;
+                if (state == 101)
+                {
+                    failedNumbers.push_back(*reinterpret_cast<const int32_t*>(r + 0x08));
+                }
                 if (state != 1 && state != 2)
                 {
                     continue;
@@ -3375,9 +3385,31 @@ namespace
                         g_givenUpQuests.push_back(g_followedNumber);
                         LOG("AutoAttack: quest {} failed while followed: left for this run", g_followedNumber);
                     }
-                    LOG("AutoAttack: a quest failed ({} failed now): as a death, the last save loaded", failed);
-                    remember("falló una misión: cuenta como muerte");
-                    AgentSave::questFailed();
+                    // A quest's failure is paid for once (the live verifier, 2026-11-13: A7's quest with a deadline
+                    // failed 3-7 min after every load, 30 failures and 14 «deaths» in 45 min, its level 11 save set
+                    // aside and a new game begun): one that failed before in this run fails again after the load,
+                    // and is let be, as a player does not load his game for a quest he cannot make in time.
+                    static std::vector<int32_t> s_paid;
+                    bool fresh = false;
+                    for (const int32_t number : failedNumbers)
+                    {
+                        if (std::find(s_paid.begin(), s_paid.end(), number) == s_paid.end())
+                        {
+                            s_paid.push_back(number);
+                            fresh = true;
+                        }
+                    }
+                    if (!fresh && !failedNumbers.empty())
+                    {
+                        LOG("AutoAttack: a quest failed again after the load ({} failed now): not counted again, left failed",
+                            failed);
+                    }
+                    else
+                    {
+                        LOG("AutoAttack: a quest failed ({} failed now): as a death, the last save loaded", failed);
+                        remember("falló una misión: cuenta como muerte");
+                        AgentSave::questFailed();
+                    }
                 }
                 Findings::note("quest", heroX, heroY, "the journal moved on: {} done, {} failed", done, failed);
                 forgetTalks();
