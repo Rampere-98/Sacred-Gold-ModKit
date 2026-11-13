@@ -5628,6 +5628,10 @@ namespace
                 static DWORD s_escortWalkSince = 0, s_escortWaitUntil = 0;
                 if (Lore::questKind() == Lore::QuestKind::Escort)
                 {
+                    // An escort is walked, never ridden (the web researcher, 2026-11-13, CobaltBlu's guide: Adelina,
+                    // 210 health and no fight in her, is set upon at once when her horse is mounted; the one escorted
+                    // walks anyway).
+                    g_onFootUntil = now + 15000;
                     if (s_escortWaitUntil && static_cast<int>(now - s_escortWaitUntil) < 0)
                     {
                         MapMemory::setRoute(true, qx, qy);

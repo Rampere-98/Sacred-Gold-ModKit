@@ -62,13 +62,13 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 | ¿Dónde está el herrero? (154) | 1/5 | se para en un paso intermedio (lobos o espada del jefe goblin) | **sin arreglar**: registrar el texto del objetivo en cada paso |
 | Ojos de lobo (151) | 2/4 | jefe en un claro junto a la meta | ronda de 25 casillas por comprobar |
 | Trágica pérdida (15011) | 2/4 | jefe al que se llega por el oeste; puerta o edificio | ronda de 25 por comprobar; puede faltar la ruta |
-| Adelina (201) | 2/3, 1 fallada | la escoltada muere (13 lobos, no lucha) | **sin arreglar**: limpiar el camino antes de recogerla, ir despacio, no montar su caballo |
+| Adelina (201) | 2/3, 1 fallada | la escoltada muere; los 13 lobos están a la ida, la vuelta va limpia; montar su caballo saca 3 lobos más | escolta siempre a pie (por instalar); falta matar a los 13 lobos antes de hacerle clic y curarla (tecla B) |
 | Mensaje del mercader (10258), 44, 31 | 0/3, 0/3, 0/2 | zona de nivel 25 | aparcadas hasta tener nivel; no es fallo |
 
 - [ ] **Misiones sin coger**: comparar el diario con las 251 de [[QUESTS]] por región visitada, para saber cuáles no se han aceptado nunca.
 - [ ] **Poner nombre a los números 9, 20, 31, 43, 44** (hace falta la clave de texto `+0x24` del registro contra `global.res`; por la web no sale).
 - [ ] **Bloqueo del final de campaña**: hoy solo cuenta las misiones que el agente ha visto. Falta compararlo con la lista completa, y cubrir el jefe final de Underworld (Anducar).
-- [ ] **PNJ de misión por dirección**: `0x54FBC0` (decide el icono de misión de un PNJ, de Manolito, sin verificar) para saber quién da o cierra cada misión.
+- [ ] **PNJ de misión por dirección** (Manolito, estático): no hace falta llamar a `0x54FBC0`; cada criatura lleva su misión en `+0x245` y las marcas de icono en `+0x200` (bits 8/9 y 12-14/26). Usarlo para saber quién da o cierra cada misión.
 - [ ] **Vampiresa: puerta del cementerio** para coger su misión (pendiente desde el 11-11).
 - [ ] **Vaivén entre objetivos de misión** (histéresis, visto en el Daemon el 11-11).
 - [ ] Verificar en vivo: vacas (303) y Susurros (302) ya salen en 4 copias; abandono de misión fallada mientras se sigue.
@@ -87,13 +87,13 @@ Medir con `python -I docs/Misiones-medir.py` (lee el diario de las 8 copias). Pa
 
 Hecho: tablas de habilidades y atributos, arte de pánico, tope de enemigos, Mago a distancia, tope de Weapon Lore, caballo desde nivel 4, buffs al abrir, pociones extra.
 
-- [ ] Plantillas de combo por clase y segundo combo (`comboArts`).
+- [ ] Plantillas de combo por clase y segundo combo (`comboArts`): **tabla lista** en [[WEB_RESEARCH]] §22.3 (4× solo artes instantáneas; las de «lanzar y controlar» al final; no se inicia a caballo; nivel mínimo ≈ 7). Falta el id de «Cuchillas rotatorias» de la Serafín.
 - [ ] Armadura puntuada por resistencia dominante (§1.5).
 - [ ] Leer runas ajenas de artes compartidas.
 - [ ] Artes de escape y formas (Transformación 0x24, formas del Daemon).
 - [ ] Vampiresa de día y de noche (leer el reloj del juego).
 - [ ] Serafín: abrir con hechizo a 5-6 casillas y luego cuerpo a cuerpo.
-- [ ] Caballos gratis (Light Nag en Porto Vallum y otros) antes de pagar.
+- [ ] Caballos gratis antes de pagar: lugares en [[WEB_RESEARCH]] §24 (Crow's Rock, NE de Mascarell, Florentina, Timberton, Gloomoor…), sin coordenadas: localizarlos en vivo y ver cómo se cogen.
 - [ ] Enano: comprar un arma a distancia.
 - [ ] Verificar en vivo: arma de fuego en la mano correcta, runas de la Vampiresa, canje 4:1 (visto 3 veces), compra de antídoto, Mentor y concentración (vista 1 vez).
 - [ ] Etiqueta del registro «sin saber aún» en artes que sí están en la tabla (solo cosmético).
