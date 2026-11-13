@@ -1075,19 +1075,23 @@ namespace
                             ((ty - sector->originY) * 64 + (tx - sector->originX)) * 0x20;
             const uint8_t flags = t[0x1E], type = t[0x1F];
             const int8_t dx = static_cast<int8_t>(t[0x1C]), dy = static_cast<int8_t>(t[0x1D]);
-            // Water by the game's own tests (Manolito, static, 2026-11-13): the walker 0x4EBCA0 bars low nibble 1
-            // (blocked) and 2 (deep water, but for water creatures); 0x54FFC0 says «in water» for the ground classes
-            // (high nibble) 6, 9 and 0xA; WideSectors draws water for 9. 0xA is the lava of the fire regions. Class 3
-            // is NOT water (it was painted so on a guess for a few hours).
+            // The tile's type, low nibble (Manolito, block AU, 2026-11-13, live on two copies; it corrects blocks AM
+            // and AR): 1 a tall or solid obstacle (a house's pieces, trees, crags), which stops sight and projectiles;
+            // 2 a low one, not walked on but a projectile goes over (0x636D20: «walkable or type 2»): water where the
+            // ground class (high nibble) is 6, 9 or 0xA, else a bush, a small rock, a lath fence. 0xA is the lava of
+            // the fire regions.
             const int ground = type >> 4, low = type & 0xF;
-            const bool liquid = low == 2 || ground == 9 || ground == 10;
+            const bool liquid = ground == 9 || ground == 10 || ground == 6;
             const int liquidKind = ground == 10 ? static_cast<int>(ClickWalk::TileKind::Lava)
                                                 : static_cast<int>(ClickWalk::TileKind::Water);
-            if (low == 1 || low == 2 || (flags & 8))
+            if (low == 2)
             {
-                return liquid       ? liquidKind
-                       : (dx || dy) ? static_cast<int>(ClickWalk::TileKind::Building)
-                                    : static_cast<int>(ClickWalk::TileKind::Obstacle);
+                return liquid ? liquidKind : static_cast<int>(ClickWalk::TileKind::Low);
+            }
+            if (low == 1 || (flags & 8))
+            {
+                return (dx || dy) ? static_cast<int>(ClickWalk::TileKind::Building)
+                                  : static_cast<int>(ClickWalk::TileKind::Obstacle);
             }
             if (!(flags & 4))
             {

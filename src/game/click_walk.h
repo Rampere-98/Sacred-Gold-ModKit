@@ -56,6 +56,9 @@ namespace ClickWalk
         GateShut = 7,
         BarrierOpen = 8,
         BarrierShut = 9,
+        // A low obstacle (the tile's type, low nibble 2, with no water under it: a bush, a small rock, a lath fence;
+        // Manolito, block AU, 2026-11-13, live): not walked on, but a projectile goes over and it is seen across.
+        Low = 10,
     };
     // -1 when not known (the sector not loaded and no world file for it). Bit 0x10 over the kind: the tile's +0x1E
     // bit 2, the safe zone of a settlement (Manolito, static, 2026-11-13: 0x4D4DA0 shields players and friends in

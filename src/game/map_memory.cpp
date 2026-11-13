@@ -508,7 +508,9 @@ namespace
     // at (Cell::sure). Hearing: an enemy not seen sounds, the less the farther and the more walls between; a sound
     // clears the noise about it for a while. All under g_lock.
     constexpr int kSight = 24, kSightSide = 2 * kSight + 1;
-    uint8_t g_seenNow[kSightSide * kSightSide] = {};    // 1: in sight at the last pass, around g_seenTx, g_seenTy
+    // In sight at the last pass, around g_seenTx, g_seenTy: 1 in the open, 2 across a low obstacle (a bush, a fence:
+    // «lo que tiene huecos tendrá ruido mediano», the player, 2026-11-13).
+    uint8_t g_seenNow[kSightSide * kSightSide] = {};
     int g_seenLayer = -1, g_seenTx = 0, g_seenTy = 0, g_seenCount = 0;
     DWORD g_seenAt = 0;
     unsigned g_seenPass = 0;
@@ -528,11 +530,16 @@ namespace
         return kind == 4 || kind == 5 || kind == 7 || kind == 9;
     }
 
-    bool seenNow(int layer, int tx, int ty)
+    int seenLevel(int layer, int tx, int ty)
     {
         const int ix = tx - g_seenTx + kSight, iy = ty - g_seenTy + kSight;
-        return layer == g_seenLayer && ix >= 0 && iy >= 0 && ix < kSightSide && iy < kSightSide &&
-               g_seenNow[iy * kSightSide + ix] != 0;
+        return layer == g_seenLayer && ix >= 0 && iy >= 0 && ix < kSightSide && iy < kSightSide ? g_seenNow[iy * kSightSide + ix]
+                                                                                              : 0;
+    }
+
+    bool seenNow(int layer, int tx, int ty)
+    {
+        return seenLevel(layer, tx, ty) != 0;
     }
 
     // Walls on the straight line between two tiles (the ends not counted).
@@ -569,6 +576,7 @@ namespace
         const auto ray = [&](int ex, int ey) {
             const int steps = std::max(std::abs(ex), std::abs(ey));
             int throughDoor = 0;
+            bool acrossLow = false;
             for (int i = 1; i <= steps; ++i)
             {
                 const int dx = ex * i / steps, dy = ey * i / steps;
@@ -576,9 +584,14 @@ namespace
                 {
                     break;
                 }
-                g_seenNow[(dy + kSight) * kSightSide + dx + kSight] = 1;
+                uint8_t& seen = g_seenNow[(dy + kSight) * kSightSide + dx + kSight];
+                seen = acrossLow ? (seen == 1 ? uint8_t{1} : uint8_t{2}) : uint8_t{1};
                 const Cell* c = find(layer, tx + dx, ty + dy);
                 const int kind = c ? c->kind & 0xF : 0;
+                if (kind == 10)
+                {
+                    acrossLow = true;   // what lies beyond is seen with some noise
+                }
                 if (kind == 6)
                 {
                     throughDoor = 8;
@@ -628,9 +641,14 @@ namespace
     // for a while by a sound near it.
     int certainty(int layer, int tx, int ty, const Cell& c, DWORD now)
     {
-        if (seenNow(layer, tx, ty))
+        const int level = seenLevel(layer, tx, ty);
+        if (level == 1)
         {
             return 255;
+        }
+        if (level == 2)
+        {
+            return std::max(150, static_cast<int>(c.sure));
         }
         if (!c.sure)
         {
@@ -729,6 +747,10 @@ namespace
                         // Walkable by the game's tile test, not walked yet: dim, ground colour if sampled.
                         dl->AddQuadFilled(n, e, so, w, c.samples ? (shown(c) & 0x00FFFFFF) | 0x80000000
                                                                  : IM_COL32(52, 58, 66, 255));
+                    }
+                    else if ((c.kind & 0xF) == 10)
+                    {
+                        dl->AddQuadFilled(n, e, so, w, IM_COL32(96, 104, 50, 255));    // a low obstacle: olive
                     }
                     else if ((c.kind & 0xF) >= 2 && (c.kind & 0xF) <= 9 && (c.kind & 0xF) != 8)
                     {
