@@ -455,6 +455,7 @@ namespace
     // 14 min in a merchant's house, a Seraphim 10 min in a cave: each door click overridden 0.13-3.6 s later by the
     // roam's, the quest's or the shop's own walk, the door never reached).
     DWORD g_doorHoldUntil = 0;
+    DWORD g_entranceHoldUntil = 0;  // on the way to a house's way in: no chest takes the walk over meanwhile
     DWORD g_craftHoldUntil = 0;     // by a craftsman until then: the roam and the stray dialog's Enter wait
     float g_doorRange = 12.0f * 53.66563f;
 
@@ -3468,7 +3469,9 @@ namespace
                 g.distance *= 2.5;
             }
         }
-        std::stable_sort(g_questBook.begin(), g_questBook.end(), [](const QuestGoal& a, const QuestGoal& b) {
+        static DWORD s_followedSince = 0;
+        const bool keepFollowed = s_followed && s_followedSince && now - s_followedSince < 120000;
+        std::stable_sort(g_questBook.begin(), g_questBook.end(), [keepFollowed](const QuestGoal& a, const QuestGoal& b) {
             if (a.blocked != b.blocked)
             {
                 return !a.blocked;
@@ -3483,6 +3486,17 @@ namespace
             {
                 return a.minutesLeft < b.minutesLeft;
             }
+            // The goal followed is kept 2 min among those of its weight (the stuck solver, 2026-11-13: the bear's
+            // quest chosen at 49 tiles and dropped 5-11 s on for a nearer one, every time; no copy reached its goal).
+            if (keepFollowed)
+            {
+                const bool ak = (a.who ^ static_cast<uint32_t>(a.x) ^ (static_cast<uint32_t>(a.y) << 7)) == s_followed;
+                const bool bk = (b.who ^ static_cast<uint32_t>(b.x) ^ (static_cast<uint32_t>(b.y) << 7)) == s_followed;
+                if (ak != bk)
+                {
+                    return ak;
+                }
+            }
             return a.distance < b.distance;
         });
         if (g_questBook.empty() || g_questBook.front().blocked)
@@ -3490,6 +3504,11 @@ namespace
             return false;
         }
         const QuestGoal& g = g_questBook.front();
+        if (const uint32_t followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
+            followed != s_followed || !s_followedSince || now - s_followedSince > 600000)
+        {
+            s_followedSince = now;
+        }
         s_followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
         g_followedNumber = g.kind == GoalKind::Journal ? g.number : 0;
         x = g.x;
@@ -4514,6 +4533,11 @@ namespace
         const int layer = *(reinterpret_cast<const uint8_t*>(self) + 0x24);
         const int gx = static_cast<int>(x / kTileSize), gy = static_cast<int>(y / kTileSize);
         const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
+        // Only from near the goal (the stuck solver, 2026-11-13: fired 50 tiles off and on horseback, A1).
+        if (std::hypot(gx - htx, gy - hty) > 25.0)
+        {
+            return false;
+        }
         std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10);
         for (const Teleports::Interior& in : Teleports::interiors())
         {
@@ -4569,6 +4593,7 @@ namespace
         // The order held 20 s: the roam's travel to the goal took it over within 10 s and the hero never reached the
         // way in (the solver's fix L, 2026-11-12: A2, A3, A4).
         g_doorHoldUntil = now + 20000;
+        g_entranceHoldUntil = now + 20000;
         return true;
     }
 
@@ -5817,7 +5842,15 @@ namespace
                         s_noWayTimes = 1;
                         s_noWayFirst = now;
                     }
-                    else if (++s_noWayTimes >= 3)
+                    else if (++s_noWayTimes >= 3 && entranceNearGoal(now, self, gx, gy))
+                    {
+                        // A way in near it (a house's stairs mark): that first (A2 left the Messenger's goal
+                        // 3174,2794 20 min with the mark at 3171,2797 never tried).
+                        s_noWayTimes = 0;
+                        g_roamAt = now;
+                        return;
+                    }
+                    else if (s_noWayTimes >= 3)
                     {
                         g_travelBlocked[key] = now + 1200000;
                         g_travelBlocked[(static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
@@ -6053,7 +6086,35 @@ namespace
                 }
                 if (!g_talkAt || now - g_talkAt > 4000)
                 {
-                    if (++g_talkTries > 6)
+                    // Not a word with enemies about it (the stuck solver, 2026-11-13: the blacksmith of R01NQ04 among
+                    // wolves and goblins, six tries again and again while the agent kept clear of them): they first.
+                    const AggroFoe* nearFoe = nullptr;
+                    if (g_talkTries >= 3)
+                    {
+                        for (const AggroFoe& f : g_aggroFoes)
+                        {
+                            if (std::hypot(static_cast<double>(f.x - npc->x), static_cast<double>(f.y - npc->y)) < 12.0 * kTileSize)
+                            {
+                                nearFoe = &f;
+                                break;
+                            }
+                        }
+                    }
+                    if (nearFoe)
+                    {
+                        static DWORD s_toldAt = 0;
+                        if (now - s_toldAt > 30000)
+                        {
+                            s_toldAt = now;
+                            LOG("AutoAttack: quest creature {:x} does not speak with enemies about it: {:x} fought first", who,
+                                nearFoe->id);
+                        }
+                        g_talkTries = 0;
+                        g_talkAt = now;
+                        g_questSeekUntil = now + 30000;
+                        attack(nearFoe->id);
+                    }
+                    else if (++g_talkTries > 6)
                     {
                         const int times = ++g_talkFails[who];
                         LOG("AutoAttack: quest creature {:x} would not speak (time {}), left {}", who, times,
@@ -6078,7 +6139,7 @@ namespace
         // A chest not yet opened within 150 tiles: there (the collect opens it once it is near). Given up after 90 s
         // on the way to one (behind a wall, across water).
         if (Config::autoAttack.pickup && Config::autoAttack.chests && layer == 0 && g_chestId &&
-            (!questHere || g_chestBest < 40.0 * kTileSize))
+            static_cast<int>(now - g_entranceHoldUntil) >= 0 && (!questHere || g_chestBest < 40.0 * kTileSize))
         {
             // The time on one chest adds up across switches: seen live (2026-11-09), the quest and a chest 35 tiles
             // off took turns at the 40-tile line for minutes, each turn starting the 90 s again.
