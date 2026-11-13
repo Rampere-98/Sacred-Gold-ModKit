@@ -3470,7 +3470,9 @@ namespace
             }
         }
         static DWORD s_followedSince = 0;
-        const bool keepFollowed = s_followed && s_followedSince && now - s_followedSince < 120000;
+        // 5 min, not 2 (2026-11-13: goals 117-141 tiles off chosen and dropped on the way; no copy reached the Pay
+        // Book's door in an hour).
+        const bool keepFollowed = s_followed && s_followedSince && now - s_followedSince < 300000;
         std::stable_sort(g_questBook.begin(), g_questBook.end(), [keepFollowed](const QuestGoal& a, const QuestGoal& b) {
             if (a.blocked != b.blocked)
             {
@@ -5661,7 +5663,10 @@ namespace
             const uint64_t goalKey = (static_cast<uint64_t>(static_cast<uint32_t>(qx / kTileSize)) << 32) |
                                      static_cast<uint32_t>(qy / kTileSize);
             double there = zone ? qr + 10.0 * kTileSize
-                                : speakTo ? std::min(std::max(qr, 6.0 * kTileSize), 6.0 * kTileSize)
+                                // Inside a house or cave (another layer) from 15 tiles: the room is small, and the
+                                // walk to the creature's tile led back out by the door (A1 2026-11-13, the Messenger's
+                                // contact 6 tiles off inside: in, a walk, out, in again every 10 s for an hour).
+                                : speakTo ? (layer != 0 ? 15.0 : 6.0) * kTileSize
                                           : fixedGoal ? std::min(qr, 2.0 * kTileSize) : qr;
             if (!speakTo && !zone)
             {
