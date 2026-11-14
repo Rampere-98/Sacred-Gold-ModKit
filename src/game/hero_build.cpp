@@ -419,7 +419,7 @@ namespace
         {10, 1, 14, 12, 25, 2, 11},     // seraphim: constitution, heavenly magic, magic lore, meditation
         {2, 25, 10, 11, 8, 9, 4},       // gladiator: weapon lore, concentration, constitution, armour, agility, parry
         {14, 12, 15, 10, 17, 8, 9},     // battle mage: magic lore, meditation, fire, constitution, earth
-        {2, 25, 10, 11, 6, 8, 9},       // dark elf
+        {2, 25, 6, 27, 10, 11, 26},     // dark elf: D1's universalist, dual wield, trap lore, constitution, armour, ballistics
         {7, 2, 10, 11, 25, 19, 8},      // wood elf: long range, weapon lore, constitution, armour
         {2, 20, 10, 25, 11, 28, 5},     // vampiress: weapon lore, vampirism, constitution
         {2, 20, 10, 25, 11, 28, 5},
@@ -463,7 +463,7 @@ namespace
         {2, 2, 1, 3, 3, 0},     // seraphim
         {3, 2, 1, 3, 0, 0},     // gladiator
         {0, 2, 1, 1, 5, 0},     // battle mage
-        {2, 2, 1, 4, 0, 0},     // dark elf
+        {0, 0, 0, 1, 0, 0},     // dark elf: all to physical regeneration (D1: both timers, moves and traps, run on it)
         {0, 2, 3, 3, 0, 0},     // wood elf
         {4, 2, 1, 2, 0, 0},     // vampiress
         {4, 2, 1, 2, 0, 0},     // vampiress (other form)
