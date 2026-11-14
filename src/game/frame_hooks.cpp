@@ -32,6 +32,7 @@
 
 #include <windows.h>
 #include "input/inject.h"
+#include "game/cheats.h"
 #include <intrin.h>
 #include <algorithm>
 #include <cmath>
@@ -222,6 +223,8 @@ namespace
         try
         {
             GrannyAsync::onFrame();
+            stage = "Cheats";
+            Cheats::onFrame();
             stage = "EngineCalls";
             Inject::drainEngine();
             stage = "GrannyParallel";

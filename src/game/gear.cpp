@@ -1,6 +1,7 @@
 #include "mind.h"
 #include "hero_profile.h"
 #include "game/act.h"
+#include "game/cheats.h"
 #include "game/aim_assist.h"
 #include "game/auto_attack.h"
 #include "game/gear.h"
@@ -2666,8 +2667,8 @@ namespace
         if (hero && inv && pack && hero->health > 0)
         {
             closeLeftOpen(hero);
-            // A laboratory copy's gold never runs out (Act::laboratory: A7 and A8 only), by the game's own addGold.
-            if (Act::laboratory())
+            // A laboratory copy's gold never runs out (Cheats: its own switch), by the game's own addGold.
+            if (Cheats::on(Cheats::Id::GoldNoEnd))
             {
                 const uint32_t have = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
                 if (have < 500000)
