@@ -59,6 +59,7 @@ namespace
     std::atomic<bool> g_stop{false};
     std::atomic<DWORD> g_stopCheckedAt{0};
     bool g_copy = false;        // a training copy (SacredA<n>)
+    bool g_lab = false;         // a laboratory copy: SacredA7 or SacredA8 with [Instance] Rol=Laboratorio
     std::wstring g_dir;         // the exe's folder, with the last slash
 
     constexpr DWORD kGrantMs = 30000;       // a «do it» of the player's lasts this long
@@ -226,10 +227,24 @@ void Act::install()
             g_mode[i].store(static_cast<unsigned char>(m));
             autos += m == 2;
         }
+        wchar_t role[32] = {};
+        GetPrivateProfileStringW(L"Instance", L"Rol", L"", role, 32, ini.c_str());
+        const wchar_t last = g_dir.size() >= 2 ? g_dir[g_dir.size() - 2] : L'0';
+        g_lab = g_copy && (last == L'7' || last == L'8') && _wcsicmp(role, L"Laboratorio") == 0;
+        if (g_lab)
+        {
+            LOG("Act: a laboratory copy (Rol=Laboratorio): gold without end");
+        }
         LOG("Act: permissions read ({} of {} on Auto; {})", autos, kCount,
             g_copy ? "a training copy" : "the player's folder: No unless set");
         ModkitMenu::add({"Permisos del agente", &drawMenu, &saveMenu});
     });
+}
+
+bool Act::laboratory()
+{
+    install();
+    return g_lab;
 }
 
 Act::Mode Act::mode(Kind kind)

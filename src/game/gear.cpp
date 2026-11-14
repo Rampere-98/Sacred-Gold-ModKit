@@ -2637,6 +2637,16 @@ namespace
         if (hero && inv && pack && hero->health > 0)
         {
             closeLeftOpen(hero);
+            // A laboratory copy's gold never runs out (Act::laboratory: A7 and A8 only), by the game's own addGold.
+            if (Act::laboratory())
+            {
+                const uint32_t have = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
+                if (have < 500000)
+                {
+                    fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, static_cast<int>(1000000 - have));
+                    LOG("Gear: the laboratory's gold topped up ({} -> 1000000)", have);
+                }
+            }
             if (Act::automatic(Act::Kind::PickUp))
             {
                 stashHeld(pack);

@@ -52,6 +52,11 @@ namespace Act
     // True when nothing at all is allowed (the stop file, or every kind at No): the parts may skip their work.
     bool nothing();
 
+    // A laboratory copy (the player, 2026-11-14: A7 and A8 with every advantage, gold without end, for trying
+    // farming, the economy and the quests): [Instance] Rol=Laboratorio in the ini of a copy SacredA7 or SacredA8,
+    // and nowhere else. Never true in the player's own folder.
+    bool laboratory();
+
     Mode mode(Kind kind);
     const char* name(Kind kind);    // the ini key, English
 
