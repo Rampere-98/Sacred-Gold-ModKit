@@ -3534,17 +3534,23 @@ namespace
         static DWORD s_followedSince = 0;
         // 5 min, not 2 (2026-11-13: goals 117-141 tiles off chosen and dropped on the way; no copy reached the Pay
         // Book's door in an hour).
-        const bool keepFollowed = s_followed && s_followedSince && now - s_followedSince < 300000;
+        // And kept on while the hero gets nearer to it, up to half an hour, whatever the others' weight but a
+        // deadline's (the stuck solver, 2026-11-14: A5 changed its goal 13 times in 18 min among four far ones, 147
+        // to 1244 tiles off, each change a new journey; its experience an hour fell from 28 963 to 3 895).
+        static DWORD s_followedFirst = 0;
+        static double s_followedBest = 0.0;
+        const bool keepFollowed = s_followed && s_followedSince && now - s_followedSince < 300000 &&
+                                  now - s_followedFirst < 1800000;
         std::stable_sort(g_questBook.begin(), g_questBook.end(), [keepFollowed](const QuestGoal& a, const QuestGoal& b) {
             if (a.blocked != b.blocked)
             {
                 return !a.blocked;
             }
-            // The quests first by their weight (QUESTS.md and the deadlines), then the nearest: one with a
-            // deadline running, the soonest first; one that is lost if left; the rest; those for last.
-            if (a.tier != b.tier)
+            // A deadline running first, the soonest; then the goal followed; then by weight (QUESTS.md: one that
+            // is lost if left, the rest, those for last); then the nearest.
+            if ((a.tier == 2) != (b.tier == 2))
             {
-                return a.tier > b.tier;
+                return a.tier == 2;
             }
             if (a.tier == 2 && a.minutesLeft != b.minutesLeft)
             {
@@ -3561,6 +3567,10 @@ namespace
                     return ak;
                 }
             }
+            if (a.tier != b.tier)
+            {
+                return a.tier > b.tier;
+            }
             return a.distance < b.distance;
         });
         if (g_questBook.empty() || g_questBook.front().blocked)
@@ -3571,6 +3581,13 @@ namespace
         if (const uint32_t followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
             followed != s_followed || !s_followedSince || now - s_followedSince > 600000)
         {
+            s_followedSince = now;
+            s_followedFirst = now;
+            s_followedBest = g.distance;
+        }
+        else if (g.distance < s_followedBest - 10.0 * kTileSize)
+        {
+            s_followedBest = g.distance;    // nearer by 10 tiles: its five minutes begin again
             s_followedSince = now;
         }
         s_followed = g.who ^ static_cast<uint32_t>(g.x) ^ (static_cast<uint32_t>(g.y) << 7);
