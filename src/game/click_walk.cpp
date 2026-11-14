@@ -1166,9 +1166,13 @@ namespace
     }
 }
 
-int ClickWalk::tileKind(int layer, int tx, int ty)
+int ClickWalk::tileKind(int layer, int tx, int ty, bool liveOnly)
 {
     const auto fromFiles = [&] {
+        if (liveOnly)
+        {
+            return -1;
+        }
         // No sector there (outside the world) is not known, not an obstacle (the stuck solver, 2026-11-13).
         if (WorldTiles::ground(layer, tx, ty) < 0)
         {

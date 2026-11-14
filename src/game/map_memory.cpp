@@ -1440,16 +1440,11 @@ namespace
                 continue;   // stood on: walkable for good
             }
             --budget;
-            const int kind = ClickWalk::tileKind(layer, sx, sy);
+            const int kind = ClickWalk::tileKind(layer, sx, sy, true);
             if (kind > 0 && (kind & 0xF) < 10)
             {
                 ++g_kindSeen[kind & 0xF];
                 g_indoorSeen += (kind & ClickWalk::kIndoors) != 0;
-                if ((kind & 0xF) == 5)
-                {
-                    const int ground = ClickWalk::tileGround(layer, sx, sy);
-                    ++g_obstacleGround[ground < 0 ? 16 : ground & 0xF];
-                }
             }
             const uint8_t now = ClickWalk::kindWalkable(kind) ? 1 : 2;
             if (kind > 0 && (!c || c->scan != now || c->kind != kind))

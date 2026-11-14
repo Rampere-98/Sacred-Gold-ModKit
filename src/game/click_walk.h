@@ -65,7 +65,9 @@ namespace ClickWalk
     // it, FillRegion spawns no creatures there). Not «under a roof»: what hides a roof is not found yet. The name
     // kIndoors is from the first guess.
     constexpr int kIndoors = 0x10;
-    int tileKind(int layer, int tx, int ty);
+    // `liveOnly`: -1 where the tile's sector is not loaded, the world files not read (the map's scan on the
+    // presenting thread: the files' lock is the route search's too, and the frame waited on it for seconds).
+    int tileKind(int layer, int tx, int ty, bool liveOnly = false);
     // The tile's ground class (its +0x1F high 4 bits), -1 when its sector is not loaded: for the scan's log.
     int tileGround(int layer, int tx, int ty);
     inline bool kindWalkable(int kind)
