@@ -557,8 +557,20 @@ void AgentSave::onFrame()
         LOG("AgentSave: a quest done, but the hero died since the last save: not saved");
         return;
     }
-    if (health <= 0 || CombatLearn::forecast().foes > 0 || !canSave())
+    // A fight foreseen holds the save, but not for ever: wanted for 3 minutes, the distance to the nearest enemy
+    // below decides alone (A4, 2026-11-14: due twice in 40 min, 164 targets, never saved and not a word why).
+    const bool patient = now - s_wantedSince > 180000;
+    const int foes = CombatLearn::forecast().foes;
+    const bool allowed = canSave();
+    if (health <= 0 || (foes > 0 && !patient) || !allowed)
     {
+        static DWORD s_heldToldAt = 0;
+        if (now - s_heldToldAt > 60000)
+        {
+            s_heldToldAt = now;
+            LOG("AgentSave: the save waits ({})", health <= 0 ? "the hero is down" : !allowed ? "the game does not allow it now"
+                                                                                           : "a fight under way");
+        }
         return;
     }
     // Not where enemies stand about, nor hurt (the live verifier, 2026-11-11: A1 saved beside a group and died 5 times
