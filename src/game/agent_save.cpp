@@ -1,4 +1,5 @@
 #include "game/agent_save.h"
+#include "game/act.h"
 
 #include <cstdlib>
 #include <atomic>
@@ -367,6 +368,12 @@ void AgentSave::onFrame()
     if (g_slot < 0)
     {
         findSlot();
+    }
+    // Saving and loading in the game are the player's unless he allows them (the menu's start is AutoStart's).
+    if (!Act::automatic(Act::Kind::SaveLoad))
+    {
+        g_reloadWanted = false;
+        return;
     }
     if (g_slot <= 0)
     {

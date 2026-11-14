@@ -108,6 +108,12 @@ namespace
     constexpr size_t kStats = 0x3A8;
     constexpr size_t kGold = kStats + 0x46;
     std::unordered_map<uint32_t, DWORD> g_takenOff;   // items taken off by an upgrade: when (game thread only)
+    // Against the gear swinging (the player's game, 2026-11-13: two items took each other's place in slot 17 every
+    // 1.5 s for 13 minutes, 368 times; one sold for 2 316 and bought back 6 s later for 11 242): an item taken off is
+    // not put on again for 10 minutes, one sold is never bought back, one bought is not sold for an hour.
+    std::unordered_map<uint32_t, DWORD> g_noPutOn, g_bought;
+    std::unordered_set<uint32_t> g_sold;
+    bool merchantTakes(uint32_t type);
     constexpr size_t kItemType = 0x10;
     constexpr size_t kItemFlags = 0x14;
     constexpr uint32_t kQuestItem = 0x800;
@@ -330,6 +336,38 @@ namespace
         return o ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(o) + kItemFlags) : 0;
     }
 
+    // A weapon that takes both hands, by the game's own test (Manolito, block AW, 2026-11-14, static: 0x5CECD0
+    // thiscall(cObject* weapon), no arguments; it reads the type's item record only).
+    bool twoHanded(uint32_t id)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        cObject* o = objects ? objects->object(id) : nullptr;
+        if (!o || !worth(id).weapon)
+        {
+            return false;
+        }
+        using TwoHanded = uint8_t(__fastcall*)(cObject* weapon, void*);
+        return reinterpret_cast<TwoHanded>(0x5CECD0)(o, nullptr) != 0;
+    }
+
+    // The game's own «may this go into this hand of this weapon slot» (Manolito, block AW: canDrop 0x6E09C0
+    // thiscall(taskbar, u16 slot, u8 hand, id, u32* displaced, flag 0), ret 0x14: 0 no, 1 free, 2 it would displace
+    // what is there, 4 it goes to the other hand; hand 0 the shield's, 1 the weapon's). -1: no taskbar to ask.
+    // The setter 0x5D8730 checks none of it (a shield beside a two-handed weapon, the player, 2026-11-13).
+    int canDrop(uint32_t slot, uint32_t hand, uint32_t id)
+    {
+        cUI_Manager* ui = cUI_Manager::instance();
+        void* taskbar = ui ? static_cast<void*>(ui->taskbar()) : nullptr;
+        if (!taskbar)
+        {
+            return -1;
+        }
+        uint32_t displaced = 0;
+        using CanDrop = uint32_t(__fastcall*)(void* taskbar, void*, uint32_t slot, uint32_t hand, uint32_t id,
+                                              uint32_t* displaced, uint32_t flag);
+        return static_cast<int>(reinterpret_cast<CanDrop>(0x6E09C0)(taskbar, nullptr, slot, hand, id, &displaced, 0) & 0xFF);
+    }
+
     // The slot `id` would best go to, and what is there now; -1 if it is better nowhere. Of the rings and amulets,
     // the weakest worn.
     int bestSlot(cCreature* hero, uint32_t id, float margin, uint32_t* replaced = nullptr, bool* fits = nullptr)
@@ -363,6 +401,16 @@ namespace
             if (!better(w, current, margin, worn))
             {
                 continue;
+            }
+            // The hands (12 the shield's, 13 the weapon's): never a two-handed weapon beside what the other hand
+            // holds, nor a shield beside a two-handed weapon. A player would have to empty the other hand first.
+            if (slot == 12 || slot == 13)
+            {
+                const uint32_t other = fn<GetEquipped>(g_getEquipped)(hero, nullptr, slot == 12 ? 13 : 12);
+                if (other && (twoHanded(id) || twoHanded(other)))
+                {
+                    continue;
+                }
             }
             const Worth now = current ? worth(current) : Worth{};
             const float gain = current ? (scoreWith(w, worn, false) - scoreWith(now, worn, true)) +
@@ -403,6 +451,10 @@ namespace
             {
                 return;
             }
+            if (const auto t = g_noPutOn.find(id); t != g_noPutOn.end() && GetTickCount() - t->second < 600000)
+            {
+                return;     // taken off a moment ago: not put on again (the gear would swing)
+            }
             uint32_t old = 0;
             const int slot = bestSlot(hero, id, 0.05f, &old);
             if (slot < 0)
@@ -430,6 +482,7 @@ namespace
             {
                 fn<PutItem>(g_putItem)(pack, nullptr, free, previous, ow, oh, 1);
                 g_takenOff[previous] = GetTickCount();
+                g_noPutOn[previous] = GetTickCount();
             }
             LOG("Gear: put on {:x} (type {:x}) in slot {}{}", id, typeOf(id), slot, old ? ", the old one to the backpack" : "");
             done = true;
@@ -491,10 +544,19 @@ namespace
             {
                 return;     // a piece of a set the hero wears: kept for the set
             }
+            if (!merchantTakes(typeOf(id)))
+            {
+                return;     // not what this merchant deals in
+            }
+            if (const auto b = g_bought.find(id); b != g_bought.end() && now - b->second < 3600000)
+            {
+                return;     // bought within the hour: not sold back at a loss
+            }
             if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
             {
                 return;
             }
+            g_sold.insert(id);
             for (int page = 0; page < kStockPages; ++page)
             {
                 uint8_t* stock = entryOf(kFirstStockPage + page);
@@ -777,10 +839,15 @@ namespace
                 {
                     return;
                 }
+                if (g_sold.count(id))
+                {
+                    return;     // the hero's own, sold: never bought back for more
+                }
                 if (!Act::allowed(Act::Kind::Buy, "buy a better item"))
                 {
                     return;
                 }
+                g_bought[id] = GetTickCount();
                 // As the shop's buy (ENG 006D9840) does it.
                 cObject* item = cObjectManager::instance()->object(id);
                 fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
@@ -1285,9 +1352,24 @@ namespace
         {
             return false;
         }
-        fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
         const bool bow = bowHand(HeroProfile::itemWeaponKind(best));
-        for (uint32_t hand : {bow ? 0u : 1u, bow ? 1u : 0u})
+        // Asked of the game first: the hand it says (4: the other one), and only into a free one.
+        uint32_t askedHand = bow ? 0u : 1u;
+        int may = canDrop(static_cast<uint32_t>(empty), askedHand, best);
+        if (may == 4)
+        {
+            askedHand ^= 1u;
+            may = canDrop(static_cast<uint32_t>(empty), askedHand, best);
+        }
+        if (may != 1)
+        {
+            LOG("Gear: ranged weapon {:x} may not go into weapon slot {} (the game's test: {}): not tried again", best,
+                empty + 1, may);
+            g_rangedRefused = true;
+            return false;
+        }
+        fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
+        for (uint32_t hand : {askedHand})
         {
             fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, best, 1);
             if (slotItem(pack, empty, hand) == best)
@@ -1363,6 +1445,13 @@ namespace
         {
             return false;
         }
+        if (const int may = canDrop(static_cast<uint32_t>(empty), 1, best); may != 1)
+        {
+            LOG("Gear: weapon {:x} may not go into weapon slot {} (the game's test: {}): the slots left alone", best,
+                empty + 1, may);
+            g_slotsReady = false;
+            return false;
+        }
         fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
         fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), 1, best, 1);
         if (slotItem(pack, empty, 1) != best)
@@ -1433,12 +1522,78 @@ namespace
     int g_swapsDone = 0;
     bool g_masterDone = false;     // the swaps over with the window still open (A2 2026-11-12: show(0) left it open)
 
+    // A craftsman's window is the hero's only while the game has him at that craftsman (Manolito, block AW,
+    // 2026-11-14, static): the hero in the trade mode (u16 +0xFC == 10, or +0x150 == 7), hero +0x154 the craftsman's
+    // id, the craftsman's +0x154 the hero's, and no farther than the 1500 units at which the game ends it. A window
+    // left open any other way (the player, 2026-11-13: «abre el menú del herrero sin herrero») is not worked in.
+    bool craftsmanBound(const char* window)
+    {
+        cObjectManager* objects = cObjectManager::instance();
+        const cCreature* hero = objects ? objects->hero() : nullptr;
+        if (!hero)
+        {
+            return false;
+        }
+        const auto* h = reinterpret_cast<const uint8_t*>(hero);
+        const bool mode = *reinterpret_cast<const uint16_t*>(h + 0xFC) == 10 || *reinterpret_cast<const uint16_t*>(h + 0x150) == 7;
+        const uint32_t npcId = *reinterpret_cast<const uint32_t*>(h + 0x154);
+        const cCreature* npc = mode && npcId ? objects->creature(npcId) : nullptr;
+        const bool bound = npc && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(npc) + 0x154) == hero->id &&
+                           std::hypot(static_cast<double>(npc->x - hero->x), static_cast<double>(npc->y - hero->y)) <= 1500.0;
+        if (!bound)
+        {
+            static DWORD s_toldAt = 0;
+            if (const DWORD now = GetTickCount(); !s_toldAt || now - s_toldAt > 30000)
+            {
+                s_toldAt = now;
+                LOG("Gear: the {} window is open but the hero is not at its craftsman (mode {}/{}, craftsman {:x}{}): "
+                    "not worked in",
+                    window, *reinterpret_cast<const uint16_t*>(h + 0xFC), *reinterpret_cast<const uint16_t*>(h + 0x150),
+                    npcId, npc ? "" : ", not there");
+            }
+        }
+        return bound;
+    }
+
+    // What the open shop takes (block AW, static): the merchant window [uiMgr +0x90], its goods child at +0x154
+    // (vtable 0x896968) with 16 pairs {category, ?} at +0x3F0; an item's category is the type's byte +0x2E; who takes
+    // 8 takes 0x1C, 7 and 0xF too. The game's own sale drops nothing there that is not in the table («vende armadura
+    // en la tienda de armas», the player, 2026-11-13). Not readable: nothing is sold.
+    bool merchantTakes(uint32_t type)
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        const uint8_t* merchant = ui ? *reinterpret_cast<const uint8_t* const*>(ui + 0x90) : nullptr;
+        const uint8_t* goods = merchant ? *reinterpret_cast<const uint8_t* const*>(merchant + 0x154) : nullptr;
+        const auto* types = static_cast<const uint8_t*>(typeMgr());
+        static DWORD s_toldAt = 0;
+        const DWORD now = GetTickCount();
+        if (!goods || !types || IsBadReadPtr(goods, 0x3F0 + 16 * 8) || *reinterpret_cast<const uintptr_t*>(goods) != 0x896968)
+        {
+            if (!s_toldAt || now - s_toldAt > 60000)
+            {
+                s_toldAt = now;
+                LOG("Gear: the shop's list of what it takes is not readable (merchant {}, goods {}): nothing sold",
+                    static_cast<const void*>(merchant), static_cast<const void*>(goods));
+            }
+            return false;
+        }
+        const int category = types[type * 0x80 + 0x2E];
+        bool takes = false, takes8 = false;
+        for (int i = 0; i < 16; ++i)
+        {
+            const int c = *reinterpret_cast<const int32_t*>(goods + 0x3F0 + i * 8);
+            takes |= c == category && c != 0;
+            takes8 |= c == 8;
+        }
+        return takes || (takes8 && (category == 0x1C || category == 7 || category == 0xF));
+    }
+
     uint8_t* masterWindow()
     {
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* master = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xB8) : nullptr;
         if (!master || *reinterpret_cast<const uintptr_t*>(master) != kMasterVtable ||
-            !(*reinterpret_cast<const uint32_t*>(master + 0x10) & 1))
+            !(*reinterpret_cast<const uint32_t*>(master + 0x10) & 1) || !craftsmanBound("combo master's"))
         {
             return nullptr;
         }
@@ -2048,7 +2203,8 @@ namespace
     {
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* bs = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0x8C) : nullptr;
-        if (!bs || *reinterpret_cast<const uintptr_t*>(bs) != kSmithVtable || !(*reinterpret_cast<const uint32_t*>(bs + 0x10) & 1))
+        if (!bs || *reinterpret_cast<const uintptr_t*>(bs) != kSmithVtable ||
+            !(*reinterpret_cast<const uint32_t*>(bs + 0x10) & 1) || !craftsmanBound("smith's"))
         {
             return nullptr;
         }
@@ -2183,7 +2339,8 @@ namespace
     {
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
-        if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable || !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1))
+        if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable ||
+            !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) || !craftsmanBound("stable's"))
         {
             return false;
         }
@@ -2469,7 +2626,8 @@ namespace
                         "at a combo master)", foreign);
                 }
             }
-            const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0;
+            const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0 &&
+                              craftsmanBound("shop's");
             const bool trip = shop && g_tripShop;
             bool acted = true;
             // Not in a fight (the analyst, 2026-11-12: A1 swapped runes at 09:45:09-12 while fighting 8 enemies and
