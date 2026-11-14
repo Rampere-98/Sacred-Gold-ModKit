@@ -64,20 +64,72 @@ namespace
     bool g_owners = false;      // SacredA7 / SacredA8: the player's own choice (a menu); A4 / A5: the ini only
     std::wstring g_ini;
 
-    void findFolder()
+    std::wstring g_dir;     // the exe's folder as it is on the disk (junctions resolved), with the last slash
+
+    // The folder the exe runs from, as the disk has it: a junction or a link named SacredA4 that leads to the player's
+    // folder gives the player's folder. The folder is opened, not the exe (an exe that is a hard link has many names).
+    std::wstring realFolder()
     {
         wchar_t exe[MAX_PATH] = {};
-        GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        const DWORD got = GetModuleFileNameW(nullptr, exe, MAX_PATH);
+        if (!got || got >= MAX_PATH)
+        {
+            return L"";
+        }
         std::wstring path = exe;
-        const size_t slash = path.find_last_of(L"\\/");
-        const std::wstring dir = path.substr(0, slash + 1);
-        const size_t before = slash == std::wstring::npos || slash == 0 ? std::wstring::npos : path.find_last_of(L"\\/", slash - 1);
-        const std::wstring name = before == std::wstring::npos ? L"" : path.substr(before + 1, slash - before - 1);
-        const bool copy = name.size() == 8 && name.compare(0, 7, L"SacredA") == 0;
+        path.resize(path.find_last_of(L"\\/") + 1);
+        HANDLE h = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                               OPEN_EXISTING, FILE_FLAG_BACKUP_SEMANTICS, nullptr);
+        if (h == INVALID_HANDLE_VALUE)
+        {
+            return L"";
+        }
+        wchar_t real[MAX_PATH] = {};
+        const DWORD n = GetFinalPathNameByHandleW(h, real, MAX_PATH, FILE_NAME_NORMALIZED | VOLUME_NAME_DOS);
+        CloseHandle(h);
+        if (!n || n >= MAX_PATH)
+        {
+            return L"";
+        }
+        std::wstring dir = real;   // \\?\D:\...\SacredA4
+        if (dir.back() != L'\\')
+        {
+            dir += L'\\';
+        }
+        return dir;
+    }
+
+    void findFolder()
+    {
+        g_dir = realFolder();
+        const size_t slash = g_dir.size() >= 2 ? g_dir.find_last_of(L'\\', g_dir.size() - 2) : std::wstring::npos;
+        const std::wstring name = slash == std::wstring::npos ? L"" : g_dir.substr(slash + 1, g_dir.size() - slash - 2);
+        const bool copy = name.size() == 8 && _wcsnicmp(name.c_str(), L"SacredA", 7) == 0;
         const wchar_t n = copy ? name[7] : L'0';
-        g_available = n == L'4' || n == L'5' || n == L'7' || n == L'8';
-        g_owners = n == L'7' || n == L'8';
-        g_ini = dir + L"SacredBild.ini";
+        const bool lab = n == L'4' || n == L'5' || n == L'7' || n == L'8';
+        // The witness: SacredBild-laboratorio.txt, its first line the folder's own name. A folder renamed or copied
+        // (to A1, A9, the player's) keeps a witness naming another folder, and nothing is on.
+        bool witnessed = false;
+        if (lab)
+        {
+            wchar_t first[32] = {};
+            if (FILE* f = _wfopen((g_dir + L"SacredBild-laboratorio.txt").c_str(), L"r, ccs=UTF-8"))
+            {
+                if (fgetws(first, 32, f))
+                {
+                    first[wcscspn(first, L"\r\n")] = 0;
+                }
+                fclose(f);
+            }
+            witnessed = _wcsicmp(first, name.c_str()) == 0;
+            if (!witnessed)
+            {
+                LOG("Cheats: off: {} has no SacredBild-laboratorio.txt naming it", std::string(name.begin(), name.end()));
+            }
+        }
+        g_available = lab && witnessed && _wcsicmp(name.c_str(), L"Sacred Gold") != 0;
+        g_owners = g_available && (n == L'7' || n == L'8');
+        g_ini = g_dir + L"SacredBild.ini";
     }
 
     void drawMenu()
@@ -149,6 +201,11 @@ namespace
         static std::once_flag once;
         std::call_once(once, [] {
             findFolder();
+            if (g_available && sharesSaves())
+            {
+                g_available = false;
+                LOG("Cheats: off: a GAME01..05.PAK of this copy is a hard link (the player's own saves): break the links first");
+            }
             if (!g_available)
             {
                 return;
@@ -178,9 +235,12 @@ namespace
         });
     }
 
+    std::atomic<bool> g_queued{false};     // an apply() waits in the engine's queue: no second one
+
     // On the engine's thread, an ordinary frame.
     void apply(void*)
     {
+        g_queued.store(false);
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         if (!hero)
@@ -226,7 +286,7 @@ bool Cheats::taints()
 void Cheats::onFrame()
 {
     install();
-    if (g_available && g_on[static_cast<int>(Id::HealthNoEnd)].load(std::memory_order_relaxed))
+    if (g_available && g_on[static_cast<int>(Id::HealthNoEnd)].load(std::memory_order_relaxed) && !g_queued.exchange(true))
     {
         Inject::engineCall(&apply, nullptr);
     }

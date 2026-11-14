@@ -1574,7 +1574,7 @@ namespace
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         cObjectManager* objects = cObjectManager::instance();
         const bool tripOver = g_closeShop.exchange(false);
-        if (!ui || !objects || !hero || !Act::automatic(Act::Kind::Windows))
+        if (!ui || !objects || !hero || !Act::may(Act::Kind::Windows))
         {
             return;
         }
@@ -1583,6 +1583,10 @@ namespace
             return w && !IsBadReadPtr(w, 0x1DC) && (*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) != 0;
         };
         const auto close = [](uint8_t* w, const char* what, const char* why) {
+            if (!Act::allowed(Act::Kind::Windows, why))
+            {
+                return;
+            }
             const auto* vt = *reinterpret_cast<const uintptr_t* const*>(w);
             reinterpret_cast<OnShow>(vt[9])(w, nullptr, 0);
             // onShow(0) unlinks the window but may leave its «visible» bit (A6's chest, 2026-11-14: «still marked
@@ -2674,6 +2678,11 @@ namespace
 
     void work(void*)
     {
+        // Whatever way work() leaves (a return, an exception from a call into the game), the next one may start.
+        struct Done
+        {
+            ~Done() { g_working = false; }
+        } done;
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         void* inv = inventory();
@@ -2691,7 +2700,7 @@ namespace
                     LOG("Gear: the laboratory's gold topped up ({} -> 1000000)", have);
                 }
             }
-            if (Act::automatic(Act::Kind::PickUp))
+            if (Act::may(Act::Kind::PickUp))
             {
                 stashHeld(pack);
             }
@@ -2774,7 +2783,7 @@ namespace
             else if (calm && g_wantSocket && socketAtSmith(hero, pack))
             {
             }
-            else if (calm && g_settings.runes && g_canUse && Act::automatic(Act::Kind::Combos) && swapRunes(hero, pack))
+            else if (calm && g_settings.runes && g_canUse && Act::may(Act::Kind::Combos) && swapRunes(hero, pack))
             {
             }
             else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
@@ -2947,7 +2956,7 @@ void Gear::onFrame(DWORD now, bool calm)
         }
     }
     // The weapon slots on this, the game's thread, never while work() runs on the window's.
-    if (g_ready && !g_working && g_slotsDue.exchange(false) && calm && Act::automatic(Act::Kind::WeaponSlots))
+    if (g_ready && !g_working && g_slotsDue.exchange(false) && calm && Act::may(Act::Kind::WeaponSlots))
     {
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
@@ -3028,7 +3037,7 @@ bool Gear::wantsShop()
     const bool askedNow = asked && static_cast<int>(GetTickCount() - asked) < 0 && g_healing < wantHealing();
     const bool potions = g_settings.buy && g_healing >= 0 && (g_healing <= 2 || askedNow) && gold >= 200;
     return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0) &&
-           (Act::automatic(Act::Kind::Sell) || Act::automatic(Act::Kind::Buy));
+           (Act::may(Act::Kind::Sell) || Act::may(Act::Kind::Buy));
 }
 
 void Gear::askPotions(unsigned long until)
@@ -3102,7 +3111,7 @@ float Gear::expectedHit(uint32_t targetId)
 
 bool Gear::chooseWeaponFor(uint32_t targetId)
 {
-    if (!g_ready || !g_slotsReady || !g_settings.weaponSlots || !Act::automatic(Act::Kind::WeaponSlots))
+    if (!g_ready || !g_slotsReady || !g_settings.weaponSlots || !Act::may(Act::Kind::WeaponSlots))
     {
         return false;
     }
@@ -3160,6 +3169,10 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
     // Only for a clear gain (30 %), and not within 20 s of the last switch: no switching back and forth (the analyst,
     // 2026-11-12, docs/Criterios.md: the 4502AE crashes came a few ms after a slot switch; 15 % and 10 s let it flip).
     if (best == active || bestDamage < current * 1.3f + 0.5f || GetTickCount() - g_slotSwitchAt < 20000)
+    {
+        return false;
+    }
+    if (!Act::allowed(Act::Kind::WeaponSlots, "switch to the weapon slot that does more against this enemy"))
     {
         return false;
     }

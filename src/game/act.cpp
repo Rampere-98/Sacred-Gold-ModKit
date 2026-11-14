@@ -59,7 +59,32 @@ namespace
     std::atomic<bool> g_stop{false};
     std::atomic<DWORD> g_stopCheckedAt{0};
     bool g_copy = false;        // a training copy (SacredA<n>)
-    bool g_lab = false;         // a laboratory copy: SacredA7 or SacredA8 with [Instance] Rol=Laboratorio
+// cheats.h
+enum class Id { GoldNoEnd, HealthNoEnd, ManaNoEnd, FreeShops, /* … las 22 */ Count };
+
+// cheats_table.h (privado del módulo)
+enum class Where : unsigned char { Engine, GearWork, Hook };   // en qué hilo/punto se aplica
+struct Cheat
+{
+    Id id;
+    const char* key;        // ini [Trampas], y el nombre en el registro
+    const char* category;   // encabezado del menú (UTF-8)
+    const char* label;
+    const char* note;       // qué hace y cuánto está probada (tooltip)
+    Where where;
+    bool taints;            // el juego no la sigue por sus funciones: no se guarda la partida (Parte 2, T7)
+    void (*apply)(cCreature* hero);    // nullptr = por construir (gris en el menú)
+    const char* tried;      // «A4 2026-11-14», o nullptr si nunca
+};
+// cheats_table.cpp
+constexpr Cheat kCheats[] = {
+    {Id::GoldNoEnd,   "Oro",  "Economía",  "Oro sin fin", "…", Where::GearWork, false, &Economy::gold,   "A7 14-11"},
+    {Id::HealthNoEnd, "Vida", "Personaje", "Vida sin fin (experimental)", "…", Where::Engine, true, &Character::health, nullptr},
+    {Id::FreeShops,   "Precios0", "Economía", "Precios a cero en las tiendas", "…", Where::Hook, true, nullptr, nullptr},
+    // …
+};
+static_assert(std::size(kCheats) == static_cast<size_t>(Id::Count));
+// y en un constexpr: kCheats[i].id == Id(i) para todo i (la fila en su sitio)
     std::wstring g_dir;         // the exe's folder, with the last slash
 
     constexpr DWORD kGrantMs = 30000;       // a «do it» of the player's lasts this long
@@ -307,6 +332,12 @@ bool Act::automatic(Kind kind)
     }
     const DWORD until = g_grantUntil[i].load(std::memory_order_relaxed);
     return until && static_cast<int>(until - GetTickCount()) > 0;
+}
+
+bool Act::may(Kind kind)
+{
+    install();
+    return !stopped() && g_mode[static_cast<int>(kind)].load(std::memory_order_relaxed) != static_cast<unsigned char>(Mode::No);
 }
 
 bool Act::nothing()

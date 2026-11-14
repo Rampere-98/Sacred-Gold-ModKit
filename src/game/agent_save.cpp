@@ -373,7 +373,10 @@ void AgentSave::onFrame()
     // Saving and loading in the game are the player's unless he allows them (the menu's start is AutoStart's). A
     // restart's save, asked from outside with the flag file, is made all the same (the environment's auditor,
     // 2026-11-14: with SaveLoad at No a copy would be closed without saving).
-    if (!Act::automatic(Act::Kind::SaveLoad) && (g_flagPath.empty() || GetFileAttributesW(g_flagPath.c_str()) == INVALID_FILE_ATTRIBUTES) &&
+    const bool saveLoad = Act::automatic(Act::Kind::SaveLoad) ||
+                          ((g_saveWanted || g_reloadWanted) &&
+                           Act::allowed(Act::Kind::SaveLoad, g_reloadWanted ? "load the last save" : "save the game"));
+    if (!saveLoad && (g_flagPath.empty() || GetFileAttributesW(g_flagPath.c_str()) == INVALID_FILE_ATTRIBUTES) &&
         !g_restartSave)
     {
         g_reloadWanted = false;

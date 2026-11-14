@@ -49,6 +49,10 @@ namespace Act
     // for something to do; the suggestion is made where the thing is about to be done.
     bool automatic(Kind kind);
 
+    // True unless the kind is at No (or the stop file is there): for the places that look for something to do, so
+    // that a kind on Suggest still reaches the allowed() where the thing is done, and its proposal is made there.
+    bool may(Kind kind);
+
     // True when nothing at all is allowed (the stop file, or every kind at No): the parts may skip their work.
     bool nothing();
 

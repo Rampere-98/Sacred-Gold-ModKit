@@ -205,7 +205,18 @@ void Inject::drainEngine()
     }
     for (const EngineCall& c : calls)
     {
-        c.fn(c.context);
+        try
+        {
+            c.fn(c.context);
+        }
+        catch (const std::exception& e)
+        {
+            LOG("Inject: a call on the engine's thread threw ({}): the rest still run", e.what());
+        }
+        catch (...)
+        {
+            LOG("Inject: a call on the engine's thread threw: the rest still run");
+        }
     }
 }
 

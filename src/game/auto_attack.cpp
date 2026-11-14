@@ -1689,7 +1689,7 @@ namespace
         static uint32_t s_wildId = 0;
         static DWORD s_wildSince = 0, s_wildStep = 0, s_wildSentAt = 0;
         static std::unordered_map<uint32_t, DWORD> s_wildFailed;
-        if (Act::automatic(Act::Kind::Mount) && HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
+        if (Act::may(Act::Kind::Mount) && HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
             !*(reinterpret_cast<const uint8_t*>(self) + 0x24) && !g_retreatUntil)
         {
             cObjectManager* om = cObjectManager::instance();
@@ -1766,6 +1766,10 @@ namespace
                 {
                     LOG("AutoAttack: wild horse {:x}: riding skill too low for it (the game's test): left", s_wildId);
                     s_wildId = 0;
+                    return;
+                }
+                if (!Act::allowed(Act::Kind::Mount, "mount a wild horse"))
+                {
                     return;
                 }
                 LOG("AutoAttack: mounting wild horse {:x}", s_wildId);
@@ -2301,6 +2305,10 @@ namespace
         {
             return false;
         }
+        else if (!Act::allowed(Act::Kind::Retreat, "step back from a fight that goes badly"))
+        {
+            return false;
+        }
         else
         {
             g_retreatUntil = now + kRetreatMaxMs;
@@ -2422,6 +2430,11 @@ namespace
                 LOG("AutoAttack: stepping back {} ({:.0f} tiles off, {} hostile not after it on that way)",
                     bestScore > 0.0 ? "the safest way (aggro weighed)" : "straight away",
                     std::hypot(g_walkX - self->x, g_walkY - self->y) / kTileSize, bestCrossed);
+            }
+            if (!Act::may(Act::Kind::Retreat))
+            {
+                g_retreatUntil = 0;
+                return false;
             }
             sendWalk();
             g_retreatWalkAt = now;
@@ -2639,6 +2652,10 @@ namespace
             if (ClickWalk::walkable(layer, static_cast<int>(px / kTileSize), static_cast<int>(py / kTileSize)) == 0)
             {
                 continue;
+            }
+            if (!Act::allowed(Act::Kind::Retreat, "side-step an arrow"))
+            {
+                return false;
             }
             s_at = now;
             s_lastArrow = arrow;
@@ -4696,6 +4713,10 @@ namespace
         {
             return false;
         }
+        if (!Act::allowed(Act::Kind::Doors, "open a shut door on the way"))
+        {
+            return false;
+        }
         g_doorTried[door.id] = now;
         LOG("AutoAttack: a shut door on the way ({:x}): opened", door.id);
         remember("abre una puerta cerrada en el camino");
@@ -4733,6 +4754,10 @@ namespace
         const bool found = AimAssist::findObject(g_doorRange, &acceptDoorNearGoal, &goal, door);
         g_doorRange = range;
         if (!found)
+        {
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::Doors, "use the shut door near the goal"))
         {
             return false;
         }
@@ -7521,10 +7546,13 @@ namespace
             }
             else if (now - since > 1500 && now - toldAt > 2000)
             {
-                LOG("AutoAttack: the portal box opened under the agent (a portal stepped on): closed");
                 toldAt = now;
-                Inject::key(VK_ESCAPE, true);
-                Inject::key(VK_ESCAPE, false);
+                if (Act::allowed(Act::Kind::Windows, "close the portal box opened under the agent"))
+                {
+                    LOG("AutoAttack: the portal box opened under the agent (a portal stepped on): closed");
+                    Inject::key(VK_ESCAPE, true);
+                    Inject::key(VK_ESCAPE, false);
+                }
             }
         }
     }
@@ -7988,6 +8016,10 @@ static bool keepDistance(DWORD now, uint32_t id)
         {
             continue;
         }
+        if (!Act::allowed(Act::Kind::Retreat, "keep the distance from a melee enemy"))
+        {
+            return false;
+        }
         g_walkX = static_cast<int32_t>(tx * kTileSize);
         g_walkY = static_cast<int32_t>(ty * kTileSize);
         sendWalk();
@@ -8244,7 +8276,7 @@ void AutoAttack::onFrame()
     }
     // Collect always (AutoCollect), and also whenever the auto attack fights for the player: the loot of each fight
     // taken once it is over, before the next (the player's own play keeps to A unless AutoCollect is on).
-    if (Act::automatic(Act::Kind::PickUp) && Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) &&
+    if (Act::may(Act::Kind::PickUp) && Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) &&
         !g_collecting && foreground &&
         !Controller::drives() && !ClickWalk::walking() &&
         Controller::worldRunning() && heroAlive())
@@ -8336,7 +8368,7 @@ void AutoAttack::onFrame()
         cUI_Window2* inventory = ui && (ui->flags & cUI_Manager::inGame) ? ui->window(cUI_Manager::Window::inventory) : nullptr;
         // Without the focus too (the stuck solver, 2026-11-13: the game opens it itself on a pick up, a chest, a
         // door; a copy without the focus never closed it, the key does nothing there: runs of 5-15).
-        if (g_on && Act::automatic(Act::Kind::Windows) && inventory && inventory->visible() && !Gear::shopOpen() &&
+        if (g_on && Act::may(Act::Kind::Windows) && inventory && inventory->visible() && !Gear::shopOpen() &&
             !Gear::craftsmanOpen())
         {
             if (!s_inventorySince)
@@ -8345,7 +8377,8 @@ void AutoAttack::onFrame()
             }
             const bool playerBusy = g_quietUntil && static_cast<int>(now - g_quietUntil) < 8000;
             if (now - s_inventoryClosedAt > 1500 &&
-                (g_collecting || (now - s_inventorySince > 3000 && !playerBusy)))
+                (g_collecting || (now - s_inventorySince > 3000 && !playerBusy)) &&
+                Act::allowed(Act::Kind::Windows, "close the inventory left open"))
             {
                 // The key that does not close it (docs/Estudio-mejoras.md P5: A8 17 times in 30 s, A4 12; a copy
                 // plays without the focus): after 3 presses, the windows' own close (0x7325C0 thiscall(window, bits
@@ -8382,7 +8415,7 @@ void AutoAttack::onFrame()
     if (Gear::tripDone())
     {
         LOG("AutoAttack: shop of {:x} closed, back to play", g_shopId);
-        if (Act::automatic(Act::Kind::Windows))
+        if (Act::allowed(Act::Kind::Windows, "close the shop (Esc): the trip is over"))
         {
             Inject::key(VK_ESCAPE, true);
             Inject::key(VK_ESCAPE, false);
@@ -8431,7 +8464,7 @@ void AutoAttack::onFrame()
         {
             g_target = 0;
             g_pending = 0;
-            if (g_lootInstead && Act::automatic(Act::Kind::PickUp))
+            if (g_lootInstead && Act::allowed(Act::Kind::PickUp, "pick up the loot instead of fighting"))
             {
                 g_lootInstead = false;
                 startCollect(now);
@@ -8494,7 +8527,7 @@ void AutoAttack::onFrame()
         g_pending = 0;
         return;
     }
-    if (!g_looting && Act::automatic(Act::Kind::Retreat) && keepDistance(now, id))
+    if (!g_looting && Act::may(Act::Kind::Retreat) && keepDistance(now, id))
     {
         return;
     }

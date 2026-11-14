@@ -468,11 +468,15 @@ namespace
 
     void work(void*)
     {
+        // Whatever way work() leaves, the next one may start.
+        struct Done
+        {
+            ~Done() { g_working = false; }
+        } done;
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
         if (!hero || hero->health <= 0)
         {
-            g_working = false;
             return;
         }
         uint8_t* st = reinterpret_cast<uint8_t*>(hero) + kStats;
@@ -523,10 +527,10 @@ namespace
                 reinterpret_cast<LearnSkill>(g_learnSkill)(st, nullptr, offered[pick]);
             }
         }
-        else if (g_settings.bar && g_setSlot && Act::automatic(Act::Kind::ArtBar) && fillBar(hero, st))
+        else if (g_settings.bar && g_setSlot && Act::may(Act::Kind::ArtBar) && fillBar(hero, st))
         {
         }
-        else if (g_settings.bar && g_settings.swap && g_setSlot && Act::automatic(Act::Kind::ArtBar) && arrangeBar(hero))
+        else if (g_settings.bar && g_settings.swap && g_setSlot && Act::may(Act::Kind::ArtBar) && arrangeBar(hero))
         {
         }
         else if (g_settings.skills && *reinterpret_cast<const uint16_t*>(st + 0x42) > 0 &&
