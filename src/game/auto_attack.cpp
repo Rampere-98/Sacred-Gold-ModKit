@@ -4422,6 +4422,7 @@ namespace
     int g_shopTries = 0;
     bool g_shopTold = false;
     std::unordered_map<uint32_t, DWORD> g_shopFailedAt;     // merchants that would not open: left 5 min
+    std::unordered_map<uint32_t, DWORD> g_shopUselessAt;    // merchants that took nothing of the backpack: left 30 min
     int32_t g_questX = 0, g_questY = 0;
 
     // Speaking to the quest's creature (the quest giver, or whom to report to): a click on it, as the player's, then
@@ -5430,7 +5431,8 @@ namespace
                 // Nor one across the world (the player, 2026-11-10: the Daemon, level 3, set off for a merchant 427
                 // tiles off through higher grounds and got stuck on the way): 150 tiles at most.
                 if ((m.layer != layer && d > 30.0 * kTileSize) || d > shopReach ||
-                    (failed != g_shopFailedAt.end() && now - failed->second < 300000))
+                    (failed != g_shopFailedAt.end() && now - failed->second < 300000) ||
+                    (g_shopUselessAt.count(m.id) && now - g_shopUselessAt[m.id] < 1800000))
                 {
                     continue;
                 }
@@ -8456,6 +8458,13 @@ void AutoAttack::onFrame()
     }
     if (Gear::tripDone())
     {
+        if (Gear::tripLeftFull())
+        {
+            g_shopUselessAt[g_shopId] = now;
+            LOG("AutoAttack: the shop of {:x} took nothing more and the backpack is still full: another merchant, this "
+                "one left 30 min",
+                g_shopId);
+        }
         LOG("AutoAttack: shop of {:x} closed, back to play", g_shopId);
         if (Act::allowed(Act::Kind::Windows, "close the shop (Esc): the trip is over"))
         {

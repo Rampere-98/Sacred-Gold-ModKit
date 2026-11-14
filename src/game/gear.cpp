@@ -553,7 +553,7 @@ namespace
             {
                 return;     // not what this merchant deals in
             }
-            if (const auto b = g_bought.find(id); b != g_bought.end() && now - b->second < 3600000)
+            if (const auto b = g_bought.find(id); b != g_bought.end() && now - b->second < 600000)
             {
                 return;     // bought within the hour: not sold back at a loss
             }
@@ -806,6 +806,11 @@ namespace
     // At a merchant: one item bought that would be clearly better than what the hero wears, within the gold to spend.
     bool buyOne(cCreature* hero, uint8_t* pack)
     {
+        // Nothing but potions bought into a full backpack: it only adds to what cannot be sold.
+        if (packFull(pack))
+        {
+            return false;
+        }
         void* inv = inventory();
         const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
         // C7 (docs/Criterios.md: 6 of 7 cheapest upgrades out of a budget of half the gold; A8 dead with 21 916): the
@@ -988,6 +993,7 @@ namespace
     std::atomic<bool> g_full{false};
     std::atomic<bool> g_tripShop{false};    // the shop open now is the trip's
     std::atomic<bool> g_tripDone{false};    // the trip's shop has nothing more: to be closed
+    std::atomic<bool> g_tripLeftFull{false};    // the trip over with the backpack still full
     std::atomic<bool> g_closeShop{false};   // the trip is over: the merchant's window closed the game's own way
     int g_idleWorks = 0;
     std::atomic<DWORD> g_noTripUntil{0};    // full with nothing to sell: no trip again for a while
@@ -2874,7 +2880,15 @@ namespace
             {
                 LOG("Gear: merchant trip done (backpack {})", g_full ? "still full: nothing more to sell" : "has room");
                 g_tripDone = true;
-                if (g_full || g_healing <= 2)   // no potion sold there either (or gold short): not straight back
+                // Still full: this merchant does not deal in what the hero carries (a weapon shop and a backpack of
+                // armour; the player, 2026-11-14: «tienen acúmulo de mierda»). Told to the agent, who leaves this
+                // merchant for half an hour and goes to another at once; before, no trip at all for 10 minutes.
+                if (g_full)
+                {
+                    g_tripLeftFull = true;
+                    g_noTripUntil = GetTickCount() + 30000;
+                }
+                else if (g_healing <= 2)   // no potion sold there (or gold short): not straight back
                 {
                     g_noTripUntil = GetTickCount() + 600000;
                 }
@@ -3103,6 +3117,11 @@ void Gear::tripOpened()
     g_tripShop = true;
     g_tripDone = false;
     g_idleWorks = 0;
+}
+
+bool Gear::tripLeftFull()
+{
+    return g_tripLeftFull.exchange(false);
 }
 
 bool Gear::tripDone()

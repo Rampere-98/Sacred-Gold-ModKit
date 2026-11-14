@@ -47,6 +47,8 @@ namespace Gear
     void tripOpened();
     // The trip's shop has nothing more (once): the agent closes it.
     bool tripDone();
+    // True once after a trip that left the backpack full: that merchant did not deal in what the hero carries.
+    bool tripLeftFull();
     bool shopOpen();
     // A combo master's window open (its runes' page shows the inventory beside it: not to be closed meanwhile).
     bool craftsmanOpen();
