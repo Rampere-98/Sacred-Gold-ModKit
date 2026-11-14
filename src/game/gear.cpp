@@ -1,6 +1,7 @@
 #include "mind.h"
 #include "hero_profile.h"
 #include "game/act.h"
+#include "game/aim_assist.h"
 #include "game/auto_attack.h"
 #include "game/gear.h"
 #include "game/granny_async.h"
@@ -114,6 +115,9 @@ namespace
     std::unordered_map<uint32_t, DWORD> g_noPutOn, g_bought;
     std::unordered_set<uint32_t> g_sold;
     bool merchantTakes(uint32_t type);
+    // The trades (+0x200's bits) of the creatures on the screen within 1500 px of the hero, read on the presenting
+    // thread twice a second (Gear::onFrame); 0x1000 smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable.
+    std::atomic<uint32_t> g_tradesNear{0};
     constexpr size_t kItemType = 0x10;
     constexpr size_t kItemFlags = 0x14;
     constexpr uint32_t kQuestItem = 0x800;
@@ -1522,48 +1526,36 @@ namespace
     int g_swapsDone = 0;
     bool g_masterDone = false;     // the swaps over with the window still open (A2 2026-11-12: show(0) left it open)
 
-    // A craftsman's window is the hero's only while the game has him at that craftsman (Manolito, block AW,
-    // 2026-11-14, static): the hero in the trade mode (u16 +0xFC == 10, or +0x150 == 7), hero +0x154 the craftsman's
-    // id, the craftsman's +0x154 the hero's, and no farther than the 1500 units at which the game ends it. A window
-    // left open any other way (the player, 2026-11-13: «abre el menú del herrero sin herrero») is not worked in.
-    bool craftsmanBound(const char* window)
+    // A craftsman's window is worked in only with a craftsman of that trade beside the hero (the player, 2026-11-13:
+    // «abre el menú del herrero sin herrero»): a creature near whose +0x200 has the trade's bit (Manolito, block AW:
+    // 0x1000 smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable). The hero's own trade fields of that block
+    // (+0xFC, +0x154) did not read so with a shop open (live, A1, 2026-11-14), so they are not used.
+    bool craftsmanBound(const char* window, uint32_t tradeBit)
     {
-        cObjectManager* objects = cObjectManager::instance();
-        const cCreature* hero = objects ? objects->hero() : nullptr;
-        if (!hero)
-        {
-            return false;
-        }
-        const auto* h = reinterpret_cast<const uint8_t*>(hero);
-        const bool mode = *reinterpret_cast<const uint16_t*>(h + 0xFC) == 10 || *reinterpret_cast<const uint16_t*>(h + 0x150) == 7;
-        const uint32_t npcId = *reinterpret_cast<const uint32_t*>(h + 0x154);
-        const cCreature* npc = mode && npcId ? objects->creature(npcId) : nullptr;
-        const bool bound = npc && *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(npc) + 0x154) == hero->id &&
-                           std::hypot(static_cast<double>(npc->x - hero->x), static_cast<double>(npc->y - hero->y)) <= 1500.0;
-        if (!bound)
+        const bool near = (g_tradesNear.load() & tradeBit) != 0;
+        if (!near)
         {
             static DWORD s_toldAt = 0;
             if (const DWORD now = GetTickCount(); !s_toldAt || now - s_toldAt > 30000)
             {
                 s_toldAt = now;
-                LOG("Gear: the {} window is open but the hero is not at its craftsman (mode {}/{}, craftsman {:x}{}): "
-                    "not worked in",
-                    window, *reinterpret_cast<const uint16_t*>(h + 0xFC), *reinterpret_cast<const uint16_t*>(h + 0x150),
-                    npcId, npc ? "" : ", not there");
+                LOG("Gear: the {} window is open with no such craftsman near the hero: not worked in", window);
             }
         }
-        return bound;
+        return near;
     }
 
     // What the open shop takes (block AW, static): the merchant window [uiMgr +0x90], its goods child at +0x154
-    // (vtable 0x896968) with 16 pairs {category, ?} at +0x3F0; an item's category is the type's byte +0x2E; who takes
+    // (vtable 0x896968; one shop read live: {5, 100}, weapons only) with 16 pairs {category, ?} at +0x3F0; an item's category is the type's byte +0x2E; who takes
     // 8 takes 0x1C, 7 and 0xF too. The game's own sale drops nothing there that is not in the table («vende armadura
     // en la tienda de armas», the player, 2026-11-13). Not readable: nothing is sold.
     bool merchantTakes(uint32_t type)
     {
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         const uint8_t* merchant = ui ? *reinterpret_cast<const uint8_t* const*>(ui + 0x90) : nullptr;
-        const uint8_t* goods = merchant ? *reinterpret_cast<const uint8_t* const*>(merchant + 0x154) : nullptr;
+        // Read live in A1 (block AW-6): +0x154 is the tab sheet (vtable 0x897258), the goods hang from its +0xD8.
+        const uint8_t* sheet = merchant ? *reinterpret_cast<const uint8_t* const*>(merchant + 0x154) : nullptr;
+        const uint8_t* goods = sheet && !IsBadReadPtr(sheet, 0xDC) ? *reinterpret_cast<const uint8_t* const*>(sheet + 0xD8) : nullptr;
         const auto* types = static_cast<const uint8_t*>(typeMgr());
         static DWORD s_toldAt = 0;
         const DWORD now = GetTickCount();
@@ -1593,7 +1585,7 @@ namespace
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* master = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xB8) : nullptr;
         if (!master || *reinterpret_cast<const uintptr_t*>(master) != kMasterVtable ||
-            !(*reinterpret_cast<const uint32_t*>(master + 0x10) & 1) || !craftsmanBound("combo master's"))
+            !(*reinterpret_cast<const uint32_t*>(master + 0x10) & 1) || !craftsmanBound("combo master's", 0x4000))
         {
             return nullptr;
         }
@@ -2204,7 +2196,7 @@ namespace
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* bs = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0x8C) : nullptr;
         if (!bs || *reinterpret_cast<const uintptr_t*>(bs) != kSmithVtable ||
-            !(*reinterpret_cast<const uint32_t*>(bs + 0x10) & 1) || !craftsmanBound("smith's"))
+            !(*reinterpret_cast<const uint32_t*>(bs + 0x10) & 1) || !craftsmanBound("smith's", 0x1000))
         {
             return nullptr;
         }
@@ -2340,7 +2332,7 @@ namespace
         const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
         uint8_t* w = ui ? *reinterpret_cast<uint8_t* const*>(ui + 0xC4) : nullptr;
         if (!w || *reinterpret_cast<const uintptr_t*>(w) != kHorseVtable ||
-            !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) || !craftsmanBound("stable's"))
+            !(*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) || !craftsmanBound("stable's", 0x4000000))
         {
             return false;
         }
@@ -2626,8 +2618,12 @@ namespace
                         "at a combo master)", foreign);
                 }
             }
-            const bool shop = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade) != 0 &&
-                              craftsmanBound("shop's");
+            // The shop is the hero's while the game's inventory names its merchant and he stands within the 1500
+            // units at which the game ends a trade (the hero's own trade fields of block AW did not read so live).
+            const uint32_t merchantId = *reinterpret_cast<const uint32_t*>(static_cast<uint8_t*>(inv) + kTrade);
+            const cCreature* merchant = merchantId ? objects->creature(merchantId) : nullptr;
+            const bool shop = merchant && std::hypot(static_cast<double>(merchant->x - hero->x),
+                                                     static_cast<double>(merchant->y - hero->y)) <= 1500.0;
             const bool trip = shop && g_tripShop;
             bool acted = true;
             // Not in a fight (the analyst, 2026-11-12: A1 swapped runes at 09:45:09-12 while fighting 8 enemies and
@@ -2795,6 +2791,25 @@ void Gear::onFrame(DWORD now, bool calm)
             MapMemory::mark(MapMemory::Mark::Merchant, *(reinterpret_cast<const uint8_t*>(hero) + 0x24), hero->x, hero->y);
         }
         lastMerchant = merchant;
+    }
+    {
+        static DWORD s_tradesAt = 0;
+        if (now - s_tradesAt > 500)
+        {
+            s_tradesAt = now;
+            uint32_t trades = 0;
+            AimAssist::Target none;
+            AimAssist::findObject(1500.0f, [](uint32_t id, void* context) {
+                cObjectManager* om = cObjectManager::instance();
+                const cCreature* c = om && !(id & 0x80000000u) ? om->creature(id) : nullptr;
+                if (c)
+                {
+                    *static_cast<uint32_t*>(context) |= *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(c) + 0x200);
+                }
+                return false;
+            }, &trades, none);
+            g_tradesNear.store(trades & (0x1000u | 0x2000u | 0x4000u | 0x4000000u));
+        }
     }
     // The weapon slots on this, the game's thread, never while work() runs on the window's.
     if (g_ready && !g_working && g_slotsDue.exchange(false) && calm && Act::automatic(Act::Kind::WeaponSlots))
