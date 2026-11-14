@@ -1585,8 +1585,22 @@ namespace
         const auto close = [](uint8_t* w, const char* what, const char* why) {
             const auto* vt = *reinterpret_cast<const uintptr_t* const*>(w);
             reinterpret_cast<OnShow>(vt[9])(w, nullptr, 0);
-            LOG("Gear: the {} window closed ({}): {}", what, why,
-                *reinterpret_cast<const uint32_t*>(w + 0x10) & 1 ? "still marked open" : "done");
+            // onShow(0) unlinks the window but may leave its «visible» bit (A6's chest, 2026-11-14: «still marked
+            // open» every minute and the game's canSave still saying no): the windows' own close clears it (0x7325C0
+            // thiscall(window, bits to clear from +0x10), as the inventory's and the stable's are closed).
+            const bool left = (*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) != 0;
+            if (left)
+            {
+                using ClearFlags = void(__fastcall*)(uint8_t* window, void*, uint32_t bits);
+                reinterpret_cast<ClearFlags>(0x7325C0)(w, nullptr, 1);
+            }
+            static DWORD s_closedToldAt = 0;
+            if (const DWORD t = GetTickCount(); !s_closedToldAt || t - s_closedToldAt > 10000)
+            {
+                s_closedToldAt = t;
+                LOG("Gear: the {} window closed ({}){}: {}", what, why, left ? ", its visible bit cleared too" : "",
+                    *reinterpret_cast<const uint32_t*>(w + 0x10) & 1 ? "still marked open" : "done");
+            }
         };
         if (uint8_t* merchant = *reinterpret_cast<uint8_t* const*>(ui + 0x90); visible(merchant))
         {
