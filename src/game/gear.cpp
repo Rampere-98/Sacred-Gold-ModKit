@@ -116,6 +116,7 @@ namespace
     std::unordered_map<uint32_t, DWORD> g_noPutOn, g_bought;
     std::unordered_set<uint32_t> g_sold;
     bool merchantTakes(uint32_t type);
+    bool packFull(uint8_t* pack);
     // The trades (+0x200's bits) of the creatures on the screen within 1500 px of the hero, read on the presenting
     // thread twice a second (Gear::onFrame); 0x1000 smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable.
     std::atomic<uint32_t> g_tradesNear{0};
