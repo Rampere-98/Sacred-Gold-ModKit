@@ -116,6 +116,7 @@ namespace
     std::unordered_map<uint32_t, DWORD> g_noPutOn, g_bought;
     std::unordered_set<uint32_t> g_sold;
     bool merchantTakes(uint32_t type);
+    int tabFor(uint32_t type);
     bool packFull(uint8_t* pack);
     // The trades (+0x200's bits) of the creatures on the screen within 1500 px of the hero, read on the presenting
     // thread twice a second (Gear::onFrame); 0x1000 smith, 0x2000 merchant, 0x4000 combo master, 0x4000000 stable.
@@ -500,6 +501,51 @@ namespace
     bool socketable(uint32_t id);
 
     // At a merchant: one item sold (worse than the worn one for every slot it fits, or not for this class).
+    // The merchant's tab a thing sold goes to (the player, 2026-11-14: «el comerciante tiene la pestaña de armas /
+    // armaduras / varios»: with Shift + click or dragging, a player cannot put an armour on the weapons' tab nor a
+    // weapon on the armours', nor either on the others'; every merchant takes everything, each thing on its own
+    // tab). The three stock pages are the three tabs. Which is which is read from the shelves themselves: the page
+    // that already holds things of the item's kind; with none on any shelf, weapons the first, armour the second,
+    // the rest the third. The kinds by the type's category byte (+0x2E): 5 a weapon; 8, 0x1C, 7 and 0xF armour
+    // (Manolito, block AW: the table of the tab that takes 8 takes those too).
+    int kindOfCategory(int category)
+    {
+        return category == 5 ? 0 : category == 8 || category == 0x1C || category == 7 || category == 0xF ? 1 : 2;
+    }
+
+    int tabFor(uint32_t type)
+    {
+        const auto* types = static_cast<const uint8_t*>(typeMgr());
+        if (!types || !type)
+        {
+            return -1;
+        }
+        const int kind = kindOfCategory(types[type * 0x80 + 0x2E]);
+        int byShelves = -1;
+        for (int page = 0; page < kStockPages; ++page)
+        {
+            uint8_t* stock = entryOf(kFirstStockPage + page);
+            if (!stock)
+            {
+                continue;
+            }
+            int same = 0, other = 0;
+            eachItem(stock, [&](uint32_t id, int, int, int) {
+                const uint32_t t = typeOf(id);
+                if (t)
+                {
+                    (kindOfCategory(types[t * 0x80 + 0x2E]) == kind ? same : other) += 1;
+                }
+            });
+            if (same > other && same > 0)
+            {
+                byShelves = page;
+                break;
+            }
+        }
+        return byShelves >= 0 ? byShelves : kind;
+    }
+
     bool sellOne(cCreature* hero, uint8_t* pack)
     {
         void* inv = inventory();
@@ -550,9 +596,10 @@ namespace
             {
                 return;     // a piece of a set the hero wears: kept for the set
             }
-            if (!merchantTakes(typeOf(id)))
+            const int tab = tabFor(typeOf(id));
+            if (tab < 0)
             {
-                return;     // not what this merchant deals in
+                return;
             }
             if (const auto b = g_bought.find(id); b != g_bought.end() && now - b->second < 600000)
             {
@@ -562,8 +609,8 @@ namespace
             {
                 return;
             }
-            g_sold.insert(id);
-            for (int page = 0; page < kStockPages; ++page)
+            // On its own tab only; with no room there it is not sold (a player could not either).
+            for (int page = tab; page == tab; ++page)
             {
                 uint8_t* stock = entryOf(kFirstStockPage + page);
                 uint16_t free = 0;
@@ -571,11 +618,13 @@ namespace
                 {
                     continue;
                 }
+                g_sold.insert(id);
                 const uint32_t price = fn<Price>(g_price)(inv, nullptr, id, 0);
                 fn<RemoveItem>(g_removeItem)(pack, nullptr, id, 1);
                 fn<PutItem>(g_putItem)(stock, nullptr, free, id, w, h, 1);
                 fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, static_cast<int>(price));
-                LOG("Gear: sold {:x} (type {:x}) for {} gold{}", id, typeOf(id), price, classOk ? "" : " (not for this class)");
+                LOG("Gear: sold {:x} (type {:x}) for {} gold on the {} tab{}", id, typeOf(id), price,
+                    page == 0 ? "first" : page == 1 ? "second" : "third", classOk ? "" : " (not for this class)");
                 done = true;
                 return;
             }
