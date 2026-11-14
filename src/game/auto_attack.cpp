@@ -1281,6 +1281,7 @@ namespace
     constexpr DWORD kUnreachableMs = 20000;
 
     DWORD g_lastTargetAt = 0;       // the last enemy taken for target
+    DWORD g_keptDistanceAt = 0;     // the last step back from an enemy (a ranged weapon's): no «out of reach» then
     DWORD g_lastHurtAt = 0;         // the target's health last went down (a blow that told)
     DWORD g_lootCount = 0;          // loot taken for good, counted (AgentStuck: progress)
     void targetTaken(DWORD now, uint32_t id)
@@ -2712,7 +2713,10 @@ namespace
             const bool fencedOff = targetObject && currentDistance >= 1.5f * static_cast<float>(kTileSize) &&
                                    lineBlocked(targetObject);
             if (g_targetBest <= 0.0f || currentDistance < g_targetBest * 0.9f || currentDistance < range * 0.3f ||
-                hurtIt || (striking && currentDistance < melee && !fencedOff))
+                hurtIt || (striking && currentDistance < melee && !fencedOff) ||
+                // A step back to shoot from afar is no failure to reach it (the stuck solver, 2026-11-14: A1 with a
+                // ranged weapon, «keeping the distance» and the enemy it fought given up as out of reach).
+                (g_keptDistanceAt && now - g_keptDistanceAt < 3000))
             {
                 g_targetBest = g_targetBest > 0.0f ? std::min(g_targetBest, currentDistance) : currentDistance;
                 g_targetBestAt = now;
@@ -5235,7 +5239,10 @@ namespace
             {
                 const auto failed = g_shopFailedAt.find(m.id);
                 double d = std::hypot(static_cast<double>(m.x - self->x), static_cast<double>(m.y - self->y));
-                if (m.layer == layer && d <= 150.0 * kTileSize)
+                // With no healing potion left a merchant is worth a long walk (the stuck solver, 2026-11-14: A8's
+                // Daemon died 10 times in 29 min, «no merchant known within 150 tiles» at each load, 13 325 gold).
+                const double shopReach = (Gear::healingLeft() == 0 ? 400.0 : 150.0) * kTileSize;
+                if (m.layer == layer && d <= shopReach)
                 {
                     d = wayLength(self->x, self->y, m.x, m.y);    // the walk, not the straight line
                 }
@@ -5244,7 +5251,7 @@ namespace
                 // dentro de casas»).
                 // Nor one across the world (the player, 2026-11-10: the Daemon, level 3, set off for a merchant 427
                 // tiles off through higher grounds and got stuck on the way): 150 tiles at most.
-                if ((m.layer != layer && d > 30.0 * kTileSize) || d > 150.0 * kTileSize ||
+                if ((m.layer != layer && d > 30.0 * kTileSize) || d > shopReach ||
                     (failed != g_shopFailedAt.end() && now - failed->second < 300000))
                 {
                     continue;
@@ -7799,6 +7806,7 @@ static bool keepDistance(DWORD now, uint32_t id)
         s_steps[s_next] = now;
         s_next = (s_next + 1) % 4;
         s_stepUntil = now + 700 + jitter(0, 250);
+        g_keptDistanceAt = now;
         LOG("AutoAttack: keeping the distance (weapon kind {}): an enemy {:.1f} tiles off, a step back to {:.0f},{:.0f}, "
             "then {:x} again",
             hero.weaponKind, nearest, tx, ty, id);
