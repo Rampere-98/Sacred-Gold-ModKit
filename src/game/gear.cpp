@@ -1589,8 +1589,8 @@ namespace
         {
             const uint32_t npcId = *reinterpret_cast<const uint32_t*>(merchant + 0x1D8);
             const cCreature* npc = npcId ? objects->creature(npcId) : nullptr;
-            const bool far = !npc || std::hypot(static_cast<double>(npc->x - hero->x), static_cast<double>(npc->y - hero->y)) > 1500.0;
-            if (tripOver || far)
+            const bool away = !npc || std::hypot(static_cast<double>(npc->x - hero->x), static_cast<double>(npc->y - hero->y)) > 1500.0;
+            if (tripOver || away)
             {
                 close(merchant, "merchant's", tripOver ? "the trip is over" : "its merchant is not near");
             }
