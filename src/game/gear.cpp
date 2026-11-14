@@ -1555,7 +1555,17 @@ namespace
         const uint8_t* merchant = ui ? *reinterpret_cast<const uint8_t* const*>(ui + 0x90) : nullptr;
         // Read live in A1 (block AW-6): +0x154 is the tab sheet (vtable 0x897258), the goods hang from its +0xD8.
         const uint8_t* sheet = merchant ? *reinterpret_cast<const uint8_t* const*>(merchant + 0x154) : nullptr;
-        const uint8_t* goods = sheet && !IsBadReadPtr(sheet, 0xDC) ? *reinterpret_cast<const uint8_t* const*>(sheet + 0xD8) : nullptr;
+        // Not always at +0xD8 (A2, 2026-11-14: the merchant window itself there): the sheet's child with the goods'
+        // vtable, wherever it hangs between +0x80 and +0x200.
+        const uint8_t* goods = nullptr;
+        for (size_t at = 0x80; sheet && at < 0x200 && !goods && !IsBadReadPtr(sheet, 0x200); at += 4)
+        {
+            const uint8_t* child = *reinterpret_cast<const uint8_t* const*>(sheet + at);
+            if (child && !IsBadReadPtr(child, 0x3F0 + 16 * 8) && *reinterpret_cast<const uintptr_t*>(child) == 0x896968)
+            {
+                goods = child;
+            }
+        }
         const auto* types = static_cast<const uint8_t*>(typeMgr());
         static DWORD s_toldAt = 0;
         const DWORD now = GetTickCount();
