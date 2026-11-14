@@ -1304,6 +1304,47 @@ namespace
     // --- Stepping back -------------------------------------------------------------------------------------------
 
     DWORD g_retreatUntil = 0;       // stepping back until then at the latest (0: not stepping back)
+    // No fights lost (docs/No-entrar-en-peleas-perdidas.md, [AutoAttack] NoLostFights): no fight of its choosing that
+    // the class's own record says goes bad (5 %, 3 % with no healing potion: about 70 % / 82 % to win by the prior);
+    // after leaving one as going bad, none sought for 20 s.
+    DWORD g_noSeekUntil = 0;        // no fight sought until then (0: none barred)
+    DWORD g_entryShutAt = 0;        // since when the forecast bars a fight of its choosing (0: open)
+    bool entryOpen(DWORD now)
+    {
+        if (!Config::autoAttack.noLostFights)
+        {
+            return true;
+        }
+        static DWORD s_at = 0;
+        static bool s_open = true;
+        if (s_at == now)
+        {
+            return s_open;     // asked once per enemy of the look: the same answer
+        }
+        s_at = now;
+        const CombatLearn::Forecast& pre = CombatLearn::forecast();
+        const float bad = CombatLearn::badChance(pre);
+        const bool barred = g_noSeekUntil && static_cast<int>(now - g_noSeekUntil) < 0;
+        s_open = !barred && bad <= (Gear::healingLeft() == 0 ? 0.03f : 0.05f);
+        if (s_open)
+        {
+            g_entryShutAt = 0;
+            return true;
+        }
+        if (!g_entryShutAt)
+        {
+            g_entryShutAt = now;
+        }
+        static DWORD s_toldAt = 0;
+        if (!s_toldAt || now - s_toldAt > 10000)
+        {
+            s_toldAt = now;
+            LOG("AutoAttack: no fight sought: {} enemies, {:.0f}% to win, {:.0f}% to go bad for this class, {} healing "
+                "potions{}",
+                pre.foes, pre.win * 100.0f, bad * 100.0f, Gear::healingLeft(), barred ? ", just left one going bad" : "");
+        }
+        return false;
+    }
     // Hopeless fights stepped back from (A3, the Battle Mage at level 4, 2026-11-12: away from groups of 5 at 418 %
     // of his health again and again, a level 4-7 region his farm and quest ground for hours, never a level up).
     std::deque<DWORD> g_hopelessAt;
@@ -2112,7 +2153,15 @@ namespace
         // no healing potion) and the fight not clearly won: left too.
         const int foeCap = Gear::healingLeft() > 0 ? mind.maxFoes : mind.maxFoesDry;
         const bool overrun = foeCap > 0 && fc.foes > foeCap && fc.win < 0.6f;
-        const bool doomed = drained || overrun || (!quickOne &&
+        // No fights lost: the class's own record says a fight like this goes bad (12 %, about 46 % to win by the
+        // prior): left whatever the health, after 4 s in it and 1.5 s of it so; at once from 25 % (about 17 % to win).
+        static DWORD s_badSince = 0;
+        const float badNow = Config::autoAttack.noLostFights ? CombatLearn::badChance(fc) : 0.0f;
+        s_badSince = badNow >= 0.12f ? (s_badSince ? s_badSince : now) : 0;
+        const bool goesBad = Config::autoAttack.noLostFights && !quickOne && fc.foes > 0 &&
+                             CombatLearn::fightSeconds() >= 4.0f &&
+                             ((s_badSince && now - s_badSince >= 1500) || badNow >= 0.25f);
+        const bool doomed = goesBad || drained || overrun || (!quickOne &&
                             ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
                              (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
                              (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f)));
@@ -2217,7 +2266,8 @@ namespace
             }
             // Not on the first look that sees fewer (the live verifier, 2026-11-11: 24 of 33 such retreats over in
             // under 3 s, the group still there, only out of sight): 8 s away at least.
-            if (g_retreatDoomed && !doomed && !tooLong && anyNear && g_retreatStartAt && now - g_retreatStartAt > 8000)
+            if (g_retreatDoomed && (Config::autoAttack.noLostFights ? badNow <= 0.05f : !doomed) && !tooLong && anyNear &&
+                g_retreatStartAt && now - g_retreatStartAt > 8000)
             {
                 LOG("AutoAttack: stepping back over (the fight no longer foreseen hopeless)");
                 g_retreatUntil = 0;
@@ -2257,9 +2307,14 @@ namespace
             if (g_retreatDoomed)
             {
                 g_hopelessAt.push_back(now);
+                if (Config::autoAttack.noLostFights)
+                {
+                    g_noSeekUntil = now + 20000;
+                }
                 g_hopelessSpots.push_back({static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize), now});
-                LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win): stepping back at {} of {} health{}",
-                    fc.foes, fc.win * 100.0f, health, maximum,
+                LOG("AutoAttack: a hopeless fight ({} enemies, {:.0f}% to win, {:.0f}% to go bad{}): stepping back at {} of "
+                    "{} health{}",
+                    fc.foes, fc.win * 100.0f, badNow * 100.0f, goesBad ? ", the class's record" : "", health, maximum,
                     outmatched(now) ? "; outmatched here: farming and quests only where the enemies are not above the hero"
                                     : "");
             }
@@ -2942,7 +2997,7 @@ namespace
         const bool fitToSeek = !heroObject || heroObject->maxHealth <= 0 || heroObject->health * 100 >= heroObject->maxHealth * 60;
         const bool questSeek = g_questSeekUntil && static_cast<int>(GetTickCount() - g_questSeekUntil) < 0;
         const bool seek = (Config::autoAttack.seek || g_intent == Intent::Farm || questSeek) && !Gear::wantsShop() &&
-                          !g_questTravel && fitToSeek;
+                          !g_questTravel && fitToSeek && entryOpen(now);
             if (current ? !engagedFoe && d > range * 1.5f : !engagedFoe && (!seek || d > range))
             {
                 continue;
@@ -3993,7 +4048,7 @@ namespace
             {
                 continue;
             }
-            if (nearDeathSpot(cx, cy))
+            if (nearDeathSpot(cx, cy) || (Config::autoAttack.noLostFights && nearHopelessSpot(cx, cy, GetTickCount())))
             {
                 continue;
             }
@@ -6502,6 +6557,42 @@ namespace
         // No quest to see to: off to the farming zone (many enemies of the hero's level), roaming there.
         if (Config::autoAttack.farm && !questHere && layer == 0 && g_farmKnown)
         {
+            // No fights lost: nothing to take here for 10 s (each fight foreseen going bad). Potions first (under half
+            // the class's stock), else rest to 90 % (none after the hero), else another farming zone (this one left
+            // 15 min). Then 10 s more before the next turn.
+            if (Config::autoAttack.noLostFights && g_entryShutAt && now - g_entryShutAt > 10000 && hero)
+            {
+                const int left = Gear::healingLeft();
+                bool chased = false;
+                for (const AggroFoe& f : g_aggroFoes)
+                {
+                    chased = chased || f.onHero;
+                }
+                std::string what;
+                if (left >= 0 && left < Mind::now().potionStock / 2 && !Gear::wantsShop())
+                {
+                    Gear::askPotions(now + 600000);
+                    what = std::format("to the merchant for potions ({} left)", left);
+                }
+                else if (hero->health * 10 < hero->maxHealth * 9 && !chased)
+                {
+                    g_quietUntil = now + 30000;
+                    what = std::format("resting to 90% ({} of {})", hero->health, hero->maxHealth);
+                }
+                else
+                {
+                    g_vetoedCircles.push_back({static_cast<int>(g_farmX / kTileSize), static_cast<int>(g_farmY / kTileSize), now});
+                    g_farmKnown = false;
+                    what = "another farming zone (this one left 15 min)";
+                }
+                LOG("AutoAttack: no fight to take for {} s: {}", (now - g_entryShutAt) / 1000, what);
+                remember(std::format("sin peleas que ganar aquí: {}", what));
+                g_entryShutAt = now;
+                if (!g_farmKnown)
+                {
+                    return;
+                }
+            }
             if (g_intent != Intent::Farm)
             {
                 setIntent(Intent::Farm, "no quest to see to: experience where the enemies fit the hero");

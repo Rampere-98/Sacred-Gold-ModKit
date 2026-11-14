@@ -990,6 +990,7 @@ namespace
     std::atomic<bool> g_closeShop{false};   // the trip is over: the merchant's window closed the game's own way
     int g_idleWorks = 0;
     std::atomic<DWORD> g_noTripUntil{0};    // full with nothing to sell: no trip again for a while
+    std::atomic<DWORD> g_askPotionsUntil{0};    // the auto attack asked for healing potions until then (0: not)
 
     // Full: no room left for a 2x2 piece (a helmet, gloves; armor needs more).
     bool packFull(uint8_t* pack)
@@ -3008,9 +3009,17 @@ bool Gear::wantsShop()
     const uint32_t gold = hero ? *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold) : 0;
     // Before they run out (the analyst, 2026-11-10 18:17: 9 of 137 fights below 20 % of health once the last
     // potion was gone, 11-15 enemies at level 4): at 2 left.
-    const bool potions = g_settings.buy && g_healing >= 0 && g_healing <= 2 && gold >= 200;
+    const DWORD asked = g_askPotionsUntil;
+    const bool askedNow = asked && static_cast<int>(GetTickCount() - asked) < 0 && g_healing < wantHealing();
+    const bool potions = g_settings.buy && g_healing >= 0 && (g_healing <= 2 || askedNow) && gold >= 200;
     return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0) &&
            (Act::automatic(Act::Kind::Sell) || Act::automatic(Act::Kind::Buy));
+}
+
+void Gear::askPotions(unsigned long until)
+{
+    g_askPotionsUntil = static_cast<DWORD>(until);
+    LOG("Gear: healing potions wanted before more fights ({} of {}): a merchant trip", g_healing, wantHealing());
 }
 
 void Gear::tripOpened()

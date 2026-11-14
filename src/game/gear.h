@@ -15,6 +15,9 @@ namespace Gear
 
     // Merchant trips ([Gear] Trips): the backpack is full, the agent should take the hero to a merchant.
     bool wantsShop();
+    // The auto attack wants healing potions before more fights (no fight to take, under half the class's stock): a
+    // merchant trip is wanted for them until `until` (tick), as with 2 left.
+    void askPotions(unsigned long until);
     // Runes of other classes in the backpack, and whether to take them to a combo master: three or more and gold for
     // the swap (three of them make one of the hero's own class).
     int foreignRunes();

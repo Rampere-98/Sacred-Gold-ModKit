@@ -74,6 +74,12 @@ namespace CombatLearn
     const Forecast& forecast();
     // The rank of enemy `id` in the forecast's kill order (0: first; -1: not in it).
     int killRank(uint32_t id);
+    // The chance a fight like `fc` goes bad (near death, under 20 % of health, or death) for the hero's class, by
+    // its own record per tenth of the forecast's win (a prior of 20 fights per tenth from docs/Medidores/
+    // Prevision.md §2, 22 034 fights of the 8 copies); linear between the tenths' middles. 0 with no enemy.
+    float badChance(const Forecast& fc);
+    // Seconds since the fight under way began (0 out of a fight).
+    float fightSeconds();
 
     // Its ModKit menu section (the encyclopedia); once.
     void install();

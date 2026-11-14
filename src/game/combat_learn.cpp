@@ -138,6 +138,24 @@ namespace
     CombatLearn::Forecast g_forecast;
     std::unordered_map<uint32_t, int> g_killRank;
 
+    // How often fights went bad (near death or death) per tenth of the forecast's win, per class (the player,
+    // 2026-11-14: «la probabilidad de victoria no puede depender del porcentaje en batalla, el agente no conoce el
+    // potencial del personaje»: the raw win runs grim below one half; each class learns what its own fights did).
+    // Under g_lock. The prior: near deaths + deaths per tenth over the 22 034 fights of docs/Medidores/Prevision.md §2.
+    struct BadBin
+    {
+        float fights = 0.0f, bad = 0.0f;
+    };
+    BadBin g_bad[10][10];
+    constexpr float kBadPrior[10] = {0.297f, 0.261f, 0.203f, 0.128f, 0.127f, 0.073f, 0.051f, 0.049f, 0.021f, 0.003f};
+    constexpr float kBadPriorFights = 20.0f;
+
+    float binBad(int cls, int bin)
+    {
+        const BadBin& b = g_bad[std::clamp(cls, 0, 9)][std::clamp(bin, 0, 9)];
+        return (b.bad + kBadPrior[std::clamp(bin, 0, 9)] * kBadPriorFights) / (b.fights + kBadPriorFights);
+    }
+
     struct Seen
     {
         uint32_t type = 0;
@@ -304,6 +322,11 @@ namespace
                 c.spread = std::clamp(c.spread, 0.2f, 2.0f);
                 g_byClass[cls] = c;
             }
+            else if (int bin = 0; std::sscanf(line, "bad %d %d %f %f", &cls, &bin, &c.bias, &c.spread) == 4 &&
+                                  cls >= 0 && cls < 10 && bin >= 0 && bin < 10)
+            {
+                g_bad[cls][bin] = {std::max(0.0f, c.bias), std::clamp(c.spread, 0.0f, std::max(0.0f, c.bias))};
+            }
             else if (std::sscanf(line, "forecast2 %f %f %d", &g_lossBias, &g_lossSpread, &g_lossSamples) == 3)
             {
                 g_lossSpread = std::clamp(g_lossSpread, 0.2f, 2.0f);
@@ -356,6 +379,16 @@ namespace
                 {
                     std::fprintf(f, "class %d %.5f %.5f %d %.4f %d\n", cls, c.bias, c.spread, c.samples, c.blows,
                                  c.blowSamples);
+                }
+            }
+            for (int cls = 0; cls < 10; ++cls)
+            {
+                for (int bin = 0; bin < 10; ++bin)
+                {
+                    if (const BadBin& b = g_bad[cls][bin]; b.fights > 0.0f)
+                    {
+                        std::fprintf(f, "bad %d %d %.0f %.0f\n", cls, bin, b.fights, b.bad);
+                    }
                 }
             }
             for (const auto& [type, k] : g_kinds)
@@ -517,6 +550,23 @@ namespace
         if (g_fight.heroMax <= 0)
         {
             return;
+        }
+        // The class's record of fights gone bad, by the win foreseen at the start (or the grimmer one once more came);
+        // before the death's branch below, which returns.
+        if (g_class >= 0 && g_class < 10 && g_fight.forecast.foes > 0)
+        {
+            const int bin = std::clamp(static_cast<int>(g_fight.forecast.win * 10.0f), 0, 9);
+            const bool bad = g_fight.died || g_fight.heroMin * 5 < g_fight.heroMax;
+            const std::lock_guard lock(g_lock);
+            g_bad[g_class][bin].fights += 1.0f;
+            g_bad[g_class][bin].bad += bad ? 1.0f : 0.0f;
+            g_dirty = true;
+            if (bad)
+            {
+                LOG("CombatLearn: a fight gone bad at {:.0f}% foreseen to win: class {} now {:.1f}% bad there ({:.0f} "
+                    "fights of its own)",
+                    g_fight.forecast.win * 100.0f, g_class, binBad(g_class, bin) * 100.0f, g_bad[g_class][bin].fights);
+            }
         }
         // Punished for dying (the player, 2026-11-10: «castiga al agente por morir»; on Bronze it never should): the
         // forecast grows much more careful (the error counted as at least a doubled loss, three times over, so later
@@ -963,4 +1013,24 @@ int CombatLearn::killRank(uint32_t id)
 {
     const auto it = g_killRank.find(id);
     return it != g_killRank.end() ? it->second : -1;
+}
+
+float CombatLearn::badChance(const Forecast& fc)
+{
+    if (fc.foes <= 0)
+    {
+        return 0.0f;
+    }
+    // Between the middles of the tenths (0.05, 0.15 ... 0.95), not a step at each tenth.
+    const float w = std::clamp(fc.win * 10.0f - 0.5f, 0.0f, 9.0f);
+    const int lo = static_cast<int>(w), hi = std::min(lo + 1, 9);
+    const std::lock_guard lock(g_lock);
+    const int cls = g_class >= 0 && g_class < 10 ? g_class : 0;
+    const float a = binBad(cls, lo), b = binBad(cls, hi);
+    return a + (b - a) * (w - static_cast<float>(lo));
+}
+
+float CombatLearn::fightSeconds()
+{
+    return g_inFight && g_lastLook >= g_fight.start ? (g_lastLook - g_fight.start) / 1000.0f : 0.0f;
 }

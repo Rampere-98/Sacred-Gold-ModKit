@@ -30,6 +30,9 @@ namespace Config
         // sectors kept off walls, walked in straight legs; the game's path finder only when no route is found.
         bool ownPaths = false;
         int repeatMs = 200;     // the attack order again this often while the target lives (as a held click); 0 = once
+        // No fight of its choosing that the class's own record says goes bad, and left at once when one turns so
+        // (docs/No-entrar-en-peleas-perdidas.md). Off: as before (the record is still learned).
+        bool noLostFights = false;
     };
     inline AutoAttack autoAttack;
 }
