@@ -58,6 +58,10 @@ namespace Tactics
     // cuando no está transformada»): bit 0x2000 of hero+0x14 (Manolito, block AH).
     bool vampireForm(unsigned long now);
 
+    // The Vampiress has a fight and would turn into the vampire (the player, 2026-11-14: «en batalla transformada, sin
+    // batalla vampiresa normal»): AutoAttack takes her off the horse first.
+    bool vampireTurnWanted();
+
     // A learned art or combo as the bar's arrangement sees it (HeroBuild, docs/Artes-de-la-barra.md).
     struct ArtFact
     {

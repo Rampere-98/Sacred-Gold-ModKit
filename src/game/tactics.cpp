@@ -19,6 +19,7 @@
 
 #include <imgui.h>
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -841,6 +842,89 @@ namespace
         return v[v.size() / 2];
     }
 
+    // The Vampiress fights in her vampire form and walks in her knight's (the player, 2026-11-14: «en batalla
+    // transformada, sin batalla vampiresa normal», in place of 2026-11-12's; the guides V1-V3 too). The form by bit
+    // 0x2000 of hero+0x14 (Tactics::vampireForm). No change within kFormHoldMs of the last one seen (two enemies in a
+    // row do not flip her back and forth), and back to the knight only after kFormBackMs with no enemy about.
+    constexpr DWORD kFormHoldMs = 15000;
+    constexpr DWORD kFormBackMs = 20000;
+    DWORD g_formChangedAt = 0;      // the form's bit last seen flipping
+    bool g_formSeen = false, g_formWas = false;
+    DWORD g_enemySeenAt = 0;        // the last look with an enemy about, fought or threatening
+    std::atomic<bool> g_vampireWanted{false};
+
+    bool vampiress()
+    {
+        const HeroProfile::Class cls = HeroProfile::current().cls;
+        return cls == HeroProfile::Class::Vampiress || cls == HeroProfile::Class::VampiressNight;
+    }
+
+    bool formSettled(DWORD now)
+    {
+        return !g_formChangedAt || now - g_formChangedAt > kFormHoldMs;
+    }
+
+    // The bar's slot holding `art` and left to the agent (a slot set in [Tactics] is the player's), -1 for none.
+    int slotOf(const uint8_t* player, uint32_t art)
+    {
+        for (int slot = 0; slot < kSlots; ++slot)
+        {
+            if (slotArt(player, slot).art == art && Config::tactics.slots[slot] == Art::Auto)
+            {
+                return slot;
+            }
+        }
+        return -1;
+    }
+
+    // Each look: the form's flips, the wish to turn (AutoAttack takes her off the horse for it), and the turn back to
+    // the knight once no enemy has been about for a while. Turning into the vampire is chooseArt's (a fight's start).
+    void vampireForms(const Tactics::Situation& s)
+    {
+        if (!vampiress())
+        {
+            g_vampireWanted = false;
+            return;
+        }
+        const bool vampire = Tactics::vampireForm(s.now);
+        if (g_formSeen && vampire != g_formWas)
+        {
+            g_formChangedAt = s.now;
+            LOG("Tactics: the Vampiress's form: {}", vampire ? "vampire" : "knight");
+        }
+        g_formSeen = true;
+        g_formWas = vampire;
+        if (s.target || s.threat || s.count > 0)
+        {
+            g_enemySeenAt = s.now;
+        }
+        const uint8_t* player = playerData();
+        g_vampireWanted = Config::tactics.arts && player && s.target && !vampire && formSettled(s.now) &&
+                          slotOf(player, 0x3FE) >= 0;
+        if (!vampire || !Config::tactics.arts || !player || !formSettled(s.now) || g_phase != Phase::Idle ||
+            (g_enemySeenAt && s.now - g_enemySeenAt < kFormBackMs) ||
+            (g_nextArtAt && static_cast<int>(s.now - g_nextArtAt) < 0) || CombatState::casting(heroCreature()))
+        {
+            return;
+        }
+        const int slot = slotOf(player, 0x3FF);
+        if (slot < 0)
+        {
+            return;
+        }
+        const SlotArt sa = slotArt(player, slot);
+        const HeroArt ha = heroArtsReadable() ? heroArt(sa.kind, sa.art) : HeroArt{};
+        if (heroArtsReadable() && !ha.found)
+        {
+            return;     // not learned
+        }
+        if (ha.found && ha.left > 0.0f)
+        {
+            return;     // recharging
+        }
+        startArt(slot, 0x3FF, 0, s, "no enemy about: back to the knight's form");
+    }
+
     void chooseArt(const Tactics::Situation& s)
     {
         // Set again below each look: a stale "recharging" would have Concentration drunk (mounted, between arts).
@@ -1004,16 +1088,15 @@ namespace
             }
             learned(sa.art).self = selfCast(sa.kind, sa.art);
             Art use = slotUse(slot, sa.art);
-            // The Vampiress's turn into a vampire (0x3FE) is her fighting form (the player, 2026-11-11: she «tiene
-            // equipadas habilidades que sí se pueden usar a caballo … no las usa ni a pie», and 0x3FE/0x3FF were all
-            // her slots held): cast as a buff at a hard fight's start, only from the knight's form (creature type
-            // hero+0x10 6; the vampire's taken as 7, Manolito's guess, not seen live yet) and at most every 10 min,
-            // so a wrong guess cannot flip her back and forth. Turning back (0x3FF) stays the player's.
+            // The Vampiress's turn into a vampire (0x3FE) is her fighting form (the player, 2026-11-14: «en batalla
+            // transformada, sin batalla vampiresa normal»): at any fight's start, from the knight's form (bit 0x2000
+            // of hero+0x14), not within kFormHoldMs of the last change. Turning back (0x3FF) is vampireForms' once no
+            // enemy is about.
+            bool turnVampire = false;
             if (sa.art == 0x3FE && Config::tactics.slots[slot] == Art::Auto)
             {
-                const uint32_t type = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x10);
-                const DWORD last = learned(sa.art).lastCast;
-                use = type == 6 && (!last || static_cast<int>(s.now - last) > 600000) ? Art::Buff : Art::Off;
+                turnVampire = !Tactics::vampireForm(s.now) && formSettled(s.now);
+                use = Art::Off;
             }
             int rank = 0;
             uint32_t at_ = 0;
@@ -1126,6 +1209,13 @@ namespace
                     at_ = worst;
                     reason = "blinding the enemy that hurts most";
                 }
+            }
+            // Into the vampire as the fight starts: above the blows and the opening buffs' peers, under the panic.
+            if (turnVampire)
+            {
+                rank = 10;
+                at_ = 0;
+                reason = "a fight: into the vampire form";
             }
             // The class's panic art (docs/Mentalidades.md §2, panicArt and panicPercent): with health below the mark
             // and enemies on the hero, cast before anything else, potions or not (the escapes 0x1, 0x24, 0x413 are
@@ -1529,6 +1619,7 @@ void Tactics::think(const Situation& s)
         }
     }
     g_lastHealth = std::move(health);
+    vampireForms(s);
 
     if (g_phase != Phase::Idle)
     {
@@ -1756,6 +1847,11 @@ void Tactics::onFrame(DWORD now)
     default:
         return;
     }
+}
+
+bool Tactics::vampireTurnWanted()
+{
+    return g_vampireWanted;
 }
 
 bool Tactics::vampireForm(unsigned long)

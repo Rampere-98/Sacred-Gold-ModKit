@@ -196,7 +196,10 @@ namespace
         float w = kUseWorth[static_cast<int>(sit)][f.use];
         // The class's panic art and opening buff stay in the bar in every situation (an escape is «off» as a blow,
         // worth 0 otherwise, and the panic would find it missing).
-        if (f.art && (f.art == Mind::now().panicArt || Mind::opens(Mind::now(), f.art)))
+        // The Vampiress's turns (0x3FE into the vampire, 0x3FF back; ids unique across classes) too: without 0x3FF
+        // she would stay a vampire, her runes refused.
+        if (f.art && (f.art == Mind::now().panicArt || Mind::opens(Mind::now(), f.art) || f.art == 0x3FE ||
+                      f.art == 0x3FF))
         {
             w = std::max(w, 1.5f);
         }

@@ -1869,6 +1869,13 @@ namespace
             LOG("AutoAttack: the Vampiress in her vampire form: off the horse");
             code = 0x20A;
         }
+        // A fight and her turn due: off first (V1: the vampire form has no mounted variant; the turn may be barred up
+        // there), the turn follows on foot (Tactics, chooseArt).
+        else if (mounted && Tactics::vampireTurnWanted() && now - s_at > 1500)
+        {
+            LOG("AutoAttack: the Vampiress has a fight: off the horse for the vampire form");
+            code = 0x20A;
+        }
         else if (mounted && onFoot && now - s_at > 1500)
         {
             code = 0x20A;
