@@ -10,6 +10,8 @@
 #include <mutex>
 #include <string>
 
+using namespace Sacred;
+
 namespace
 {
     constexpr int kCount = static_cast<int>(Cheats::Id::Count);
