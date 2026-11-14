@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <initializer_list>
 #include "log.h"
+#include <intrin.h>
+#include <windows.h>
 #include <mutex>
 #include <vector>
 
@@ -150,7 +152,30 @@ void Inject::engineCall(void (*fn)(void*), void* context)
 void Inject::drainEngine()
 {
     const DWORD engineThread = *reinterpret_cast<const DWORD*>(0x17E7D40);
-    const bool engine = engineThread && GetCurrentThreadId() == engineThread;
+    bool engine = engineThread && GetCurrentThreadId() == engineThread;
+    // Only on an ordinary frame's flip (Manolito, block AZ: cEngine::tick calls it at 0x60EA8A, after the scene and
+    // the UI; the loading screen 0x6468A0 flips too, from inside cEngine::load and cEngine::save, and a call into
+    // the game there would land in the middle of a load or a save). The frame's flip has the return address 0x60EA8F
+    // among the frames above this one: looked for up the stack.
+    if (engine)
+    {
+        bool frameFlip = false;
+        const auto* teb = reinterpret_cast<const NT_TIB*>(NtCurrentTeb());
+        const auto* top = static_cast<const uintptr_t*>(teb->StackBase);
+        const auto* sp = reinterpret_cast<const uintptr_t*>(_AddressOfReturnAddress());
+        for (int i = 0; i < 512 && sp + i < top; ++i)
+        {
+            if (sp[i] == 0x60EA8F)
+            {
+                frameFlip = true;
+                break;
+            }
+        }
+        if (!frameFlip)
+        {
+            return;
+        }
+    }
     std::vector<EngineCall> calls;
     {
         const std::lock_guard lock(g_engineLock);

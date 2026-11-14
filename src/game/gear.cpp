@@ -1639,6 +1639,32 @@ namespace
         const auto* types = static_cast<const uint8_t*>(typeMgr());
         static DWORD s_toldAt = 0;
         const DWORD now = GetTickCount();
+        if (types && (!goods || IsBadReadPtr(goods, 0x3F0 + 16 * 8) || *reinterpret_cast<const uintptr_t*>(goods) != 0x896968))
+        {
+            // The list not found (some merchants' windows hang it elsewhere: A1's 64c, 2026-11-14, sold nothing for
+            // hours, the backpack full): what the shop has on its own shelves tells what it deals in. An item of a
+            // category the merchant sells is one he takes.
+            const int category = types[type * 0x80 + 0x2E];
+            bool onShelves = false;
+            for (int page = 0; page < kStockPages && !onShelves; ++page)
+            {
+                if (uint8_t* stock = entryOf(kFirstStockPage + page))
+                {
+                    eachItem(stock, [&](uint32_t id, int, int, int) {
+                        const uint32_t t = typeOf(id);
+                        onShelves |= t && types[t * 0x80 + 0x2E] == category;
+                    });
+                }
+            }
+            if (!s_toldAt || now - s_toldAt > 60000)
+            {
+                s_toldAt = now;
+                LOG("Gear: the shop's list of what it takes was not found (merchant {}): by its shelves instead "
+                    "(category {:x}: {})",
+                    static_cast<const void*>(merchant), category, onShelves ? "sold there" : "not sold there");
+            }
+            return onShelves;
+        }
         if (!goods || !types || IsBadReadPtr(goods, 0x3F0 + 16 * 8) || *reinterpret_cast<const uintptr_t*>(goods) != 0x896968)
         {
             if (!s_toldAt || now - s_toldAt > 60000)
