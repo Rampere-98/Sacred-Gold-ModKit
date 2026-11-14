@@ -375,6 +375,20 @@ void AgentSave::onFrame()
         g_reloadWanted = false;
         return;
     }
+    // A save every 10 minutes too (the live verifier, four times: A8 lost a level 13 and A3 a level 8 with 25 000
+    // experience, 1 h 45 without a save: only a quest done asked for one). It waits for a calm moment as the others.
+    {
+        static DWORD s_periodAt = GetTickCount();
+        if (const DWORD now = GetTickCount(); now - s_periodAt > 600000)
+        {
+            s_periodAt = now;
+            if (!g_saveWanted)
+            {
+                LOG("AgentSave: 10 minutes played: a save is due");
+                g_saveWanted = true;
+            }
+        }
+    }
     if (g_slot <= 0)
     {
         return;
