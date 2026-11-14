@@ -1,4 +1,5 @@
 #include "game/combat_learn.h"
+#include "config/auto_attack.h"
 #include "game/combat_state.h"
 #include "game/gear.h"
 #include "game/hero_profile.h"
@@ -27,6 +28,63 @@ namespace
     constexpr size_t kTypeId = 0x10;
     constexpr size_t kLevel = 0x3FE;
     constexpr size_t kExperience = 0x3A8 + 0x0C;
+
+    // A creature's combat sheet (the hero's too), from its stats st = creature + 0x3A8 (docs/AGENT_ADDRESSES.md
+    // «Enciclopedia», «Resistencias y debilidades de enemigos»; docs/Medicion-de-enemigos.md §2.1). Kinds 0 physical,
+    // 1 fire, 2 magic, 3 poison. Unconfirmed on creatures live: the damage (st+0x76/+0x86, which of the two is the
+    // minimum disputed: the mean is used) and the attack (st+0x5A); the units of the two speeds.
+    struct Sheet
+    {
+        bool ok = false;
+        float dmgA[4] = {}, dmgB[4] = {};   // st+0x76+4i, st+0x86+4i: the kind's two damage bounds
+        float res[4] = {};                  // effective resistance: st+0x66+4i times st+0xD6+4i
+        float attack = 0.0f, defence = 0.0f;    // st+0x5A, st+0x5E
+        int attackSpeed = 0, moveSpeed = 0;     // u16 st+0x3C, st+0x40
+        int side = 0;                           // u8 o+0x1F0 (CL_*: 14 hostile, 6 fauna, 5 undead...)
+        float meanDamage(int k) const { return (dmgA[k] + dmgB[k]) * 0.5f; }
+    };
+
+    bool saneStat(float v)
+    {
+        return v == v && v >= 0.0f && v < 100000.0f;
+    }
+
+    // Raw reads under SEH (a creature can be freed between the look and the read; click_walk's liveWalkable does the
+    // same); false: not read, or not a sane sheet.
+    bool readSheet(const void* object, Sheet& out)
+    {
+        __try
+        {
+            const auto* o = static_cast<const uint8_t*>(object);
+            const uint8_t* st = o + 0x3A8;
+            Sheet s;
+            bool sane = true;
+            float any = 0.0f;
+            for (int k = 0; k < 4; ++k)
+            {
+                s.dmgA[k] = *reinterpret_cast<const float*>(st + 0x76 + 4 * k);
+                s.dmgB[k] = *reinterpret_cast<const float*>(st + 0x86 + 4 * k);
+                s.res[k] = *reinterpret_cast<const float*>(st + 0x66 + 4 * k) *
+                           *reinterpret_cast<const float*>(st + 0xD6 + 4 * k);
+                sane = sane && saneStat(s.dmgA[k]) && saneStat(s.dmgB[k]) && saneStat(s.res[k]);
+                any += s.dmgA[k] + s.dmgB[k];
+            }
+            s.attack = *reinterpret_cast<const float*>(st + 0x5A);
+            s.defence = *reinterpret_cast<const float*>(st + 0x5E);
+            s.attackSpeed = *reinterpret_cast<const uint16_t*>(st + 0x3C);
+            s.moveSpeed = *reinterpret_cast<const uint16_t*>(st + 0x40);
+            s.side = o[0x1F0];
+            sane = sane && saneStat(s.attack) && saneStat(s.defence) && s.attackSpeed < 2000 && s.moveSpeed < 2000;
+            s.ok = sane && (any > 0.0f || s.attack > 0.0f);
+            out = s;
+            return s.ok;
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            out.ok = false;
+            return false;
+        }
+    }
 
     template <class T>
     T field(const void* object, size_t offset)
@@ -171,7 +229,52 @@ namespace
         bool learned = false;
         float hit = -1.0f;              // the hero's expected blow against it
         bool summoner = false;          // brings others in while alive (raises, conjures, heals)
+        Sheet sheet;                    // read until it reads sane
+        float prior = -1.0f;            // its blows on this hero by its sheet, share of max health a second (-1: none)
+        float rate3 = 0.0f, var3 = 0.0f;    // forecast3's rate (the prior and its kind's measure mixed), its log variance
+        float distance = 0.0f;          // world units from the hero at the last look
     };
+
+    // The hero's sheet at the last look (its resistances and defence against each enemy's sheet).
+    Sheet g_heroSheet;
+    constexpr float kPriorSamples = 5.0f;           // the sheet's prior counts as this many measures of the kind
+    constexpr float kAttackSpeedPerBlow = 100.0f;   // st+0x3C for one blow a second: a guess until Manolito confirms
+
+    // The enemy's blows on this hero from its sheet: per kind its mean damage through the hero's resistance
+    // (dealt^2 / (dealt + resistance), as Gear's estimate the other way), times its chance to hit (its attack against
+    // the hero's defence, the formula of Gear::expectedHit), times its blows a second; mixed in the log with what its
+    // kind was measured to deal. Without a sheet, today's model. Under g_lock.
+    void priorAndRate(Seen& s, int heroMax)
+    {
+        s.prior = -1.0f;
+        if (s.sheet.ok && g_heroSheet.ok && heroMax > 0)
+        {
+            float blow = 0.0f;
+            for (int k = 0; k < 4; ++k)
+            {
+                const float d = s.sheet.meanDamage(k);
+                blow += d > 0.0f ? d * d / (d + g_heroSheet.res[k]) : 0.0f;
+            }
+            const float chance = s.sheet.attack > 0.0f ? s.sheet.attack / (s.sheet.attack + g_heroSheet.defence) : 1.0f;
+            const float blows = s.sheet.attackSpeed > 0 ? s.sheet.attackSpeed / kAttackSpeedPerBlow : 1.0f;
+            s.prior = std::clamp(blow * chance * blows / static_cast<float>(heroMax), 0.0f, kMaxRate);
+        }
+        const auto it = g_kinds.find(s.type);
+        const float n = it != g_kinds.end() ? static_cast<float>(it->second.samples) : 0.0f;
+        if (s.prior >= 0.0f)
+        {
+            const float logPrior = std::log(s.prior + kFloor);
+            const float logRate =
+                n > 0.0f ? (kPriorSamples * logPrior + n * it->second.logRate) / (kPriorSamples + n) : logPrior;
+            s.rate3 = std::clamp(std::exp(logRate) - kFloor, 0.0f, kMaxRate);
+            s.var3 = 0.36f * kPriorSamples / (kPriorSamples + n) + 0.1f;
+        }
+        else
+        {
+            s.rate3 = s.predicted;
+            s.var3 = 0.49f * kTypePrior / (kTypePrior + n) + 0.1f;
+        }
+    }
 
     // Kinds that bring others into a fight while alive, by their type names (the web researcher, WEB_RESEARCH §18:
     // goblin shamans breed goblins, Sakkara priests and mages conjure, liches raise servants, druids call wisps; the
@@ -211,6 +314,8 @@ namespace
         float lostTotal = 0.0f;     // all the health lost (potions hide it from start - end)
         float dealt = 0.0f;         // health the enemies lost
         CombatLearn::Forecast forecast; // at its start
+        CombatLearn::Forecast3 forecast3;   // the same from the sheets (the grimmer one once more came)
+        Sheet heroSheet;                    // the hero's at its start
         std::vector<std::pair<uint32_t, Seen>> foes;    // those of the fight that are gone
     };
     Fight g_fight;
@@ -411,7 +516,7 @@ namespace
                       "\"heroEnd\":%d,\"mounted\":%s,\"mountMin\":%d,\"mountMax\":%d,\"potions\":%d,\"kills\":%d,"
                       "\"experience\":%d,\"hirelingDeaths\":%d,\"died\":%s,\"unexplained\":%.0f,"
                       "\"lostTotal\":%.0f,\"dealt\":%.0f,\"forecast\":{\"foes\":%d,\"loss\":%.3f,\"seconds\":%.1f,"
-                      "\"win\":%.3f,\"blowsPerSecond\":%.2f,\"bias\":%.3f,\"spread\":%.3f},\"foes\":[",
+                      "\"win\":%.3f,\"blowsPerSecond\":%.2f,\"bias\":%.3f,\"spread\":%.3f},",
                       static_cast<unsigned long>(now), (g_fight.lastAction - g_fight.start) / 1000.0f, heroLevel,
                       g_fight.heroMax, g_fight.heroStart, g_fight.heroMin, heroHealth,
                       g_fight.mounted ? "true" : "false", g_fight.mountMin, g_fight.mountMax, g_fight.potions,
@@ -420,19 +525,40 @@ namespace
                       g_fight.forecast.loss, g_fight.forecast.seconds, g_fight.forecast.win, g_blowsPerSecond,
                       g_lossBias, g_lossSpread);
         line = head;
+        {
+            const Sheet& h = g_fight.heroSheet;
+            const CombatLearn::Forecast3& f3 = g_fight.forecast3;
+            char extra[640];
+            std::snprintf(extra, sizeof(extra),
+                          "\"forecast3\":{\"foes\":%d,\"sheets\":%s,\"win\":%.3f,\"loss\":%.3f,\"seconds\":%.1f,"
+                          "\"hpLo\":%.3f,\"hpMid\":%.3f,\"hpHi\":%.3f,\"potions\":%d,\"decides\":%s},"
+                          "\"heroSheet\":{\"ok\":%s,\"res\":[%.1f,%.1f,%.1f,%.1f],\"defence\":%.1f,\"attack\":%.1f,"
+                          "\"attackSpeed\":%d,\"moveSpeed\":%d},\"foes\":[",
+                          f3.foes, f3.fromSheets ? "true" : "false", f3.win, f3.loss, f3.seconds, f3.hpLo, f3.hpMid,
+                          f3.hpHi, f3.potions, Config::autoAttack.forecast3 ? "true" : "false", h.ok ? "true" : "false",
+                          h.res[0], h.res[1], h.res[2], h.res[3], h.defence, h.attack, h.attackSpeed, h.moveSpeed);
+            line += extra;
+        }
         bool first = true;
         for (const auto& [id, s] : g_fight.foes)
         {
-            char foe[384];
+            char foe[1024];
             const float rate = s.strikeSeconds > 0.0f && g_fight.heroMax > 0
                                    ? s.damage / g_fight.heroMax / s.strikeSeconds * 100.0f : 0.0f;
+            const Sheet& e = s.sheet;
             std::snprintf(foe, sizeof(foe),
                           "%s{\"kind\":\"%s\",\"level\":%d,\"maxHealth\":%d,\"left\":%d,\"ranged\":%s,"
                           "\"strikeSeconds\":%.1f,\"damage\":%.0f,\"percentPerSecond\":%.2f,\"predicted\":%.2f,"
-                          "\"toHirelings\":%d,\"hit\":%.1f}",
+                          "\"toHirelings\":%d,\"hit\":%.1f,\"prior\":%.2f,\"rate3\":%.2f,\"var3\":%.2f,\"distance\":%.0f,"
+                          "\"sheet\":{\"ok\":%s,\"dmgA\":[%.1f,%.1f,%.1f,%.1f],\"dmgB\":[%.1f,%.1f,%.1f,%.1f],"
+                          "\"res\":[%.1f,%.1f,%.1f,%.1f],\"attack\":%.1f,\"defence\":%.1f,\"attackSpeed\":%d,"
+                          "\"moveSpeed\":%d,\"side\":%d}}",
                           first ? "" : ",", typeName(s.type).c_str(), s.level, s.maxHealth, std::max(0, s.health),
                           s.ranged ? "true" : "false", s.strikeSeconds, s.damage, rate, s.predicted * 100.0f,
-                          s.toHirelings, s.hit);
+                          s.toHirelings, s.hit, s.prior >= 0.0f ? s.prior * 100.0f : -1.0f, s.rate3 * 100.0f, s.var3,
+                          s.distance, e.ok ? "true" : "false", e.dmgA[0], e.dmgA[1], e.dmgA[2], e.dmgA[3], e.dmgB[0],
+                          e.dmgB[1], e.dmgB[2], e.dmgB[3], e.res[0], e.res[1], e.res[2], e.res[3], e.attack, e.defence,
+                          e.attackSpeed, e.moveSpeed, e.side);
             line += foe;
             first = false;
         }
@@ -448,6 +574,11 @@ namespace
         LOG("Forecast: foreseen {:.0f}% lost in {:.0f} s, {:.0f}% to win; it was {:.0f}% lost{}",
             g_fight.forecast.loss * 100.0f, g_fight.forecast.seconds, g_fight.forecast.win * 100.0f,
             g_fight.heroMax > 0 ? g_fight.lostTotal * 100.0f / g_fight.heroMax : 0.0f, g_fight.died ? ", died" : "");
+        LOG("Forecast3: foreseen {:.0f}% lost ({:.0f}% to {:.0f}% of health left at the end), {:.0f}% to win, {} potions, "
+            "{} enemies, sheets read: {}{}", g_fight.forecast3.loss * 100.0f, g_fight.forecast3.hpLo * 100.0f,
+            g_fight.forecast3.hpHi * 100.0f, g_fight.forecast3.win * 100.0f, g_fight.forecast3.potions,
+            g_fight.forecast3.foes, g_fight.forecast3.fromSheets ? "yes" : "no",
+            Config::autoAttack.forecast3 ? " (it decides)" : "");
     }
 
     // An enemy gone from the looks: down (killed) or out of sight.
@@ -539,6 +670,91 @@ namespace
         }
         fc.expected = fc.loss * std::exp(g_lossBias);
         g_forecast = fc;
+    }
+
+    CombatLearn::Forecast3 g_forecast3;
+    constexpr float kPotionHeal = 0.25f;        // a healing potion's worth, share of max health (a guess; to measure)
+    constexpr float kPotionCooldown = 10.0f;    // seconds between two (a guess)
+    constexpr float kMeleeReach = 100.0f;       // world units within which a melee enemy strikes (a guess)
+
+    // docs/Medicion-de-enemigos.md §2.2: the same enemies and kill order as computeForecast (Smith's rule), each with
+    // forecast3's rate and the variance of its log; one that is not on the hero yet strikes only once it arrives (its
+    // distance less the melee reach at its move speed; at once if it shoots or already aims); the loss a sum of
+    // lognormals taken as one (Fenton-Wilkinson); the health with the potions it can drink in the fight.
+    void computeForecast3(const CombatLearn::Look& look, float heroFraction)
+    {
+        struct Item
+        {
+            float rate, var, seconds, arrive;
+        };
+        std::vector<Item> items;
+        CombatLearn::Forecast3 r;
+        bool anyEngaged = false;
+        for (int i = 0; i < look.count; ++i)
+        {
+            anyEngaged = anyEngaged || look.foes[i].atHero || look.foes[i].atHireling;
+        }
+        for (int i = 0; i < look.count; ++i)
+        {
+            const CombatLearn::Foe& f = look.foes[i];
+            const Seen& s = g_seen[f.id];
+            if (f.health <= 0 || (anyEngaged && !f.atHero && !f.atHireling && !s.firstHurtAt && !f.soon))
+            {
+                continue;
+            }
+            const float dps = s.hit > 0.0f ? s.hit * g_blowsPerSecond : 0.0f;
+            const float seconds = dps > 0.0f ? std::min(600.0f, f.health / dps) : 600.0f;
+            const bool there = f.atHero || f.atHireling || s.ranged;
+            const float arrive = !there && s.sheet.ok && s.sheet.moveSpeed > 0
+                                     ? std::max(0.0f, s.distance - kMeleeReach) / static_cast<float>(s.sheet.moveSpeed)
+                                     : 0.0f;
+            items.push_back({std::max(s.rate3, kFloor) * (s.summoner ? kSummonerWeight : 1.0f), s.var3, seconds, arrive});
+            r.fromSheets = r.fromSheets || s.prior >= 0.0f;
+        }
+        std::sort(items.begin(), items.end(),
+                  [](const Item& a, const Item& b) { return a.rate * b.seconds > b.rate * a.seconds; });
+        r.foes = static_cast<int>(items.size());
+        float clock = 0.0f, mean = 0.0f, variance = 0.0f;
+        for (const Item& it : items)
+        {
+            clock += it.seconds;
+            const float m = it.rate * std::max(0.0f, clock - it.arrive);   // the median of its part of the loss
+            if (m > 0.0f)
+            {
+                const float e = std::exp(it.var);
+                const float mu = m * std::sqrt(e);
+                mean += mu;
+                variance += (e - 1.0f) * mu * mu;
+            }
+        }
+        r.seconds = std::min(clock, 600.0f);
+        const int left = Gear::healingLeft();
+        r.potions = left > 0 ? std::min(left, static_cast<int>(r.seconds / kPotionCooldown) + 1) : 0;
+        const float health = heroFraction + static_cast<float>(r.potions) * kPotionHeal;
+        if (mean > 1e-4f && heroFraction > 0.0f)
+        {
+            const float s2 = std::log(1.0f + variance / (mean * mean));
+            const float sd = std::sqrt(std::max(s2, 1e-6f));
+            const float mu = std::log(mean) - s2 * 0.5f;
+            r.win = normalCdf((std::log(health) - mu) / sd);
+            r.loss = std::min(std::exp(mu), 10.0f);
+            r.hpMid = health - r.loss;
+            r.hpLo = health - std::min(std::exp(mu + 1.2816f * sd), 10.0f);
+            r.hpHi = health - std::min(std::exp(mu - 1.2816f * sd), 10.0f);
+        }
+        else
+        {
+            r.win = heroFraction > 0.0f ? 1.0f : 0.0f;
+            r.hpLo = r.hpMid = r.hpHi = heroFraction;
+        }
+        g_forecast3 = r;
+        if (Config::autoAttack.forecast3 && r.foes > 0)
+        {
+            g_forecast.win = r.win;
+            g_forecast.loss = r.loss;
+            g_forecast.seconds = r.seconds;
+            g_forecast.expected = r.loss;
+        }
     }
 
     // A fight over: its loss against the forecast made at its start (the bias and spread of the log error), and the
@@ -749,6 +965,10 @@ void CombatLearn::observe(const Look& look)
         int32_t x, y;
     };
     std::vector<Sighting> sightings;    // enemies met for the first time: on the agent's map (outside g_lock)
+    if (look.hero)
+    {
+        readSheet(look.hero, g_heroSheet);
+    }
     for (int i = 0; i < look.count; ++i)
     {
         g_seen[look.foes[i].id].hit = Gear::expectedHit(look.foes[i].id);
@@ -782,6 +1002,18 @@ void CombatLearn::observe(const Look& look)
             s.ranged = s.ranged || f.ranged;
             s.lastSeen = now;
             s.predicted = std::clamp(std::exp(predictLog(s, heroMax, heroLevel)) - kFloor, 0.0f, kMaxRate);
+            if (cObject* o = cObjectManager::instance() ? cObjectManager::instance()->object(f.id) : nullptr)
+            {
+                if (!s.sheet.ok)
+                {
+                    readSheet(o, s.sheet);
+                }
+                if (look.hero)
+                {
+                    s.distance = std::hypot(static_cast<float>(o->x - look.hero->x), static_cast<float>(o->y - look.hero->y));
+                }
+            }
+            priorAndRate(s, heroMax);
             if (f.atHero)
             {
                 weights += std::max(s.predicted, kFloor);
@@ -825,6 +1057,7 @@ void CombatLearn::observe(const Look& look)
     }
     g_heroFraction = static_cast<float>(heroHealth) / static_cast<float>(heroMax);
     computeForecast(look, g_heroFraction);
+    computeForecast3(look, g_heroFraction);
 
     // The hirelings: health they lost to those aiming at them, and deaths.
     int hirelingLost = 0;
@@ -872,6 +1105,8 @@ void CombatLearn::observe(const Look& look)
             g_fight.experience = experience;
             g_fight.mountMin = mounted ? look.self->health : 0;
             g_fight.forecast = g_forecast;
+            g_fight.forecast3 = g_forecast3;
+            g_fight.heroSheet = g_heroSheet;
             if (g_forecast.foes > 0)
             LOG("Forecast: a fight with {} enemies, {:.0f}% of health to be lost in {:.0f} s, {:.0f}% to win "
                 "(first {:x})", g_forecast.foes, g_forecast.loss * 100.0f, g_forecast.seconds, g_forecast.win * 100.0f,
@@ -884,6 +1119,10 @@ void CombatLearn::observe(const Look& look)
             g_fight.forecast.loss = g_forecast.loss;
             g_fight.forecast.seconds = std::max(g_fight.forecast.seconds, g_forecast.seconds);
             g_fight.forecast.win = std::min(g_fight.forecast.win, g_forecast.win);
+        }
+        if (g_forecast3.foes > g_fight.forecast3.foes && g_forecast3.win < g_fight.forecast3.win)
+        {
+            g_fight.forecast3 = g_forecast3;
         }
         g_fight.lastAction = now;
     }
@@ -1007,6 +1246,11 @@ float CombatLearn::secondsToDie()
 const CombatLearn::Forecast& CombatLearn::forecast()
 {
     return g_forecast;
+}
+
+const CombatLearn::Forecast3& CombatLearn::forecast3()
+{
+    return g_forecast3;
 }
 
 int CombatLearn::killRank(uint32_t id)

@@ -80,6 +80,23 @@ namespace CombatLearn
     float badChance(const Forecast& fc);
     // Seconds since the fight under way began (0 out of a fight).
     float fightSeconds();
+    // The forecast from the enemies' own sheets (docs/Medicion-de-enemigos.md §2.2): each enemy's blows on this hero
+    // read from its stats (damage through the hero's resistances, its attack against the hero's defence, its attack
+    // speed) and mixed with what its kind was measured to deal; when each comes in; the potions' worth; the loss as a
+    // sum of lognormals (Fenton-Wilkinson). Worked out beside the one above at each look and logged; it decides only
+    // with [AutoAttack] Forecast3=1 (then forecast() carries its win, loss and seconds).
+    struct Forecast3
+    {
+        int foes = 0;
+        bool fromSheets = false;    // at least one enemy's sheet read
+        float win = 1.0f;           // chance the loss stays under the health and the potions' worth
+        float loss = 0.0f;          // median loss, a share of the maximum
+        float hpLo = 1.0f, hpMid = 1.0f, hpHi = 1.0f;   // health left at the end, p10 / p50 / p90 (share; < 0: dead)
+        float seconds = 0.0f;       // until all are down
+        int potions = 0;            // counted in the health
+    };
+    // At the last look.
+    const Forecast3& forecast3();
 
     // Its ModKit menu section (the encyclopedia); once.
     void install();
