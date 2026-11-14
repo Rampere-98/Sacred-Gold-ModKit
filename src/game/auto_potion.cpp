@@ -1,4 +1,6 @@
 #include "game/auto_potion.h"
+#include "game/act.h"
+#include "game/act.h"
 #include "config/auto_potion.h"
 #include "game/combat_state.h"
 #include "game/focus.h"
@@ -136,7 +138,7 @@ void AutoPotion::onFrame()
     // Menus present from the UI thread, the game from the render thread; around loading both may.
     static std::mutex frameLock;
     const std::unique_lock lock(frameLock, std::try_to_lock);
-    if (!lock || !Config::autoPotion.enabled)
+    if (!lock || !Config::autoPotion.enabled || !Act::automatic(Act::Kind::LifePotion))
     {
         return;
     }

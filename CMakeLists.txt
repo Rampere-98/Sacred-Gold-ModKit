@@ -80,6 +80,9 @@ set(DDRAW_SOURCES
   src/game/agent_overlay.cpp
   src/game/agent_cursor.cpp
   src/game/hero_build.cpp
+  src/game/act.cpp
+  src/game/act.cpp
+  src/game/act.cpp
   src/game/gpu_skin.cpp
   src/game/world_passes.cpp
   src/game/aim_assist.cpp

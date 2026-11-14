@@ -1,4 +1,7 @@
 #include "game/hero_build.h"
+#include "game/act.h"
+#include "game/act.h"
+#include "game/act.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
 #include "log.h"
@@ -245,7 +248,7 @@ namespace
         g_class = cls;
         const int level = *reinterpret_cast<const uint16_t*>(st + 0x56);
         // One point a look, as a player clicking "+".
-        if (g_settings.attributes && st[0x23] > 0)
+        if (g_settings.attributes && st[0x23] > 0 && Act::allowed(Act::Kind::Attributes, "spend an attribute point"))
         {
             const int* plan = kAttrPlan[cls < 10 ? cls : 0];
             int best = -1;
@@ -269,7 +272,8 @@ namespace
                 reinterpret_cast<SpendAttr>(g_spendAttr)(st, nullptr, static_cast<uint32_t>(best));
             }
         }
-        else if (g_settings.learn && *reinterpret_cast<const uint16_t*>(st + 0x44) > 0)
+        else if (g_settings.learn && *reinterpret_cast<const uint16_t*>(st + 0x44) > 0 &&
+                 Act::allowed(Act::Kind::Skills, "learn a new skill"))
         {
             uint8_t offered[8] = {};
             const int count = std::clamp(reinterpret_cast<Learnable>(g_learnable)(st, nullptr, offered), 0, 8);
@@ -287,10 +291,11 @@ namespace
                 reinterpret_cast<LearnSkill>(g_learnSkill)(st, nullptr, offered[pick]);
             }
         }
-        else if (g_settings.bar && g_setSlot && fillBar(hero, st))
+        else if (g_settings.bar && g_setSlot && Act::automatic(Act::Kind::ArtBar) && fillBar(hero, st))
         {
         }
-        else if (g_settings.skills && *reinterpret_cast<const uint16_t*>(st + 0x42) > 0)
+        else if (g_settings.skills && *reinterpret_cast<const uint16_t*>(st + 0x42) > 0 &&
+                 Act::allowed(Act::Kind::Skills, "spend a skill point"))
         {
             // The skill furthest behind for its worth, never above the hero's level (the window's own limit).
             int best = -1;

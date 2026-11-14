@@ -1,4 +1,6 @@
 #include "game/tactics.h"
+#include "game/act.h"
+#include "game/act.h"
 #include "game/hero_profile.h"
 #include "game/mind.h"
 #include "game/agent_cursor.h"
@@ -566,7 +568,7 @@ namespace
     void startArt(int slot, uint32_t art, uint32_t target, const Tactics::Situation& s, const char* why)
     {
         const uint8_t* player = playerData();
-        if (!player)
+        if (!player || !Act::allowed(Act::Kind::Arts, why))
         {
             return;
         }
@@ -1145,6 +1147,10 @@ namespace
 
     void tryPotion(Potion type, bool toHirelings, DWORD now, DWORD coolDownMs, const char* name, const char* why)
     {
+        if (!Act::allowed(Act::Kind::OtherPotions, name))
+        {
+            return;
+        }
         if (drink(type, toHirelings))
         {
             g_potionReady[type] = now + coolDownMs;

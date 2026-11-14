@@ -1394,10 +1394,13 @@ namespace
     // what can be walked (and what not) without walking it. Restarts when the hero moves on, and every 15 s where
     // he stays: the test changes with the world (a door opened or shut, a house's floor read through its shut
     // door), so the latest reading wins; only a square stood on stays walkable whatever it says.
-    constexpr int kScanReach = 96;              // tiles each way (the loaded sectors reach ~160)
-    constexpr int kScanPerFrame = 2500;
+    // 40 tiles each way, 500 a frame, again after a minute (2026-11-14: 96 each way every 15 s asked the game's test
+    // for 37 000 tiles a pass, which filled the game's own layer-record cache in under two hours of the player's
+    // game, «layer cache full at 262143», and from then on every miss scanned it whole: 1082 freezes).
+    constexpr int kScanReach = 40;              // tiles each way (sight reaches 24)
+    constexpr int kScanPerFrame = 500;
     constexpr int kScanRestart = 24;            // tiles the hero moves before the square is scanned again
-    constexpr DWORD kScanAgainMs = 15000;       // a scan done is run again after this long
+    constexpr DWORD kScanAgainMs = 60000;       // a scan done is run again after this long
     int g_scanLayer = -1, g_scanCx = 0, g_scanCy = 0, g_scanAt = 0;
     bool g_scanDone = false;
     DWORD g_scanDoneAt = 0;

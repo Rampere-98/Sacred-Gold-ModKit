@@ -1,5 +1,6 @@
 #include "mind.h"
 #include "hero_profile.h"
+#include "game/act.h"
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/gear.h"
@@ -1498,6 +1499,10 @@ namespace
         {
             return;
         }
+        if (!Act::allowed(Act::Kind::CallHorse, "call the horse (the horseshoe)"))
+        {
+            return;
+        }
         s_calledAt = now;
         if (tiles > 0)
         {
@@ -1586,8 +1591,8 @@ namespace
         static uint32_t s_wildId = 0;
         static DWORD s_wildSince = 0, s_wildStep = 0, s_wildSentAt = 0;
         static std::unordered_map<uint32_t, DWORD> s_wildFailed;
-        if (HeroProfile::current().cls != HeroProfile::Class::Dwarf && !*(reinterpret_cast<const uint8_t*>(self) + 0x24) &&
-            !g_retreatUntil)
+        if (Act::automatic(Act::Kind::Mount) && HeroProfile::current().cls != HeroProfile::Class::Dwarf &&
+            !*(reinterpret_cast<const uint8_t*>(self) + 0x24) && !g_retreatUntil)
         {
             cObjectManager* om = cObjectManager::instance();
             const cCreature* own = horse && om ? om->creature(horse) : nullptr;
@@ -1786,6 +1791,17 @@ namespace
         }
         // Off events the game does not act on (A6 2026-11-12 20:03-20:08: «getting off» each 1.5 s for 5 min, the mount
         // field still set, the hero stuck): after 4 in a row, none for a minute, the walk out going on from the saddle.
+        // Nothing on the horse without the player's leave (2026-11-14: off his horse in a fight, the agent off).
+        if (code == 0x209 && !Act::allowed(Act::Kind::Mount, "mount the horse for the long walk"))
+        {
+            code = 0;
+        }
+        else if (code == 0x20A &&
+                 !Act::allowed(Act::Kind::Dismount, hardOnFoot ? "get off the horse: enemies near and arts barred on horseback"
+                                                         : "get off the horse"))
+        {
+            code = 0;
+        }
         static int s_offSent = 0;
         static DWORD s_offRestUntil = 0;
         if (!mounted)
@@ -2551,7 +2567,7 @@ namespace
             noteTrail(self, layer);
             MapMemory::visit(layer, self->x, self->y);
             MapMemory::wantGround(layer, self->x, self->y, hx, hy);
-            MapMemory::save(now, 60000);
+            MapMemory::save(now, 300000);
             // The reach known in the fights too (at a new game the first fight came before any fill).
             Whereabouts::update(layer, static_cast<int>(self->x / kTileSize), static_cast<int>(self->y / kTileSize));
         }
@@ -6741,7 +6757,7 @@ namespace
                 remember(std::format("rodea {} enemigos que aún no le atacan", g_aggroFoes.size()));
             }
         }
-        MapMemory::save(now, 60000);
+        MapMemory::save(now, 300000);
         if (!found)
         {
             // Closed in on every side as far as the tile test tells: wait, as a hit or the player may free it.
@@ -7849,6 +7865,10 @@ void AutoAttack::onFrame()
         }
         if (static_cast<int>(now - s_talkOpenAt) > 2500 && static_cast<int>(now - s_talkAnswerAt) > 3000)
         {
+            if (!Act::allowed(Act::Kind::Talk, "answer the quest dialog (Enter)"))
+            {
+                return;
+            }
             if (++s_talkAnswers > 12)
             {
                 LOG("AutoAttack: quest dialog of {:x} goes on and on, left to the player", g_talkId);
@@ -7880,6 +7900,10 @@ void AutoAttack::onFrame()
     {
         if (static_cast<int>(now - s_answerAt) > 700)
         {
+            if (!Act::allowed(Act::Kind::Chests, "answer the stone's dialog (Enter)"))
+            {
+                return;
+            }
             if (++s_answers > 4)
             {
                 LOG("AutoAttack: stone {:x} keeps its dialog open, left to the player", g_target);
@@ -7914,6 +7938,10 @@ void AutoAttack::onFrame()
         }
         if (static_cast<int>(now - s_strayOpenAt) > 4000 && static_cast<int>(now - s_strayAnswerAt) > 3000)
         {
+            if (!Act::allowed(Act::Kind::Talk, "answer the dialog left open (Enter)"))
+            {
+                return;
+            }
             LOG("AutoAttack: an NPC dialog left open, answer 1 (Enter)");
             s_strayAnswerAt = now;
             Inject::key(VK_RETURN, true);
@@ -7956,7 +7984,8 @@ void AutoAttack::onFrame()
     }
     // Collect always (AutoCollect), and also whenever the auto attack fights for the player: the loot of each fight
     // taken once it is over, before the next (the player's own play keeps to A unless AutoCollect is on).
-    if (Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) && !g_collecting && foreground &&
+    if (Act::automatic(Act::Kind::PickUp) && Config::autoAttack.pickup && (Config::autoAttack.autoCollect || g_on) &&
+        !g_collecting && foreground &&
         !Controller::drives() && !ClickWalk::walking() &&
         Controller::worldRunning() && heroAlive())
     {
@@ -8032,7 +8061,7 @@ void AutoAttack::onFrame()
                 MapMemory::endRadar();
                 MapMemory::setRoute(false);
             }
-            MapMemory::save(now, 60000);
+            MapMemory::save(now, 300000);
         }
     }
     // Gear: put on what is better when calm, sell and buy at a merchant (its own settings, the auto attack on or off).
@@ -8047,7 +8076,8 @@ void AutoAttack::onFrame()
         cUI_Window2* inventory = ui && (ui->flags & cUI_Manager::inGame) ? ui->window(cUI_Manager::Window::inventory) : nullptr;
         // Without the focus too (the stuck solver, 2026-11-13: the game opens it itself on a pick up, a chest, a
         // door; a copy without the focus never closed it, the key does nothing there: runs of 5-15).
-        if (g_on && inventory && inventory->visible() && !Gear::shopOpen() && !Gear::craftsmanOpen())
+        if (g_on && Act::automatic(Act::Kind::Windows) && inventory && inventory->visible() && !Gear::shopOpen() &&
+            !Gear::craftsmanOpen())
         {
             if (!s_inventorySince)
             {
@@ -8092,8 +8122,11 @@ void AutoAttack::onFrame()
     if (Gear::tripDone())
     {
         LOG("AutoAttack: shop of {:x} closed, back to play", g_shopId);
-        Inject::key(VK_ESCAPE, true);
-        Inject::key(VK_ESCAPE, false);
+        if (Act::automatic(Act::Kind::Windows))
+        {
+            Inject::key(VK_ESCAPE, true);
+            Inject::key(VK_ESCAPE, false);
+        }
         g_shopId = 0;
         g_shopTold = false;
     }
@@ -8138,14 +8171,17 @@ void AutoAttack::onFrame()
         {
             g_target = 0;
             g_pending = 0;
-            if (g_lootInstead)
+            if (g_lootInstead && Act::automatic(Act::Kind::PickUp))
             {
                 g_lootInstead = false;
                 startCollect(now);
                 g_collectOne = !g_lootInsteadAll;
                 return;
             }
-            roam(now);
+            if (Act::allowed(Act::Kind::Walk, "explore and travel to the quests"))
+            {
+                roam(now);
+            }
             return;
         }
         g_quietSince = 0;
@@ -8192,7 +8228,13 @@ void AutoAttack::onFrame()
             s_slotAt = now;
         }
     }
-    if (!g_looting && keepDistance(now, id))
+    if (!g_looting && !Act::allowed(Act::Kind::Attack, "attack the enemy chosen"))
+    {
+        g_target = 0;
+        g_pending = 0;
+        return;
+    }
+    if (!g_looting && Act::automatic(Act::Kind::Retreat) && keepDistance(now, id))
     {
         return;
     }

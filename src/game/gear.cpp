@@ -1,5 +1,7 @@
 #include "mind.h"
 #include "hero_profile.h"
+#include "game/act.h"
+#include "game/act.h"
 #include "game/auto_attack.h"
 #include "game/gear.h"
 #include "game/granny_async.h"
@@ -413,6 +415,14 @@ namespace
             {
                 return;
             }
+            if (!Act::allowed(Act::Kind::Equip, "put a better item on"))
+            {
+                return;
+            }
+            if (!Act::allowed(Act::Kind::Equip, "put a better item on"))
+            {
+                return;
+            }
             fn<RemoveItem>(g_removeItem)(pack, nullptr, id, 1);
             uint16_t free = 0;
             if (old && !fn<FindFree>(g_findFree)(pack, nullptr, ow, oh, &free, 0))
@@ -485,6 +495,14 @@ namespace
             if (const int set = worth(id).set; set >= 0 && setsWorn(hero).count(set))
             {
                 return;     // a piece of a set the hero wears: kept for the set
+            }
+            if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
+            {
+                return;
+            }
+            if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
+            {
+                return;
             }
             for (int page = 0; page < kStockPages; ++page)
             {
@@ -608,6 +626,16 @@ namespace
                     why = "no room in the backpack";
                     return;
                 }
+                if (!Act::allowed(Act::Kind::Buy, "buy a healing potion"))
+                {
+                    why = "not allowed";
+                    return;
+                }
+                if (!Act::allowed(Act::Kind::Buy, "buy a healing potion"))
+                {
+                    why = "not allowed";
+                    return;
+                }
                 cObject* item = cObjectManager::instance()->object(id);
                 fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
                 fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
@@ -696,6 +724,14 @@ namespace
                     {
                         return;
                     }
+                    if (!Act::allowed(Act::Kind::Buy, "buy a potion (antidote, mentor, concentration)"))
+                    {
+                        return;
+                    }
+                    if (!Act::allowed(Act::Kind::Buy, "buy a potion (antidote, mentor, concentration)"))
+                    {
+                        return;
+                    }
                     cObject* item = cObjectManager::instance()->object(id);
                     fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
                     fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
@@ -756,6 +792,14 @@ namespace
                     return;
                 }
                 if (!fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
+                {
+                    return;
+                }
+                if (!Act::allowed(Act::Kind::Buy, "buy a better item"))
+                {
+                    return;
+                }
+                if (!Act::allowed(Act::Kind::Buy, "buy a better item"))
                 {
                     return;
                 }
@@ -828,6 +872,14 @@ namespace
         {
             return false;
         }
+        if (!Act::allowed(Act::Kind::Runes, "read a rune"))
+        {
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::Runes, "read a rune"))
+        {
+            return false;
+        }
         g_runesTried[rune] = heroLevel;
         const bool used = fn<UseItem>(g_useItem)(hero, nullptr, rune) != 0;
         LOG("Gear: rune {:x} (type {:x}) read: {}", rune, typeOf(rune), used ? "done" : "refused (class or requirement)");
@@ -868,6 +920,14 @@ namespace
             }
         });
         if (!scroll)
+        {
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::Scrolls, "read a scroll or a book"))
+        {
+            return false;
+        }
+        if (!Act::allowed(Act::Kind::Scrolls, "read a scroll or a book"))
         {
             return false;
         }
@@ -2377,7 +2437,13 @@ namespace
         uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
         if (hero && inv && pack && hero->health > 0)
         {
-            stashHeld(pack);
+            if (Act::automatic(Act::Kind::PickUp))
+            {
+                if (Act::automatic(Act::Kind::PickUp))
+            {
+                stashHeld(pack);
+            }
+            }
             {
                 // A combo wanted: none yet, 2 arts of one kind for it, gold for it and for potions, half an hour
                 // since the last try.
@@ -2387,7 +2453,8 @@ namespace
                 const uint32_t gold = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + kGold);
                 const bool want = !g_comboPaid && comboCount(st) == 0 && comboArts(st, ids, levels) &&
                                   gold >= (g_wantCombo ? 2000u : 3000u) &&
-                                  (!g_comboTriedAt || GetTickCount() - g_comboTriedAt > 1800000);
+                                  (!g_comboTriedAt || GetTickCount() - g_comboTriedAt > 1800000) &&
+                                  Act::allowed(Act::Kind::Combos, "learn a combo at a combo master");
                 if (want != g_wantCombo.exchange(want) && want)
                 {
                     LOG("Gear: a combo to learn (none known, {} gold): off to a combo master", gold);
@@ -2402,7 +2469,8 @@ namespace
                                    gold >= std::max(2000u, 1400u + 2 * g_potionPrice) &&
                                    (*reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x570) == 0 ||
                                     g_horseUpgrade) &&
-                                   (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000);
+                                   (!g_horseTriedAt || GetTickCount() - g_horseTriedAt > 1800000) &&
+                                   Act::allowed(Act::Kind::BuyHorse, "buy a horse at a stable");
                 if (horse != g_wantHorse.exchange(horse) && horse)
                 {
                     LOG("Gear: {} and {} gold: off to a stable", g_horseUpgrade ? "a better horse there" : "no horse", gold);
@@ -2415,7 +2483,8 @@ namespace
                     std::vector<uint32_t> gems;
                     const uint32_t base = socketPlan(hero, pack, gems);
                     const bool socket = base && gold >= 1500 &&
-                                        (!g_socketTriedAt || GetTickCount() - g_socketTriedAt > 1800000);
+                                        (!g_socketTriedAt || GetTickCount() - g_socketTriedAt > 1800000) &&
+                                        Act::allowed(Act::Kind::Smith, "socket an item at a smith");
                     g_socketBase = socket ? base : 0u;
                     if (socket != g_wantSocket.exchange(socket) && socket)
                     {
@@ -2449,7 +2518,7 @@ namespace
             else if (calm && g_wantSocket && socketAtSmith(hero, pack))
             {
             }
-            else if (calm && g_settings.runes && g_canUse && swapRunes(hero, pack))
+            else if (calm && g_settings.runes && g_canUse && Act::automatic(Act::Kind::Combos) && swapRunes(hero, pack))
             {
             }
             else if (shop && (g_settings.sell || trip) && sellOne(hero, pack))
@@ -2603,7 +2672,7 @@ void Gear::onFrame(DWORD now, bool calm)
         lastMerchant = merchant;
     }
     // The weapon slots on this, the game's thread, never while work() runs on the window's.
-    if (g_ready && !g_working && g_slotsDue.exchange(false) && calm)
+    if (g_ready && !g_working && g_slotsDue.exchange(false) && calm && Act::automatic(Act::Kind::WeaponSlots))
     {
         cObjectManager* objects = cObjectManager::instance();
         cCreature* hero = objects ? objects->hero() : nullptr;
@@ -2678,7 +2747,8 @@ bool Gear::wantsShop()
     // Before they run out (the analyst, 2026-11-10 18:17: 9 of 137 fights below 20 % of health once the last
     // potion was gone, 11-15 enemies at level 4): at 2 left.
     const bool potions = g_settings.buy && g_healing >= 0 && g_healing <= 2 && gold >= 200;
-    return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0);
+    return g_ready && g_settings.trips && (g_full || potions) && (!quiet || static_cast<int>(GetTickCount() - quiet) >= 0) &&
+           (Act::automatic(Act::Kind::Sell) || Act::automatic(Act::Kind::Buy));
 }
 
 void Gear::tripOpened()
@@ -2745,7 +2815,7 @@ float Gear::expectedHit(uint32_t targetId)
 
 bool Gear::chooseWeaponFor(uint32_t targetId)
 {
-    if (!g_ready || !g_slotsReady || !g_settings.weaponSlots)
+    if (!g_ready || !g_slotsReady || !g_settings.weaponSlots || !Act::automatic(Act::Kind::WeaponSlots))
     {
         return false;
     }
