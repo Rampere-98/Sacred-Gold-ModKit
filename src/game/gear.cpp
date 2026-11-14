@@ -1532,8 +1532,8 @@ namespace
     // (+0xFC, +0x154) did not read so with a shop open (live, A1, 2026-11-14), so they are not used.
     bool craftsmanBound(const char* window, uint32_t tradeBit)
     {
-        const bool near = (g_tradesNear.load() & tradeBit) != 0;
-        if (!near)
+        const bool beside = (g_tradesNear.load() & tradeBit) != 0;
+        if (!beside)
         {
             static DWORD s_toldAt = 0;
             if (const DWORD now = GetTickCount(); !s_toldAt || now - s_toldAt > 30000)
@@ -1542,7 +1542,7 @@ namespace
                 LOG("Gear: the {} window is open with no such craftsman near the hero: not worked in", window);
             }
         }
-        return near;
+        return beside;
     }
 
     // What the open shop takes (block AW, static): the merchant window [uiMgr +0x90], its goods child at +0x154
