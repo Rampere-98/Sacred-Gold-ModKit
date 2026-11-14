@@ -1495,7 +1495,10 @@ namespace
             static constexpr uint8_t kSig[] = {0x83, 0xBD, 0x70, 0x05, 0x00, 0x00, 0x10, 0x0F};
             return std::memcmp(reinterpret_cast<const void*>(0x530D68), kSig, sizeof(kSig)) == 0;
         }();
-        if (!s_known || (s_calledAt && now - s_calledAt < 30000))
+        // Not again while it is on its way: both crashes after a call (A8 2026-11-13 09:01, Sacred.exe+fa47d; A2
+        // 2026-11-14 09:39, +fa524, c0000005 0.8 s after) were a second call 30 s after the first, the horse by then
+        // 9 and 15 tiles off and coming. Two minutes between calls.
+        if (!s_known || (s_calledAt && now - s_calledAt < 120000))
         {
             return;
         }
