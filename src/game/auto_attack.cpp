@@ -1502,6 +1502,14 @@ namespace
         {
             return;
         }
+        // Never with the horse within 1200 units (Manolito, block AX, from A2's dump): there the game's handler runs
+        // its path finder at once, on the thread the event is sent from, over the finder's global grid (0xABA8F8) the
+        // game's own logic may be using: the way points come out as rubbish and 0x4F9F20 reads through one. Farther
+        // off it only starts a plain approach. Within that distance the horse is walked to or left.
+        if (tiles > 0 && tiles * kTileSize <= 1300.0)
+        {
+            return;
+        }
         if (!Act::allowed(Act::Kind::CallHorse, "call the horse (the horseshoe)"))
         {
             return;
