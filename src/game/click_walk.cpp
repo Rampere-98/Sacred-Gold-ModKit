@@ -1234,7 +1234,7 @@ void ClickWalk::onFrame()
     // The agent's own walk waits for the game's cursor on the spot (AgentCursor), the player's does not.
     if (g_askPending && (g_askByPlayer || AgentCursor::reach({0, g_askX, g_askY})))
     {
-        Inject::call(&askedWalk, nullptr);
+        Inject::engineCallOrdered(&askedWalk, nullptr);
     }
     if (!g_active)
     {
@@ -1246,5 +1246,5 @@ void ClickWalk::onFrame()
         return;
     }
     g_nextCheck = now + kCheckMs;
-    Inject::call(&continueWalk, nullptr);
+    Inject::engineCallOrdered(&continueWalk, nullptr);
 }

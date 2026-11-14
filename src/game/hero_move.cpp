@@ -102,21 +102,21 @@ namespace
 void HeroMove::follow(int x, int y)
 {
     const uintptr_t packed = static_cast<uintptr_t>(x & 0x7FFF) | (static_cast<uintptr_t>(y & 0x7FFF) << 15);
-    Inject::call(&send, reinterpret_cast<void*>(packed));
+    Inject::engineCallOrdered(&send, reinterpret_cast<void*>(packed));
 }
 
 void HeroMove::keepWalking(int x, int y)
 {
     const uintptr_t packed = static_cast<uintptr_t>(x & 0x7FFF) | (static_cast<uintptr_t>(y & 0x7FFF) << 15);
-    Inject::call(&send, reinterpret_cast<void*>(packed | kKeep));
+    Inject::engineCallOrdered(&send, reinterpret_cast<void*>(packed | kKeep));
 }
 
 void HeroMove::stop()
 {
-    Inject::call(&send, reinterpret_cast<void*>(kStop));
+    Inject::engineCallOrdered(&send, reinterpret_cast<void*>(kStop));
 }
 
 void HeroMove::release()
 {
-    Inject::call(&send, reinterpret_cast<void*>(kRelease));
+    Inject::engineCallOrdered(&send, reinterpret_cast<void*>(kRelease));
 }

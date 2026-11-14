@@ -29,6 +29,9 @@ namespace Inject
     // the engine: the path finder's global grid, A2's crash at 4FA524; the models' queues). Queued here and run by
     // drainEngine().
     void engineCall(void (*fn)(void*), void* context);
+    // The same, in its turn among the keys and mouse messages posted before it (an order after the click it follows):
+    // through the window's queue first, then the engine's.
+    void engineCallOrdered(void (*fn)(void*), void* context);
     // From the frame hook: runs what is queued, only when the caller is the engine thread.
     void drainEngine();
     // Everything held goes up.

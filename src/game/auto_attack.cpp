@@ -862,7 +862,7 @@ namespace
     // The agent's walk order, once the game's cursor is on the spot (AgentCursor; at once with the option off).
     void fireWalk(void*)
     {
-        Inject::call(&walkThere, nullptr);
+        Inject::engineCallOrdered(&walkThere, nullptr);
     }
     void sendWalk()
     {
@@ -1021,7 +1021,7 @@ namespace
             {
                 s_collectAt = now;
                 LOG("AutoAttack: mounted: collecting {:x} as the A key does", id);
-                Inject::call(&sendCollect, nullptr);
+                Inject::engineCallOrdered(&sendCollect, nullptr);
             }
             return true;
         }
@@ -6105,9 +6105,16 @@ namespace
             // Something does come of it while the hero fights, loots or ends quests there (the stuck solver,
             // 2026-11-14: A7 at «kill 20 goblins», 19 killed and 4000 experience, left after 6 min all the same): the
             // six minutes count from the last of those.
-            static DWORD s_goalLoot = 0, s_goalDone = 0;
+            // A target alone counts for 20 minutes at one goal, no longer (the code reviewer: enemies that keep
+            // coming, or cannot be reached, would hold the hero there for ever).
+            static DWORD s_goalLoot = 0, s_goalDone = 0, s_goalFirst = 0;
+            if (std::abs(qx - s_atGoalX) > 3 * kTileSize || std::abs(qy - s_atGoalY) > 3 * kTileSize ||
+                g_lootCount != s_goalLoot || g_questsDoneAt != s_goalDone || !s_goalFirst)
+            {
+                s_goalFirst = now ? now : 1;
+            }
             const bool progress = g_lootCount != s_goalLoot || g_questsDoneAt != s_goalDone ||
-                                  (g_lastTargetAt && now - g_lastTargetAt < 60000);
+                                  (g_lastTargetAt && now - g_lastTargetAt < 60000 && now - s_goalFirst < 1200000);
             s_goalLoot = g_lootCount;
             s_goalDone = g_questsDoneAt;
             if (std::abs(qx - s_atGoalX) > 3 * kTileSize || std::abs(qy - s_atGoalY) > 3 * kTileSize || !s_atGoalSince ||

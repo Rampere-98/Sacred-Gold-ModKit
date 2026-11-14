@@ -11,6 +11,7 @@
 
 namespace
 {
+    constexpr UINT kEngineCallMessage = WM_APP + 0x5B3;  // wParam: function, lParam: context; queued for the engine
     constexpr UINT kKeyMessage = WM_APP + 0x5B0;     // wParam: virtual key, lParam: as WM_KEYDOWN / WM_KEYUP's
     constexpr UINT kMouseMessage = WM_APP + 0x5B1;   // wParam: the mouse message, lParam: its wParam
     constexpr UINT kCallMessage = WM_APP + 0x5B2;    // wParam: function, lParam: context
@@ -149,10 +150,19 @@ void Inject::engineCall(void (*fn)(void*), void* context)
     g_engineCalls.push_back({fn, context});
 }
 
+void Inject::engineCallOrdered(void (*fn)(void*), void* context)
+{
+    post(kEngineCallMessage, reinterpret_cast<WPARAM>(fn), reinterpret_cast<LPARAM>(context));
+}
+
 void Inject::drainEngine()
 {
     const DWORD engineThread = *reinterpret_cast<const DWORD*>(0x17E7D40);
-    bool engine = engineThread && GetCurrentThreadId() == engineThread;
+    const bool engine = engineThread && GetCurrentThreadId() == engineThread;
+    if (!engine)
+    {
+        return;     // never on another thread (the code reviewer, 2026-11-14)
+    }
     // Only on an ordinary frame's flip (Manolito, block AZ: cEngine::tick calls it at 0x60EA8A, after the scene and
     // the UI; the loading screen 0x6468A0 flips too, from inside cEngine::load and cEngine::save, and a call into
     // the game there would land in the middle of a load or a save). The frame's flip has the return address 0x60EA8F
@@ -181,18 +191,17 @@ void Inject::drainEngine()
         const std::lock_guard lock(g_engineLock);
         // Not the engine's thread: only what has waited 3 s (the id not where it is read, or the engine not
         // presenting: a call is not left for ever).
-        if (g_engineCalls.empty() || (!engine && GetTickCount() - g_engineOldest < 3000))
+        if (g_engineCalls.empty())
         {
             return;
         }
         calls.swap(g_engineCalls);
     }
-    static bool s_told = false, s_toldOther = false;
-    if (bool& told = engine ? s_told : s_toldOther; !told)
+    static bool s_told = false;
+    if (!s_told)
     {
-        told = true;
-        LOG("Inject: calls into the game run {} (thread {}, the engine's {})",
-            engine ? "on the engine's thread" : "on another thread after 3 s waiting", GetCurrentThreadId(), engineThread);
+        s_told = true;
+        LOG("Inject: calls into the game run on the engine's thread (thread {}), on an ordinary frame's flip", engineThread);
     }
     for (const EngineCall& c : calls)
     {
@@ -270,6 +279,10 @@ bool Inject::unwrap(HWND window, UINT message, WPARAM wParam, LPARAM lParam, WND
     }
     case kCallMessage:
         reinterpret_cast<void (*)(void*)>(wParam)(reinterpret_cast<void*>(lParam));
+        result = 0;
+        return true;
+    case kEngineCallMessage:
+        Inject::engineCall(reinterpret_cast<void (*)(void*)>(wParam), reinterpret_cast<void*>(lParam));
         result = 0;
         return true;
     default:
