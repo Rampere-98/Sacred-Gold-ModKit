@@ -701,7 +701,38 @@ namespace
         g_origSendOrder(engine, edx, creature, order);
     }
 
-    void sendLeg(cEngine* engine, cCreature* hero, int32_t x, int32_t y)
+    // The order itself goes out on the engine's thread (Manolito, block AZ: the game only sends orders from there);
+    // the route's planning stays on the window's, where it always was: planned on the engine's thread it held the
+    // frames up for the whole search (the live verifier, 2026-11-14: up to 75 s without a frame in six copies).
+    struct QueuedOrder
+    {
+        cOrder order;
+        bool ours, asking;
+    };
+
+    void sendQueued(void* context)
+    {
+        QueuedOrder* q = static_cast<QueuedOrder*>(context);
+        cEngine* engine = FrameHooks::engine();
+        cObjectManager* objects = cObjectManager::instance();
+        cCreature* hero = objects ? objects->hero() : nullptr;
+        if (engine && hero)
+        {
+            g_ours = q->ours;
+            g_asking = q->asking;
+            engine->sendOrder(hero, q->order);
+            g_ours = false;
+            g_asking = false;
+        }
+        delete q;
+    }
+
+    void queueOrder(const cOrder& order, bool ours, bool asking)
+    {
+        Inject::engineCall(&sendQueued, new QueuedOrder{order, ours, asking});
+    }
+
+    void sendLeg(cEngine*, cCreature* hero, int32_t x, int32_t y)
     {
         cOrder order;
         order.type = cOrder::move;
@@ -709,9 +740,7 @@ namespace
         order.x = x;
         order.y = y;
         order.layer = layerOf(hero);    // left 0, a hero on layer 1-2 had its order snapped to layer 0 and never set off
-        g_ours = true;
-        engine->sendOrder(hero, order);
-        g_ours = false;
+        queueOrder(order, true, false);
     }
 
     // The next route leg once the hero nears the current one's end or stands, planning again if he left the route.
@@ -847,6 +876,8 @@ namespace
         LOG("Click walk: to {},{} from the agent's map ({:.0f} tiles)", order.x, order.y,
             std::max(std::abs(static_cast<double>(order.x) - hero->x), std::abs(static_cast<double>(order.y) - hero->y)) /
                 kTileSize);
+        // Sent from here, the window's thread, as it always was: the hook plans the agent's own route inside this
+        // very call (the world files inflated, seconds of search), which must not happen on the engine's thread.
         g_asking = true;
         engine->sendOrder(hero, order);
         g_asking = false;
@@ -1234,7 +1265,7 @@ void ClickWalk::onFrame()
     // The agent's own walk waits for the game's cursor on the spot (AgentCursor), the player's does not.
     if (g_askPending && (g_askByPlayer || AgentCursor::reach({0, g_askX, g_askY})))
     {
-        Inject::engineCallOrdered(&askedWalk, nullptr);
+        Inject::call(&askedWalk, nullptr);
     }
     if (!g_active)
     {
@@ -1246,5 +1277,5 @@ void ClickWalk::onFrame()
         return;
     }
     g_nextCheck = now + kCheckMs;
-    Inject::engineCallOrdered(&continueWalk, nullptr);
+    Inject::call(&continueWalk, nullptr);
 }
