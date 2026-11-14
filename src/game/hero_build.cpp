@@ -1,7 +1,5 @@
 #include "game/hero_build.h"
 #include "game/act.h"
-#include "game/act.h"
-#include "game/act.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
 #include "log.h"

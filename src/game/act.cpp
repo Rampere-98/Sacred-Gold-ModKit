@@ -294,40 +294,6 @@ bool Act::automatic(Kind kind)
     return until && static_cast<int>(until - GetTickCount()) > 0;
 }
 
-bool Act::automatic(Kind kind)
-{
-    install();
-    if (stopped())
-    {
-        return false;
-    }
-    const int i = static_cast<int>(kind);
-    const Mode m = static_cast<Mode>(g_mode[i].load(std::memory_order_relaxed));
-    if (m != Mode::Suggest)
-    {
-        return m == Mode::Auto;
-    }
-    const DWORD until = g_grantUntil[i].load(std::memory_order_relaxed);
-    return until && static_cast<int>(until - GetTickCount()) > 0;
-}
-
-bool Act::automatic(Kind kind)
-{
-    install();
-    if (stopped())
-    {
-        return false;
-    }
-    const int i = static_cast<int>(kind);
-    const Mode m = static_cast<Mode>(g_mode[i].load(std::memory_order_relaxed));
-    if (m != Mode::Suggest)
-    {
-        return m == Mode::Auto;
-    }
-    const DWORD until = g_grantUntil[i].load(std::memory_order_relaxed);
-    return until && static_cast<int>(until - GetTickCount()) > 0;
-}
-
 bool Act::nothing()
 {
     install();

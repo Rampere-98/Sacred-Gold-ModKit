@@ -1,6 +1,5 @@
 #include "game/auto_potion.h"
 #include "game/act.h"
-#include "game/act.h"
 #include "config/auto_potion.h"
 #include "game/combat_state.h"
 #include "game/focus.h"

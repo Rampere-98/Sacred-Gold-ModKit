@@ -49,14 +49,6 @@ namespace Act
     // for something to do; the suggestion is made where the thing is about to be done.
     bool automatic(Kind kind);
 
-    // The same without asking: true on Auto (or while a «do it» of the player's lasts). For the places that only look
-    // for something to do; the suggestion is made where the thing is about to be done.
-    bool automatic(Kind kind);
-
-    // The same without asking: true on Auto (or while a «do it» of the player's lasts). For the places that only look
-    // for something to do; the suggestion is made where the thing is about to be done.
-    bool automatic(Kind kind);
-
     // True when nothing at all is allowed (the stop file, or every kind at No): the parts may skip their work.
     bool nothing();
 

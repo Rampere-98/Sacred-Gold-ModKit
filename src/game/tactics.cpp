@@ -1,6 +1,5 @@
 #include "game/tactics.h"
 #include "game/act.h"
-#include "game/act.h"
 #include "game/hero_profile.h"
 #include "game/mind.h"
 #include "game/agent_cursor.h"

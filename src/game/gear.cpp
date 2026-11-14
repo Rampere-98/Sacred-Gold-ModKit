@@ -1,7 +1,6 @@
 #include "mind.h"
 #include "hero_profile.h"
 #include "game/act.h"
-#include "game/act.h"
 #include "game/auto_attack.h"
 #include "game/gear.h"
 #include "game/granny_async.h"
@@ -419,10 +418,6 @@ namespace
             {
                 return;
             }
-            if (!Act::allowed(Act::Kind::Equip, "put a better item on"))
-            {
-                return;
-            }
             fn<RemoveItem>(g_removeItem)(pack, nullptr, id, 1);
             uint16_t free = 0;
             if (old && !fn<FindFree>(g_findFree)(pack, nullptr, ow, oh, &free, 0))
@@ -495,10 +490,6 @@ namespace
             if (const int set = worth(id).set; set >= 0 && setsWorn(hero).count(set))
             {
                 return;     // a piece of a set the hero wears: kept for the set
-            }
-            if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
-            {
-                return;
             }
             if (!Act::allowed(Act::Kind::Sell, "sell what the hero does not use"))
             {
@@ -631,11 +622,6 @@ namespace
                     why = "not allowed";
                     return;
                 }
-                if (!Act::allowed(Act::Kind::Buy, "buy a healing potion"))
-                {
-                    why = "not allowed";
-                    return;
-                }
                 cObject* item = cObjectManager::instance()->object(id);
                 fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
                 fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
@@ -728,10 +714,6 @@ namespace
                     {
                         return;
                     }
-                    if (!Act::allowed(Act::Kind::Buy, "buy a potion (antidote, mentor, concentration)"))
-                    {
-                        return;
-                    }
                     cObject* item = cObjectManager::instance()->object(id);
                     fn<RemoveItem>(g_removeItem)(stock, nullptr, id, 1);
                     fn<AddGold>(g_addGold)(reinterpret_cast<uint8_t*>(hero) + kStats, nullptr, -static_cast<int>(price));
@@ -792,10 +774,6 @@ namespace
                     return;
                 }
                 if (!fn<FindFree>(g_findFree)(pack, nullptr, w, h, &free, 0))
-                {
-                    return;
-                }
-                if (!Act::allowed(Act::Kind::Buy, "buy a better item"))
                 {
                     return;
                 }
@@ -876,10 +854,6 @@ namespace
         {
             return false;
         }
-        if (!Act::allowed(Act::Kind::Runes, "read a rune"))
-        {
-            return false;
-        }
         g_runesTried[rune] = heroLevel;
         const bool used = fn<UseItem>(g_useItem)(hero, nullptr, rune) != 0;
         LOG("Gear: rune {:x} (type {:x}) read: {}", rune, typeOf(rune), used ? "done" : "refused (class or requirement)");
@@ -920,10 +894,6 @@ namespace
             }
         });
         if (!scroll)
-        {
-            return false;
-        }
-        if (!Act::allowed(Act::Kind::Scrolls, "read a scroll or a book"))
         {
             return false;
         }
@@ -2439,10 +2409,7 @@ namespace
         {
             if (Act::automatic(Act::Kind::PickUp))
             {
-                if (Act::automatic(Act::Kind::PickUp))
-            {
                 stashHeld(pack);
-            }
             }
             {
                 // A combo wanted: none yet, 2 arts of one kind for it, gold for it and for potions, half an hour
