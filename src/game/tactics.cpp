@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstring>
+#include <mutex>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -1372,12 +1373,94 @@ void Tactics::install()
     ModkitMenu::add({"Tácticas de combate", &drawMenu, &saveMenu});
 }
 
+namespace
+{
+    std::mutex g_factsLock;
+    std::vector<Tactics::ArtFact> g_facts;
+    bool g_factsKnown = false;
+    DWORD g_factsAt = 0;
+
+    // Every learned art and combo with what it does (the game's data, else what was learned), its measured recharge and
+    // whether the game lets it be cast mounted: for the bar's arrangement (HeroBuild, on the engine's thread), copied
+    // under g_factsLock. On the auto attack's thread, where g_learned and castMounted live.
+    void refreshFacts(DWORD now)
+    {
+        if (g_factsAt && now - g_factsAt < 5000)
+        {
+            return;
+        }
+        g_factsAt = now;
+        const cCreature* hero = heroCreature();
+        if (!hero || !heroArtsReadable())
+        {
+            return;
+        }
+        std::vector<Tactics::ArtFact> facts;
+        int top = 0;
+        const uintptr_t begin = at<uintptr_t>(hero, kLearnedBegin);
+        const uintptr_t end = at<uintptr_t>(hero, kLearnedEnd);
+        for (uintptr_t e = begin; e + kLearnedSize <= end; e += kLearnedSize)
+        {
+            const uint32_t kind = *reinterpret_cast<const uint32_t*>(e);
+            const uint16_t id = *reinterpret_cast<const uint16_t*>(e + 4);
+            if ((kind != 1 && kind != 2) || !id)
+            {
+                continue;
+            }
+            Tactics::ArtFact f;
+            f.slotKind = static_cast<uint16_t>(kind + 1);
+            f.art = id;
+            f.level = *reinterpret_cast<const uint16_t*>(e + 6);
+            top = std::max(top, f.level);
+            const Art known = knownUse(id);
+            const auto it = g_learned.find(id);
+            f.use = static_cast<int>(known != Art::Auto ? known : it != g_learned.end() ? it->second.kind() : Art::Auto);
+            f.rechargeMs = it != g_learned.end() ? it->second.rechargeMs : 0;
+            f.tries = it != g_learned.end() ? it->second.tries : 0;
+            f.mounted = castMounted(f.slotKind, id, hero);
+            facts.push_back(f);
+        }
+        const auto* records = *reinterpret_cast<const uint8_t* const*>(reinterpret_cast<const uint8_t*>(hero) + 0x3A8 + 0x10E);
+        for (int i = 0; records && i < 4; ++i)
+        {
+            const uint8_t* r = records + i * 38;
+            const uint16_t id = *reinterpret_cast<const uint16_t*>(r);
+            if (id < kFirstCombo || id > kLastCombo || !*reinterpret_cast<const uint32_t*>(r + 2))
+            {
+                continue;
+            }
+            Tactics::ArtFact f;
+            f.slotKind = 4;
+            f.art = id;
+            f.level = top;      // a combo: as strong as the hero's arts
+            const Art use = comboUse(id);
+            f.use = static_cast<int>(use != Art::Auto ? use : Art::Single);
+            const auto it = g_learned.find(id);
+            f.rechargeMs = it != g_learned.end() ? it->second.rechargeMs : 0;
+            f.tries = it != g_learned.end() ? it->second.tries : 0;
+            f.mounted = false;  // combos never on horseback
+            facts.push_back(f);
+        }
+        const std::lock_guard lock(g_factsLock);
+        g_facts = std::move(facts);
+        g_factsKnown = true;
+    }
+}
+
+bool Tactics::artFacts(std::vector<ArtFact>& out)
+{
+    const std::lock_guard lock(g_factsLock);
+    out = g_facts;
+    return g_factsKnown;
+}
+
 void Tactics::think(const Situation& s)
 {
     if (!g_ready)
     {
         return;
     }
+    refreshFacts(s.now);
     // The plain attack's damage per second at the target, while no art is cast.
     const float dt = g_lastThink ? static_cast<float>(s.now - g_lastThink) / 1000.0f : 0.0f;
     g_lastThink = s.now;

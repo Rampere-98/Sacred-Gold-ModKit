@@ -507,8 +507,29 @@ namespace
         MoveFileExW(temp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING);
     }
 
+    // The last fights' shape (recentFights). Under g_lock.
+    struct RecentFight
+    {
+        int foes = 0;
+        bool strong = false;
+    };
+    RecentFight g_recent[8];
+    int g_recentCount = 0, g_recentNext = 0;
+
     void writeFight(DWORD now, int heroHealth, int heroLevel)
     {
+        {
+            int strongest = 0;
+            for (const auto& [id, s] : g_fight.foes)
+            {
+                strongest = std::max(strongest, s.maxHealth);
+            }
+            const std::lock_guard lock(g_lock);
+            g_recent[g_recentNext] = {static_cast<int>(g_fight.foes.size()),
+                                      g_fight.heroMax > 0 && strongest * 2 >= g_fight.heroMax * 3};
+            g_recentNext = (g_recentNext + 1) % 8;
+            g_recentCount = std::min(g_recentCount + 1, 8);
+        }
         std::string line;
         char head[1024];
         std::snprintf(head, sizeof(head),
@@ -1251,6 +1272,22 @@ const CombatLearn::Forecast& CombatLearn::forecast()
 const CombatLearn::Forecast3& CombatLearn::forecast3()
 {
     return g_forecast3;
+}
+
+void CombatLearn::recentFights(float& foes, float& strongShare)
+{
+    const std::lock_guard lock(g_lock);
+    foes = strongShare = 0.0f;
+    for (int i = 0; i < g_recentCount; ++i)
+    {
+        foes += static_cast<float>(g_recent[i].foes);
+        strongShare += g_recent[i].strong ? 1.0f : 0.0f;
+    }
+    if (g_recentCount)
+    {
+        foes /= static_cast<float>(g_recentCount);
+        strongShare /= static_cast<float>(g_recentCount);
+    }
 }
 
 int CombatLearn::killRank(uint32_t id)

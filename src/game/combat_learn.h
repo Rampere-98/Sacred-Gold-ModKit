@@ -74,6 +74,9 @@ namespace CombatLearn
     const Forecast& forecast();
     // The rank of enemy `id` in the forecast's kill order (0: first; -1: not in it).
     int killRank(uint32_t id);
+    // The last 8 fights: the mean count of enemies in one, and the share with a strong enemy (maximum health at least
+    // one and a half times the hero's). For the bar's arrangement (docs/Artes-de-la-barra.md); any thread.
+    void recentFights(float& foes, float& strongShare);
     // The chance a fight like `fc` goes bad (near death, under 20 % of health, or death) for the hero's class, by
     // its own record per tenth of the forecast's win (a prior of 20 fights per tenth from docs/Medidores/
     // Prevision.md §2, 22 034 fights of the 8 copies); linear between the tenths' middles. 0 with no enemy.

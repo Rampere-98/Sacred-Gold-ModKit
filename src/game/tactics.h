@@ -3,6 +3,7 @@
 
 #include <windows.h>
 #include <cstdint>
+#include <vector>
 
 // Combat arts and consumables for the auto attack ([Tactics]). Each art slot (keys 6-0) is used by what it does,
 // learned from its effect (health regained, enemies hurt) or set in [Tactics] / the ModKit menu: heals only when
@@ -56,4 +57,19 @@ namespace Tactics
     // The Vampiress in her vampire form (the player, 2026-11-12: «al transformarse no debería montar a caballo, solo
     // cuando no está transformada»): bit 0x2000 of hero+0x14 (Manolito, block AH).
     bool vampireForm(unsigned long now);
+
+    // A learned art or combo as the bar's arrangement sees it (HeroBuild, docs/Artes-de-la-barra.md).
+    struct ArtFact
+    {
+        uint16_t slotKind = 0;          // what a bar slot holds for it: 2 spell, 3 weapon art, 4 combo
+        uint32_t art = 0;               // the slot's data: the art's id, a combo's 0x200 + index
+        int level = 0;
+        int use = 0;                    // Config::Tactics::Art: 0 not known yet, 1 heal, 2 area, 3 single, 4 buff, 5 off
+        unsigned long rechargeMs = 0;   // measured (0: not yet)
+        int tries = 0;
+        bool mounted = false;           // the game lets it be cast on horseback
+    };
+    // Every learned art and combo, refreshed every 5 s from the auto attack's looks (a copy: any thread); false before
+    // the first.
+    bool artFacts(std::vector<ArtFact>& out);
 }

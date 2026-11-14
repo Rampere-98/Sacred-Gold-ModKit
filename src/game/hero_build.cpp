@@ -1,5 +1,8 @@
 #include "game/hero_build.h"
 #include "game/act.h"
+#include "game/combat_learn.h"
+#include "game/tactics.h"
+#include "config/tactics.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
 #include "log.h"
@@ -25,6 +28,7 @@ namespace
         bool skills = true;
         bool learn = true;
         bool bar = true;
+        bool swap = true;       // [Build] SwapBar: arts swapped on a full bar for the situation (docs/Artes-de-la-barra.md)
     };
     Settings g_settings;
 
@@ -145,6 +149,236 @@ namespace
         LOG("HeroBuild: {} {:x} onto taskbar slot {} ({} shown)", best.kind == 4 ? "combo" : best.kind == 2 ? "spell" : "weapon art",
             best.data, freeSlot + 1, shown);
         reinterpret_cast<SetSlot>(g_setSlot)(player, nullptr, static_cast<uint32_t>(freeSlot), best.kind, 0, data);
+        return true;
+    }
+
+    // The bar for the situation (docs/Artes-de-la-barra.md; the player, 2026-11-14: «no me cambió las artes equipadas
+    // en ningún momento, aun teniendo todas desbloqueadas»): fillBar only fills empty slots; this swaps one art at a
+    // time for one worth more in what the hero meets now: a lone enemy at a time, groups, or a strong one (a boss, a
+    // champion); on horseback only what the game lets be cast there. Out of fights only (onFrame's calm), one slot a
+    // look, the situation steady 8 s, a slot left 60 s after a change, five changes a minute at most, the new one worth
+    // a quarter more than the one it replaces. A slot set in [Tactics] (not Auto), or changed by hand (10 min), stays.
+    enum class Sit
+    {
+        Single,
+        Group,
+        Strong,
+    };
+    const char* const kSitNames[] = {"one at a time", "groups", "a strong enemy"};
+    // By the situation, what each use is worth: not known yet, heal, area, single, buff, off (Config::Tactics::Art).
+    constexpr float kUseWorth[3][6] = {
+        {0.7f, 0.8f, 0.4f, 1.0f, 0.6f, 0.0f},
+        {0.7f, 0.8f, 1.2f, 0.5f, 0.6f, 0.0f},
+        {0.7f, 1.0f, 0.3f, 1.2f, 1.0f, 0.0f},
+    };
+    constexpr DWORD kSitSteadyMs = 8000, kSlotRestMs = 60000, kPlayerHoldMs = 600000;
+    constexpr int kSwapsPerMinute = 5;
+    constexpr float kSwapMargin = 1.25f;
+    struct BarState
+    {
+        Sit sit = Sit::Single, pending = Sit::Single;
+        DWORD pendingSince = 0;
+        uint32_t placed[cUI_Taskbar2::slotCount] = {};      // what this put there (0: not this)
+        DWORD changedAt[cUI_Taskbar2::slotCount] = {};
+        DWORD playerUntil[cUI_Taskbar2::slotCount] = {};    // changed by hand: left alone until then
+        DWORD swaps[kSwapsPerMinute] = {};
+        int nextSwap = 0;
+    };
+    BarState g_bar;
+
+    float artWorth(const Tactics::ArtFact& f, Sit sit, bool mounted)
+    {
+        if ((mounted && !f.mounted) || f.use < 0 || f.use > 5)
+        {
+            return 0.0f;
+        }
+        float w = kUseWorth[static_cast<int>(sit)][f.use];
+        w *= 1.0f + static_cast<float>(std::min(f.level, 30)) / 10.0f;
+        if (f.slotKind == 4)
+        {
+            w *= 1.3f;      // a combo: several arts in one cast
+        }
+        if (f.rechargeMs)
+        {
+            w *= std::clamp(8000.0f / (static_cast<float>(f.rechargeMs) + 2000.0f), 0.3f, 1.5f);
+        }
+        if (f.use == 0 && f.tries >= 3)
+        {
+            w *= 0.5f;      // tried and still unclear
+        }
+        return w;
+    }
+
+    bool arrangeBar(cCreature* hero)
+    {
+        std::vector<Tactics::ArtFact> facts;
+        if (!Tactics::artFacts(facts) || facts.empty())
+        {
+            return false;
+        }
+        cUI_Manager* manager = cUI_Manager::instance();
+        cUI_Taskbar2* taskbar = manager ? manager->taskbar() : nullptr;
+        const uint8_t* players = *reinterpret_cast<uint8_t* const*>(kPlayers);
+        const uint32_t index = hero->id & 0xFFFF;
+        if (!taskbar || !players || index >= 0x20)
+        {
+            return false;
+        }
+        const int shown = std::clamp<int>(*reinterpret_cast<const uint16_t*>(reinterpret_cast<const uint8_t*>(taskbar) +
+            kTaskbarSlots), 0, cUI_Taskbar2::slotCount);
+        uint8_t* player = const_cast<uint8_t*>(players) + index * kPlayerSize;
+        const int alt = (player[kAltBar] & 2) ? 1 : 0;
+        auto entry = [&](int slot) { return player + kArtEntries + static_cast<size_t>(slot * 2 + alt) * kArtEntrySize; };
+        const DWORD now = GetTickCount();
+        const bool mounted = *reinterpret_cast<const uint32_t*>(reinterpret_cast<const uint8_t*>(hero) + 0x1EC) != 0;
+
+        // The situation: the last fights, and the enemies in sight now; steady 8 s before it counts.
+        float foes = 0.0f, strong = 0.0f;
+        CombatLearn::recentFights(foes, strong);
+        const float around = std::max(foes, static_cast<float>(CombatLearn::forecast().foes));
+        const Sit seen = strong >= 0.3f ? Sit::Strong : around >= 3.0f ? Sit::Group : Sit::Single;
+        if (seen != g_bar.pending)
+        {
+            g_bar.pending = seen;
+            g_bar.pendingSince = now;
+        }
+        if (g_bar.pending != g_bar.sit && now - g_bar.pendingSince >= kSitSteadyMs)
+        {
+            g_bar.sit = g_bar.pending;
+            LOG("HeroBuild: the situation is now {} ({:.1f} enemies a fight, {:.0f}% with a strong one)",
+                kSitNames[static_cast<int>(g_bar.sit)], foes, strong * 100.0f);
+        }
+        const Sit sit = g_bar.sit;
+
+        std::vector<float> worth(facts.size());
+        for (size_t i = 0; i < facts.size(); ++i)
+        {
+            worth[i] = artWorth(facts[i], sit, mounted);
+        }
+        // What the bar holds and what each is worth; a slot no longer holding what this put there was changed by hand.
+        uint32_t held[cUI_Taskbar2::slotCount] = {};
+        float heldWorth[cUI_Taskbar2::slotCount] = {};
+        for (int slot = 0; slot < shown; ++slot)
+        {
+            const uint8_t* e = entry(slot);
+            held[slot] = *reinterpret_cast<const uint16_t*>(e) ? *reinterpret_cast<const uint32_t*>(e + 4) : 0;
+            if (g_bar.placed[slot] && held[slot] != g_bar.placed[slot])
+            {
+                g_bar.placed[slot] = 0;
+                g_bar.playerUntil[slot] = now + kPlayerHoldMs;
+                LOG("HeroBuild: art bar slot {} changed by hand: left alone 10 min", slot + 1);
+            }
+            for (size_t i = 0; i < facts.size(); ++i)
+            {
+                if (held[slot] && facts[i].art == held[slot])
+                {
+                    heldWorth[slot] = worth[i];
+                }
+            }
+        }
+        // The arts wanted: the best as many as the slots shown, each further one of a use already taken worth less (a
+        // bar of five area arts recharges all at once), a second heal hardly anything.
+        std::vector<size_t> wanted;
+        int byUse[6] = {};
+        for (int k = 0; k < shown; ++k)
+        {
+            size_t best = facts.size();
+            float bestWorth = 0.0f;
+            for (size_t i = 0; i < facts.size(); ++i)
+            {
+                if (std::find(wanted.begin(), wanted.end(), i) != wanted.end())
+                {
+                    continue;
+                }
+                const int use = std::clamp(facts[i].use, 0, 5);
+                float w = worth[i];
+                for (int n = 0; n < byUse[use]; ++n)
+                {
+                    w *= use == 1 ? 0.2f : 0.6f;
+                }
+                if (w > bestWorth)
+                {
+                    best = i;
+                    bestWorth = w;
+                }
+            }
+            if (best == facts.size())
+            {
+                break;
+            }
+            wanted.push_back(best);
+            ++byUse[std::clamp(facts[best].use, 0, 5)];
+        }
+        auto onBar = [&](uint32_t art) {
+            for (int slot = 0; slot < shown; ++slot)
+            {
+                if (held[slot] == art)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        auto isWanted = [&](uint32_t art) {
+            for (size_t i : wanted)
+            {
+                if (facts[i].art == art)
+                {
+                    return true;
+                }
+            }
+            return false;
+        };
+        // The one wanted most that is not on the bar (wanted is in order), and the weakest slot it may take.
+        size_t add = facts.size();
+        for (size_t i : wanted)
+        {
+            if (!onBar(facts[i].art))
+            {
+                add = i;
+                break;
+            }
+        }
+        if (add == facts.size())
+        {
+            return false;
+        }
+        int out = -1;
+        for (int slot = 0; slot < shown; ++slot)
+        {
+            if (Config::tactics.slots[slot] != Config::Tactics::Art::Auto ||
+                (g_bar.playerUntil[slot] && static_cast<int>(now - g_bar.playerUntil[slot]) < 0) ||
+                (g_bar.changedAt[slot] && now - g_bar.changedAt[slot] < kSlotRestMs) || (held[slot] && isWanted(held[slot])))
+            {
+                continue;
+            }
+            if (out < 0 || heldWorth[slot] < heldWorth[out])
+            {
+                out = slot;
+            }
+        }
+        if (out < 0 || (heldWorth[out] > 0.0f && worth[add] < kSwapMargin * heldWorth[out]))
+        {
+            return false;
+        }
+        if (const DWORD oldest = g_bar.swaps[g_bar.nextSwap]; oldest && now - oldest < 60000)
+        {
+            return false;   // five changes in the last minute
+        }
+        if (!Act::allowed(Act::Kind::ArtBar, "swap an art on the bar for what the hero meets"))
+        {
+            return false;
+        }
+        const Tactics::ArtFact& f = facts[add];
+        LOG("HeroBuild: art bar for {}{}: slot {} {:x} (worth {:.2f}) -> {} {:x} ({:.2f})", kSitNames[static_cast<int>(sit)],
+            mounted ? ", mounted" : "", out + 1, held[out], heldWorth[out],
+            f.slotKind == 4 ? "combo" : f.slotKind == 2 ? "spell" : "weapon art", f.art, worth[add]);
+        const uint32_t data[4] = {f.art, 0, 0, 0};
+        reinterpret_cast<SetSlot>(g_setSlot)(player, nullptr, static_cast<uint32_t>(out), f.slotKind, 0, data);
+        g_bar.placed[out] = f.art;
+        g_bar.changedAt[out] = now;
+        g_bar.swaps[g_bar.nextSwap] = now;
+        g_bar.nextSwap = (g_bar.nextSwap + 1) % kSwapsPerMinute;
         return true;
     }
 
@@ -292,6 +526,9 @@ namespace
         else if (g_settings.bar && g_setSlot && Act::automatic(Act::Kind::ArtBar) && fillBar(hero, st))
         {
         }
+        else if (g_settings.bar && g_settings.swap && g_setSlot && Act::automatic(Act::Kind::ArtBar) && arrangeBar(hero))
+        {
+        }
         else if (g_settings.skills && *reinterpret_cast<const uint16_t*>(st + 0x42) > 0 &&
                  Act::allowed(Act::Kind::Skills, "spend a skill point"))
         {
@@ -352,6 +589,10 @@ namespace
         ImGui::Checkbox("Poner artes y combos en la barra", &g_settings.bar);
         ImGui::SetItemTooltip("En los huecos libres de la barra (teclas 6-0) que ya tiene el héroe: primero los combos, "
                               "luego las artes de más nivel. Lo que pusiste tú no se toca.");
+        ImGui::Checkbox("Cambiar las artes según la situación", &g_settings.swap);
+        ImGui::SetItemTooltip("Con la barra llena, fuera de combate y de una en una: artes de área para grupos, de un "
+                              "blanco para enemigos sueltos o fuertes, solo las que se pueden usar a caballo al ir "
+                              "montado. Respeta las ranuras fijadas en Tácticas y las que cambies tú (10 min).");
     }
 
     void saveMenu(const std::wstring& ini)
@@ -360,6 +601,7 @@ namespace
         ModkitMenu::write(ini, L"Build", L"Skills", g_settings.skills);
         ModkitMenu::write(ini, L"Build", L"Learn", g_settings.learn);
         ModkitMenu::write(ini, L"Build", L"Bar", g_settings.bar);
+        ModkitMenu::write(ini, L"Build", L"SwapBar", g_settings.swap);
     }
 
     void install()
@@ -369,6 +611,7 @@ namespace
         g_settings.skills = GetPrivateProfileIntW(L"Build", L"Skills", 1, ini.c_str()) != 0;
         g_settings.learn = GetPrivateProfileIntW(L"Build", L"Learn", 1, ini.c_str()) != 0;
         g_settings.bar = GetPrivateProfileIntW(L"Build", L"Bar", 1, ini.c_str()) != 0;
+        g_settings.swap = GetPrivateProfileIntW(L"Build", L"SwapBar", 1, ini.c_str()) != 0;
         g_ready = Sig::resolve(kSigs) == 0;
         LOG("HeroBuild: {} (attributes {}, skills {}, learn {})", g_ready ? "ready" : "not available (signatures)",
             g_settings.attributes, g_settings.skills, g_settings.learn);
