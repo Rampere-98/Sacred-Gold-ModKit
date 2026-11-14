@@ -540,9 +540,15 @@ void AgentSave::onFrame()
         return;
     }
     // A quest done: saved once the game allows it, with no fight about and the hero alive, unless it died since.
+    static DWORD s_wantedSince = 0;
     if (!g_saveWanted)
     {
+        s_wantedSince = 0;
         return;
+    }
+    if (!s_wantedSince)
+    {
+        s_wantedSince = now ? now : 1;
     }
     if (g_diedSince)
     {
@@ -558,7 +564,11 @@ void AgentSave::onFrame()
     // Not where enemies stand about, nor hurt (the live verifier, 2026-11-11: A1 saved beside a group and died 5 times
     // in 31 min, each load straight back among them): a player saves once the place is quiet and the hero whole.
     if (g_restartSave ? health * 2 < hero->maxHealth
-                      : AutoAttack::nearestHostileTiles() < 25.0 || health * 10 < hero->maxHealth * 7)
+                      // Wanted for 3 minutes and never that quiet (A4 and A6, 2026-11-14: due 20 min and not saved,
+                      // one fight after another): then with none within 10 tiles and half the health.
+                      : now - s_wantedSince > 180000
+                            ? AutoAttack::nearestHostileTiles() < 10.0 || health * 2 < hero->maxHealth
+                            : AutoAttack::nearestHostileTiles() < 25.0 || health * 10 < hero->maxHealth * 7)
     {
         static DWORD s_toldAt = 0;
         if (now - s_toldAt > 30000)
