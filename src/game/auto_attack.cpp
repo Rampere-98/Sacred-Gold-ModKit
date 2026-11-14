@@ -2161,10 +2161,18 @@ namespace
         const bool goesBad = Config::autoAttack.noLostFights && !quickOne && fc.foes > 0 &&
                              CombatLearn::fightSeconds() >= 4.0f &&
                              ((s_badSince && now - s_badSince >= 1500) || badNow >= 0.25f);
-        const bool doomed = goesBad || drained || overrun || (!quickOne &&
-                            ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
-                             (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
-                             (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f)));
+        const bool foreseen = goesBad || overrun || (!quickOne &&
+                              ((fc.foes >= 4 && fc.win < 0.25f && fc.expected > 1.0f) ||
+                               (fc.foes > 0 && fc.expected > 1.5f && fc.win < 0.75f) ||
+                               (careful && fc.foes > 0 && fc.expected > 1.0f && fc.win < 0.85f)));
+        // A forecast alone does not send a whole hero running (the player, watching A1, 2026-11-14: the Seraphim at
+        // 349 of 349 among ten goblins that did her no harm, «a hopeless fight (11 enemies, 49% to win)», stepping
+        // back every 20 s for minutes; «ya hubiera ganado la batalla si en vez de huir empezara a atacar»). The
+        // forecast counts heads; what the enemies really do shows on the health. Left on the forecast only once a
+        // tenth of the health is gone, or when it foresees three lives' worth of loss; with nine tenths still there the
+        // way out is as open as before.
+        const bool hurt = health * 100 < maximum * 90;
+        const bool doomed = drained || (foreseen && (hurt || fc.expected > 3.0f));
         // Not from a fight about won (the player, 2026-11-10: «huyendo de un enemigo que le falta poco para morir pero
         // se deja matar por huir»): running, the blows come in the back all the same. Kept fighting when the
         // forecast puts all down well before the hero's health would go, or when only one is close and nearly down.
