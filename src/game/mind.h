@@ -36,6 +36,9 @@ namespace Mind
         int panicPercent;
         uint32_t panicArt;
         int maxFoes, maxFoesDry;
+        // The buff that opens every fight, kept up for its length (the guides: G1 «max thy Heroic Courage», S1 Faith's
+        // Strength «always on», M1/M2 Phantom Meadow «even at level 1»; docs/Planes/<Class>.ini [Opening]): 0 none.
+        uint32_t openBuff = 0;
     };
 
     inline const Values& of(HeroProfile::Class cls)
@@ -44,9 +47,11 @@ namespace Mind
         //                                   quest farm retr lost dry  win    pots mounted off   panic art  foes dry
         // Farming zones a level nearer the hero's (the live verifier, 2026-11-11: the Seraphim, level 2-3, sent to
         // zones of 4-7 three times and dead there three times).
-        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   0.0f, 35, 0x10, 6, 4};
-        static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x3F6, 9, 5};
-        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f, 40, 0x1, 4, 3};
+        // Panic: Conversion 0x13 (S1: «to get a big one off you»); 0x10 was the battle mage's Circle of Fear, never hers.
+        static constexpr Values kSeraphim  {2,    1,   30,  60,  85,  0.5f,  6,   true,   0.0f, 35, 0x13, 6, 4, 0x15};
+        static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x3F6, 9, 5, 0x3F7};
+        // Panic: Water Form 0x4 first (M2: out of more trouble, unseen); Phase 0x1 «fails 60 %» (M1).
+        static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f, 40, 0x4, 4, 3, 0x1F};
         static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   0.0f, 40, 0x24, 5, 3};
         static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x413, 7, 4};
         static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   true,   0.0f, 35, 0x408, 7, 4};

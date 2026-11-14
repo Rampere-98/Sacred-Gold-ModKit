@@ -7,6 +7,7 @@
 #include <imgui.h>
 #include <windows.h>
 #include <atomic>
+#include <format>
 #include <mutex>
 #include <string>
 
@@ -194,6 +195,31 @@ namespace
             const std::string key = kEntries[i].key;
             ModkitMenu::write(ini, L"Trampas", std::wstring(key.begin(), key.end()).c_str(), g_on[i].load() ? 1 : 0);
         }
+    }
+
+    // A save file of this folder that is another folder's too (a hard link: the copies once shared the player's
+    // GAME01..05): a cheat on with one of them loaded and a save from the game's menu would write the player's game
+    // (the code reviewer, T1, 2026-11-14). No cheat while any is linked.
+    bool sharesSaves()
+    {
+        for (int n = 1; n <= 5; ++n)
+        {
+            const std::wstring path = g_dir + std::format(L"save\\GAME{:02}.PAK", n);
+            HANDLE h = CreateFileW(path.c_str(), 0, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, nullptr,
+                                   OPEN_EXISTING, 0, nullptr);
+            if (h == INVALID_HANDLE_VALUE)
+            {
+                continue;
+            }
+            BY_HANDLE_FILE_INFORMATION info = {};
+            const bool linked = GetFileInformationByHandle(h, &info) && info.nNumberOfLinks > 1;
+            CloseHandle(h);
+            if (linked)
+            {
+                return true;
+            }
+        }
+        return false;
     }
 
     void install()

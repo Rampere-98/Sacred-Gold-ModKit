@@ -2,6 +2,7 @@
 #include "game/act.h"
 #include "game/combat_learn.h"
 #include "game/tactics.h"
+#include "game/mind.h"
 #include "config/tactics.h"
 #include "game/modkit_menu.h"
 #include "input/inject.h"
@@ -193,6 +194,12 @@ namespace
             return 0.0f;
         }
         float w = kUseWorth[static_cast<int>(sit)][f.use];
+        // The class's panic art and opening buff stay in the bar in every situation (an escape is «off» as a blow,
+        // worth 0 otherwise, and the panic would find it missing).
+        if (f.art && (f.art == Mind::now().panicArt || f.art == Mind::now().openBuff))
+        {
+            w = std::max(w, 1.5f);
+        }
         w *= 1.0f + static_cast<float>(std::min(f.level, 30)) / 10.0f;
         if (f.slotKind == 4)
         {

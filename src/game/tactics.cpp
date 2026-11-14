@@ -726,7 +726,7 @@ namespace
         // Area
         case 0x42D: case 0x3FC: case 0xF:                               // seraphim: multi-hit, whirling hit, celestial light
         case 0x421:                                                     // gladiator: multi-hit
-        case 0x17: case 0x1A: case 0xB: case 0x23: case 0x10: case 0x1B: case 0x4:  // battle mage
+        case 0x17: case 0x1A: case 0xB: case 0x23: case 0x10:          // battle mage (0x1B a buff, 0x4 the escape)
         case 0x3ED: case 0x3EC: case 0x27: case 0x29: case 0x26: case 0x425:        // wood elf
         case 0x429: case 0x419: case 0x41A: case 0x41B: case 0x41C: case 0x41D:     // dark elf: sudden fury, traps
         case 0x431: case 0x40E:                                         // vampiress: multi-hit (both forms)
@@ -735,9 +735,9 @@ namespace
         case 0x44D: case 0x44E: case 0x44F: case 0x3C: case 0x3E: case 0x41: case 0x40: case 0x42: case 0x43: // daemon
             return Art::Area;
         // Buffs and summons
-        case 0x11: case 0x14: case 0x15: case 0x16:                     // seraphim
+        case 0x11: case 0x14: case 0x15:                                // seraphim (0x16 off: S1 F, S2 «hardly ever»)
         case 0x3F6: case 0x3F7: case 0x3F8:                             // gladiator: awe, heroic courage, dagger stare
-        case 0x2: case 0x18: case 0x1C: case 0x1E: case 0x1F: case 0x20:            // battle mage
+        case 0x2: case 0x18: case 0x1C: case 0x1E: case 0x1F: case 0x20: case 0x1B: // battle mage (0x1B agility cascade, M2)
         case 0x25: case 0x3:                                            // wood elf: quick as a flash, companion
         case 0x415: case 0x416: case 0x417: case 0x418:                 // dark elf
         case 0x402: case 0x403: case 0x404: case 0x405: case 0x40A:     // vampiress: wolves, time control, dead
@@ -766,6 +766,9 @@ namespace
         // Dwarf's Entrench (0x39): roots the hero in place (Builds.md §8, «evitar»), no use for a hero who moves.
         case 0x37: case 0x39:
         case 0x1: case 0x24: case 0x3FE: case 0x3FF:
+        // Seraphim's Shield of Light (S1 F, S2 «hardly ever»; the player may still set it in [Tactics]); the battle
+        // mage's Water Form, her escape: cast as the panic art only (Mind::Values::panicArt).
+        case 0x16: case 0x4:
         case 0x446: case 0x449: case 0x44A: case 0x44B: case 0x44C:
             return Art::Off;
         default:
@@ -788,10 +791,24 @@ namespace
             return Art::Auto;
         }
         const uint8_t* r = records + (combo - kFirstCombo) * 38;
-        int area = 0;
+        // One art repeated (the guides' combos, G1/S1: a buff x1, a boss killer x4) does what that art does.
+        int area = 0, pieces = 0;
+        bool same = true;
+        const uint32_t first = *reinterpret_cast<const uint32_t*>(r + 2);
         for (int i = 0; i < 4; ++i)
         {
-            area += knownUse(*reinterpret_cast<const uint32_t*>(r + 2 + 4 * i)) == Art::Area;
+            const uint32_t piece = *reinterpret_cast<const uint32_t*>(r + 2 + 4 * i);
+            if (!piece)
+            {
+                continue;
+            }
+            ++pieces;
+            same = same && piece == first;
+            area += knownUse(piece) == Art::Area;
+        }
+        if (pieces && same && knownUse(first) != Art::Off)
+        {
+            return knownUse(first);
         }
         return area >= 2 ? Art::Area : Art::Auto;
     }
@@ -1029,6 +1046,17 @@ namespace
                 }
                 break;
             case Art::Buff:
+                // The class's opening buff (Mind::Values::openBuff; G1, S1, M1: kept up for its whole length): as any
+                // fight starts, easy or not, above the blows and the blinding (9), under the panic (11).
+                if (const uint32_t open = Mind::now().openBuff; open && sa.art == open && s.threat &&
+                    (!learned(sa.art).lastCast ||
+                     static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
+                {
+                    rank = 10;
+                    at_ = aimable ? target->id : 0;
+                    reason = "the class's opening buff";
+                    break;
+                }
                 // Before the blows, as a good player does: once a fight is on its way (two near, or more about).
                 if ((close >= 2 || s.count >= 3 || strong || danger) && s.threat &&
                     (!learned(sa.art).lastCast ||

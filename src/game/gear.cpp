@@ -2060,6 +2060,23 @@ namespace
     }
 
     // The arts for the next combo: up to 3 of the kind with the most, highest levels first; 0 when under 2.
+    // The combos of each class's guide (docs/Planes/<Class>.ini [Roles] Combo*), by HeroProfile::Class: one art, x1
+    // for a buff (cast without spending its recharge) or x4 for a boss killer (GGuirao13, G1/S1; M1/M2 back no combo,
+    // the meadow x1 by the same rule). An empty row keeps the old pick. The vampiress: none (her forms are the
+    // player's call, 2026-11-12; Planes-correcciones-parches.md).
+    struct ComboWish
+    {
+        uint32_t art;
+        int times;
+    };
+    constexpr ComboWish kComboPlan[10][3] = {
+        {},                                         // unknown
+        {{0x15, 1}, {0x42E, 4}, {0x11, 1}},         // seraphim: faith's strength, hard hit x4, blades of light
+        {{0x3F7, 1}, {0x422, 4}, {0x421, 4}},       // gladiator: heroic courage, hard hit x4, multi-hit x4
+        {{0x1F, 1}, {0x5, 1}},                      // battle mage: phantom meadow, fireball
+        {}, {}, {}, {}, {}, {},                     // dark elf, wood elf, vampiress (both forms), dwarf, daemon
+    };
+
     int comboArts(const uint8_t* st, uint32_t ids[4], uint16_t levels[4])
     {
         struct Art
@@ -2082,6 +2099,34 @@ namespace
         const auto count = [&](uint32_t k) {
             return std::count_if(arts.begin(), arts.end(), [&](const Art& a) { return a.kind == k; });
         };
+        // The guide's first combo whose art is learned and not yet in a combo; with a plan and none left, none (the
+        // guides back no mix).
+        const auto& plan = kComboPlan[std::min<uint32_t>(static_cast<uint32_t>(HeroProfile::current().cls), 9)];
+        if (plan[0].art)
+        {
+            int records = 0;
+            const uint8_t* combos = comboRecords(st, records);
+            for (const ComboWish& w : plan)
+            {
+                const auto a = std::find_if(arts.begin(), arts.end(), [&](const Art& x) { return x.id == w.art; });
+                bool known = false;
+                for (int i = 0; combos && i < records && !known; ++i)
+                {
+                    known = comboSet(combos + i * kComboRecord) &&
+                            *reinterpret_cast<const uint32_t*>(combos + i * kComboRecord + 2) == w.art;
+                }
+                if (w.art && a != arts.end() && !known)
+                {
+                    for (int i = 0; i < 4; ++i)
+                    {
+                        ids[i] = i < w.times ? a->id : 0;
+                        levels[i] = i < w.times ? a->level : 0;
+                    }
+                    return w.times;
+                }
+            }
+            return 0;
+        }
         const uint32_t kind = count(2) >= count(1) ? 2 : 1;
         std::erase_if(arts, [&](const Art& a) { return a.kind != kind; });
         std::sort(arts.begin(), arts.end(), [](const Art& a, const Art& b) { return a.level > b.level; });
@@ -2187,12 +2232,15 @@ namespace
         using ComboPrice = uint32_t(__fastcall*)(uint8_t* page);
         uint32_t price = fn<ComboPrice>(0x6D23E0)(page);
         int used = n;
-        if (gold <= price && n == 3)
+        if (gold <= price && n >= 3)
         {
-            *reinterpret_cast<uint32_t*>(page + 0x2CC + 2 * 0x188) = 0;
-            *reinterpret_cast<uint16_t*>(page + 0x2D0 + 2 * 0x188) = 0;
-            ids[2] = 0;
-            levels[2] = 0;
+            for (int i = 2; i < 4; ++i)
+            {
+                *reinterpret_cast<uint32_t*>(page + 0x2CC + i * 0x188) = 0;
+                *reinterpret_cast<uint16_t*>(page + 0x2D0 + i * 0x188) = 0;
+                ids[i] = 0;
+                levels[i] = 0;
+            }
             used = 2;
             price = fn<ComboPrice>(0x6D23E0)(page);
         }
