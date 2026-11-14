@@ -1327,6 +1327,51 @@ namespace
         return false;
     }
 
+    // Enemies given up as out of reach, by where THEY stand (tiles; the stuck solver, 2026-11-14: A8 gave up 25
+    // different enemies in one rock pocket at 2775,3270, each new id starting the per-id wait again). Three different
+    // ids within 15 tiles in 10 min veto the circle: no farming zone there for 15 min, and no enemy inside it
+    // sought from beyond the melee for 5.
+    struct UnreachableSpot { int tx, ty; uint32_t id; DWORD at; };
+    std::vector<UnreachableSpot> g_unreachableSpots;
+    struct VetoedCircle { int tx, ty; DWORD at; };
+    std::vector<VetoedCircle> g_vetoedCircles;
+    // span: 900000 for the farming zone's choice, 300000 for the choice of an enemy.
+    bool inVetoedCircle(int tx, int ty, DWORD now, DWORD span)
+    {
+        std::erase_if(g_vetoedCircles, [now](const VetoedCircle& c) { return now - c.at > 900000; });
+        for (const VetoedCircle& c : g_vetoedCircles)
+        {
+            if (now - c.at <= span && (tx - c.tx) * (tx - c.tx) + (ty - c.ty) * (ty - c.ty) < 225)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+    void noteUnreachableSpot(uint32_t id, int tx, int ty, DWORD now)
+    {
+        std::erase_if(g_unreachableSpots, [now](const UnreachableSpot& s) { return now - s.at > 600000; });
+        g_unreachableSpots.push_back({tx, ty, id, now});
+        std::vector<uint32_t> ids;
+        for (const UnreachableSpot& s : g_unreachableSpots)
+        {
+            if ((tx - s.tx) * (tx - s.tx) + (ty - s.ty) * (ty - s.ty) < 225 &&
+                std::find(ids.begin(), ids.end(), s.id) == ids.end())
+            {
+                ids.push_back(s.id);
+            }
+        }
+        if (ids.size() >= 3 && !inVetoedCircle(tx, ty, now, 900000))
+        {
+            g_vetoedCircles.push_back({tx, ty, now});
+            LOG("AutoAttack: {} different enemies out of reach within 15 tiles of {},{} in 10 min: the place left for "
+                "farming 15 min, its enemies 5",
+                ids.size(), tx, ty);
+            Findings::note("unreachable-place", static_cast<int32_t>(tx * kTileSize), static_cast<int32_t>(ty * kTileSize),
+                           "{} enemies out of reach here", static_cast<int>(ids.size()));
+        }
+    }
+
     // Two hopeless fights in 10 min: outmatched where it is; farmed and quested only where the enemies are no
     // higher than the hero, for as long as two stay within the 10 min.
     bool outmatched(DWORD now)
@@ -2742,6 +2787,11 @@ namespace
                 }
                 g_unreachable[g_target] = now + wait;
                 g_unreachableAt[g_target] = currentDistance;
+                if (targetObject)
+                {
+                    noteUnreachableSpot(g_target, static_cast<int>(targetObject->x / kTileSize),
+                                        static_cast<int>(targetObject->y / kTileSize), now);
+                }
                 g_playerTargets.erase(g_target);
                 g_target = 0;
             }
@@ -2821,6 +2871,11 @@ namespace
                                                           static_cast<double>(foeObject->y - self->y)) < 750.0;
                 learnFoes.push_back({f.id, f.health, f.maxHealth, atHero, atHireling,
                                      looks != g_farAimLooks.end() && looks->second >= 3, soon});
+            }
+            // A place where three enemies were given up lately: those in it are not sought from afar either.
+            if (d > melee && inVetoedCircle(static_cast<int>(f.x / kTileSize), static_cast<int>(f.y / kTileSize), now, 300000))
+            {
+                continue;
             }
             // Given up on: only if it comes clearly nearer than it was then. Seen live (2026-11-09): one 122 px off
             // behind a graveyard's fence, within the melee look, was taken again at once, for minutes on end.
@@ -3805,7 +3860,11 @@ namespace
         };
         for (const QuestGoal& g : g_questBook)
         {
-            z.quests += !g.blocked && inZone(g.x, g.y);
+            // Only goals the hero can go for: not parked, within 300 tiles of walking, and a side quest not from a
+            // region 5+ levels below the hero (the stuck solver, 2026-11-14: A5 level 15 «worth staying» in a 6-10
+            // region for 3 quests it never went for, 0 enemies of its level).
+            const bool outgrown = !g.main && z.hi + 5 <= heroLevel;
+            z.quests += !g.blocked && !outgrown && g.distance < 300.0 * kTileSize && inZone(g.x, g.y);
         }
         for (const auto& [key, f] : g_farmBuilding)
         {
@@ -3935,6 +3994,10 @@ namespace
                 continue;
             }
             if (nearDeathSpot(cx, cy))
+            {
+                continue;
+            }
+            if (inVetoedCircle(cx, cy, GetTickCount(), 900000))
             {
                 continue;
             }
@@ -4640,7 +4703,7 @@ namespace
         {
             return false;
         }
-        std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10);
+        std::vector<std::pair<int, int>> ways = MapMemory::waysOut(layer, gx, gy, 10, true);
         for (const Teleports::Interior& in : Teleports::interiors())
         {
             if (!in.start && layer == 0 && std::abs(in.outX - gx) <= 10 && std::abs(in.outY - gy) <= 10)
@@ -5776,6 +5839,7 @@ namespace
             // On the surface only: inside a house the tile test does not know the floor, the one tile it calls
             // reachable is the way in itself, and the hero walked back onto it and out (the player, 2026-11-13: «llegan
             // a entrar pero salen al momento»; A7 in and out 69 times in half an hour, 2 s inside each).
+            const int32_t askedX = qx, askedY = qy;     // the goal as the journal gives it, before the reachable tile
             if (!speakTo && !Whereabouts::area().shutIn && layer == 0)
             {
                 int nx = 0, ny = 0;
@@ -5822,6 +5886,24 @@ namespace
                 {
                     there = std::max(there, 25.0 * kTileSize);
                 }
+            }
+            // The goal itself cannot be stood on (the nearest reachable tile is 3+ tiles from it) and the hero is
+            // already within the journal's radius of it: there (the stuck solver, 2026-11-14: A3 and A7 at 3046,2892,
+            // a thicket and a camp, «no nearer … no way found» 3-10 tiles off for hours).
+            if (fixedGoal && layer == 0 && qr > 0.0 &&
+                std::hypot(static_cast<double>(qx - askedX), static_cast<double>(qy - askedY)) >= 3.0 * kTileSize &&
+                std::hypot(static_cast<double>(self->x - askedX), static_cast<double>(self->y - askedY)) <= qr)
+            {
+                static uint64_t s_toldKey = 0;
+                if (goalKey != s_toldKey)
+                {
+                    s_toldKey = goalKey;
+                    LOG("AutoAttack: the goal {},{} cannot be stood on (nearest reachable {},{}), the hero within the "
+                        "journal's radius ({:.0f} tiles): taken as there",
+                        static_cast<int>(askedX / kTileSize), static_cast<int>(askedY / kTileSize),
+                        static_cast<int>(qx / kTileSize), static_cast<int>(qy / kTileSize), qr / kTileSize);
+                }
+                there = std::max(there, qd);
             }
             if (qd > there)
             {
