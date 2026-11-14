@@ -39,6 +39,9 @@ namespace Mind
         // The buff that opens every fight, kept up for its length (the guides: G1 «max thy Heroic Courage», S1 Faith's
         // Strength «always on», M1/M2 Phantom Meadow «even at level 1»; docs/Planes/<Class>.ini [Opening]): 0 none.
         uint32_t openBuff = 0;
+        // Two more for the classes that open with several (the dwarf's steel, battle rage and war cry, N1; the dark
+        // elf's testosterone and adrenaline, D1; the daemon's infernal power and call of death, A1): 0 none.
+        uint32_t openMore[2] = {};
     };
 
     inline const Values& of(HeroProfile::Class cls)
@@ -52,11 +55,13 @@ namespace Mind
         static constexpr Values kGladiator {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x3F6, 9, 5, 0x3F7};
         // Panic: Water Form 0x4 first (M2: out of more trouble, unseen); Phase 0x1 «fails 60 %» (M1).
         static constexpr Values kMage      {1,    0,   35,  70,  90,  0.6f,  5,   true,   0.0f, 40, 0x4, 4, 3, 0x1F};
-        static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   0.0f, 40, 0x24, 5, 3};
-        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x413, 7, 4};
+        // Opens with Multiple Shot, then Penetrating Arrow (E1, E2: «the star pair»); panic Transformation (E1 B).
+        static constexpr Values kWoodElf   {2,    1,   35,  70,  90,  0.6f,  6,   true,   0.0f, 40, 0x24, 5, 3, 0x3ED};
+        static constexpr Values kDarkElf   {2,    1,   30,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x413, 7, 4, 0x417, {0x418}};
         static constexpr Values kVampiress {2,    1,   30,  65,  85,  0.5f,  8,   true,   0.0f, 35, 0x408, 7, 4};
-        static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   true,   0.0f, 30, 0x43B, 8, 5};
-        static constexpr Values kDaemon    {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x43, 7, 4};
+        static constexpr Values kDwarf     {3,    2,   25,  55,  80,  0.5f,  8,   true,   0.0f, 30, 0x43B, 8, 5, 0x3B, {0x43A, 0x441}};
+        // Panic: Abysmal Choir 0x42 (A1 C: slows those on her); Dread 0x43 was graded F (A1 «forget it»).
+        static constexpr Values kDaemon    {3,    2,   25,  60,  85,  0.5f,  8,   true,   0.0f, 35, 0x42, 7, 4, 0x3F, {0x3E}};
         static constexpr Values kUnknown   {2,    2,   25,  60,  85,  0.5f,  5,   true,   0.0f, 30, 0, 6, 4};
         switch (cls)
         {
@@ -77,6 +82,12 @@ namespace Mind
     inline const Values& now()
     {
         return of(HeroProfile::current().cls);
+    }
+
+    // Whether an art is one of the class's opening buffs (Values::openBuff, openMore).
+    inline bool opens(const Values& v, uint32_t art)
+    {
+        return art && (art == v.openBuff || art == v.openMore[0] || art == v.openMore[1]);
     }
 
     // The class's combat plan (the player, 2026-11-14: «el gladiador no puede compartir con mago, pues es totalmente

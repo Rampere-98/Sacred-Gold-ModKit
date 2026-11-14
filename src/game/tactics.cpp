@@ -727,12 +727,12 @@ namespace
         case 0x42D: case 0x3FC: case 0xF:                               // seraphim: multi-hit, whirling hit, celestial light
         case 0x421:                                                     // gladiator: multi-hit
         case 0x17: case 0x1A: case 0xB: case 0x23: case 0x10:          // battle mage (0x1B a buff, 0x4 the escape)
-        case 0x3ED: case 0x3EC: case 0x27: case 0x29: case 0x26: case 0x425:        // wood elf
+        case 0x3EC: case 0x27: case 0x29: case 0x26: case 0x425:        // wood elf (0x3ED multiple shot: a buff, E1)
         case 0x429: case 0x419: case 0x41A: case 0x41B: case 0x41C: case 0x41D:     // dark elf: sudden fury, traps
         case 0x431: case 0x40E:                                         // vampiress: multi-hit (both forms)
         case 0x40B: case 0x40C: case 0x40D:                             // vampiress: bats
         case 0x436: case 0x43D: case 0x43E: case 0x43F: case 0x38:                 // dwarf
-        case 0x44D: case 0x44E: case 0x44F: case 0x3C: case 0x3E: case 0x41: case 0x40: case 0x42: case 0x43: // daemon
+        case 0x44D: case 0x44E: case 0x44F: case 0x3C: case 0x41: case 0x40: case 0x42: // daemon (0x3E a buff, 0x43 off: A1)
             return Art::Area;
         // Buffs and summons
         case 0x11: case 0x14: case 0x15:                                // seraphim (0x16 off: S1 F, S2 «hardly ever»)
@@ -742,8 +742,12 @@ namespace
         case 0x415: case 0x416: case 0x417: case 0x418:                 // dark elf
         case 0x402: case 0x403: case 0x404: case 0x405: case 0x40A:     // vampiress: wolves, time control, dead
         case 0x43A: case 0x441: case 0x3A: case 0x3B:                   // dwarf
-        case 0x3F:                                                      // daemon: infernal power
+        case 0x3F: case 0x3E:                                           // daemon: infernal power, call of death (A1 A)
+        case 0x3ED:                                                     // wood elf: multiple shot (20 s, E1)
             return Art::Buff;
+        // Daemon's Dread: A1 F («forget it»); the player may still set it in [Tactics].
+        case 0x43:
+            return Art::Off;
         // Heals
         case 0x7:                                                       // battle mage: spiritual healing
         case 0x2A:                                                      // wood elf: recuperation
@@ -1036,6 +1040,14 @@ namespace
                     at_ = cluster;
                     reason = clusterSize > around ? "a denser group elsewhere" : "several enemies together";
                 }
+                // The dark elf's traps recharge apart from the combat moves (D1: physical regeneration + trap lore +
+                // ballistics): laid at any fight's enemy, one or two too, when nothing stronger is ready.
+                else if (sa.art >= 0x419 && sa.art <= 0x41D && aimable && s.threat)
+                {
+                    rank = 5;
+                    at_ = target->id;
+                    reason = "a trap (its own timer)";
+                }
                 break;
             case Art::Single:
                 if (aimable && !easy && (strong || danger || c.singleAlways))
@@ -1048,7 +1060,7 @@ namespace
             case Art::Buff:
                 // The class's opening buff (Mind::Values::openBuff; G1, S1, M1: kept up for its whole length): as any
                 // fight starts, easy or not, above the blows and the blinding (9), under the panic (11).
-                if (const uint32_t open = Mind::now().openBuff; open && sa.art == open && s.threat &&
+                if (Mind::opens(Mind::now(), sa.art) && s.threat &&
                     (!learned(sa.art).lastCast ||
                      static_cast<int>(s.now - learned(sa.art).lastCast) > c.buffEverySeconds * 1000))
                 {

@@ -2074,7 +2074,11 @@ namespace
         {{0x15, 1}, {0x42E, 4}, {0x11, 1}},         // seraphim: faith's strength, hard hit x4, blades of light
         {{0x3F7, 1}, {0x422, 4}, {0x421, 4}},       // gladiator: heroic courage, hard hit x4, multi-hit x4
         {{0x1F, 1}, {0x5, 1}},                      // battle mage: phantom meadow, fireball
-        {}, {}, {}, {}, {}, {},                     // dark elf, wood elf, vampiress (both forms), dwarf, daemon
+        {{0x417, 1}, {0x412, 4}, {0x418, 1}},       // dark elf: testosterone, cobra x4, adrenaline (no guide combo: the rule)
+        {{0x3F0, 4}},                               // wood elf: penetrating arrow x4 (E1, E2)
+        {}, {},                                     // vampiress (both forms): the player's call
+        {{0x3B, 1}, {0x437, 4}, {0x43A, 1}},        // dwarf: dwarven steel, heavy blow x4, battle rage (N1 none: the rule)
+        {{0x3F, 1}, {0x40, 4}},                     // daemon: infernal power, hell sphere x4 (A1)
     };
 
     int comboArts(const uint8_t* st, uint32_t ids[4], uint16_t levels[4])

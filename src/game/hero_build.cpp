@@ -196,7 +196,7 @@ namespace
         float w = kUseWorth[static_cast<int>(sit)][f.use];
         // The class's panic art and opening buff stay in the bar in every situation (an escape is «off» as a blow,
         // worth 0 otherwise, and the panic would find it missing).
-        if (f.art && (f.art == Mind::now().panicArt || f.art == Mind::now().openBuff))
+        if (f.art && (f.art == Mind::now().panicArt || Mind::opens(Mind::now(), f.art)))
         {
             w = std::max(w, 1.5f);
         }
