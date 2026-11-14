@@ -1,5 +1,6 @@
 #include "game/agent_save.h"
 #include "game/act.h"
+#include "game/cheats.h"
 
 #include <cstdlib>
 #include <atomic>
@@ -376,6 +377,18 @@ void AgentSave::onFrame()
         !g_restartSave)
     {
         g_reloadWanted = false;
+        return;
+    }
+    // No save of a game played under a cheat the game does not keep in step itself (a test in a laboratory copy).
+    if (Cheats::taints())
+    {
+        static bool s_told = false;
+        if (!s_told)
+        {
+            s_told = true;
+            LOG("AgentSave: a laboratory cheat is on: this game is not saved while it is");
+        }
+        g_saveWanted = false;
         return;
     }
     // A save every 10 minutes too (the live verifier, four times: A8 lost a level 13 and A3 a level 8 with 25 000

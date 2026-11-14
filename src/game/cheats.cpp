@@ -206,6 +206,23 @@ bool Cheats::on(Id id)
     return g_available && g_on[static_cast<int>(id)].load(std::memory_order_relaxed);
 }
 
+bool Cheats::taints()
+{
+    install();
+    if (!g_available)
+    {
+        return false;
+    }
+    for (int i = 0; i < kCount; ++i)
+    {
+        if (i != static_cast<int>(Id::GoldNoEnd) && g_on[i].load(std::memory_order_relaxed))
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
 void Cheats::onFrame()
 {
     install();

@@ -21,6 +21,11 @@ namespace Cheats
     bool available();
     // True when the cheat is on (never outside a laboratory copy).
     bool on(Id id);
+    // True while a cheat is on that the game's own functions do not keep in step (all but the gold, which goes
+    // through addGold): the copy's game is then not saved (the stuck solver, 2026-11-14: a save every 10 minutes
+    // would write the cheated state into the copy's GAME file; the game's «cheater detected» check is at
+    // [0x182EE50]).
+    bool taints();
     // Once a presented frame (any thread): what is on is applied on the engine's thread.
     void onFrame();
 }
