@@ -2913,7 +2913,7 @@ void Gear::onFrame(DWORD now, bool calm)
     nextAt = now + 1500;
     g_calm = calm;
     g_working = true;
-    Inject::call(&work, nullptr);
+    Inject::engineCall(&work, nullptr);
 }
 
 int Gear::grade(uint32_t id, bool equipment)
@@ -3103,7 +3103,7 @@ bool Gear::chooseWeaponFor(uint32_t targetId)
         active + 1, best + 1, targetId, current, bestDamage, resistanceOf(target, 0), resistanceOf(target, 1),
         resistanceOf(target, 2), resistanceOf(target, 3));
     g_switchTo = static_cast<uint32_t>(best);
-    Inject::call(&switchSlot, nullptr);
+    Inject::engineCall(&switchSlot, nullptr);
     return true;
 }
 

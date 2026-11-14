@@ -1526,7 +1526,7 @@ namespace
         }
         remember("llama al caballo");
         g_rideHorse = horse;
-        Inject::call(&sendCall, nullptr);
+        Inject::engineCall(&sendCall, nullptr);
     }
 
     // Half off the horse (Manolito, block AG, 2026-11-12, read live in A6): the hero on foot (+0x1EC 0) but its
@@ -1593,7 +1593,7 @@ namespace
                     LOG("AutoAttack: half off the horse (controlled {:x}, the hero {:x} on foot): control back to the hero "
                         "(try {})", engine->controlled, self->id, s_mends);
                 }
-                Inject::call(&mendHalfOff, nullptr);
+                Inject::engineCall(&mendHalfOff, nullptr);
             }
             return;
         }
@@ -1685,7 +1685,7 @@ namespace
                 LOG("AutoAttack: mounting wild horse {:x}", s_wildId);
                 g_rideCode = 0x209;
                 g_rideHorse = s_wildId;
-                Inject::call(&sendRide, nullptr);
+                Inject::engineCall(&sendRide, nullptr);
                 s_wildSentAt = now;
                 return;
             }
@@ -1929,7 +1929,7 @@ namespace
             ClickWalk::cancel();
             g_doorHoldUntil = now + 2500;
         }
-        Inject::call(&sendRide, nullptr);
+        Inject::engineCall(&sendRide, nullptr);
     }
 
     void noteTrail(DWORD now, int32_t x, int32_t y, int layer)

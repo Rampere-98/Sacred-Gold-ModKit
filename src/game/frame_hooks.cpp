@@ -31,6 +31,7 @@
 #include "sacred/ui.h"
 
 #include <windows.h>
+#include "input/inject.h"
 #include <intrin.h>
 #include <algorithm>
 #include <cmath>
@@ -221,6 +222,8 @@ namespace
         try
         {
             GrannyAsync::onFrame();
+            stage = "EngineCalls";
+            Inject::drainEngine();
             stage = "GrannyParallel";
             GrannyParallel::onFrame();
             stage = "GpuSkin";

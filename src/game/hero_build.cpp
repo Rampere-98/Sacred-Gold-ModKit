@@ -388,5 +388,5 @@ void HeroBuild::onFrame(DWORD now, bool calm)
     }
     nextAt = now + 2000;
     g_working = true;
-    Inject::call(&work, nullptr);
+    Inject::engineCall(&work, nullptr);
 }

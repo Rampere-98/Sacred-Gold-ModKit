@@ -23,6 +23,14 @@ namespace Inject
     void mouseMove();
     // Calls fn(context) on the window's thread once the messages posted before it are handled.
     void call(void (*fn)(void*), void* context);
+    // Calls fn(context) on the game's engine thread, between two of its frames (Manolito, block AX-3, 2026-11-14:
+    // the window's thread only pumps messages; the logic, Granny, the equipment and the UI live on the thread
+    // cEngine's constructor starts, its id at [0x17E7D40]. A call made from the window's thread into them raced
+    // the engine: the path finder's global grid, A2's crash at 4FA524; the models' queues). Queued here and run by
+    // drainEngine().
+    void engineCall(void (*fn)(void*), void* context);
+    // From the frame hook: runs what is queued, only when the caller is the engine thread.
+    void drainEngine();
     // Everything held goes up.
     void releaseAll();
 

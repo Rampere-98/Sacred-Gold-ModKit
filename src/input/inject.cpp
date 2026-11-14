@@ -3,6 +3,9 @@
 #include <atomic>
 #include <cstdint>
 #include <initializer_list>
+#include "log.h"
+#include <mutex>
+#include <vector>
 
 namespace
 {
@@ -120,6 +123,56 @@ void Inject::mouseMove()
 void Inject::call(void (*fn)(void*), void* context)
 {
     post(kCallMessage, reinterpret_cast<WPARAM>(fn), reinterpret_cast<LPARAM>(context));
+}
+
+namespace
+{
+    struct EngineCall
+    {
+        void (*fn)(void*);
+        void* context;
+    };
+    std::mutex g_engineLock;
+    std::vector<EngineCall> g_engineCalls;
+    DWORD g_engineOldest = 0;       // when the oldest call still queued was asked
+}
+
+void Inject::engineCall(void (*fn)(void*), void* context)
+{
+    const std::lock_guard lock(g_engineLock);
+    if (g_engineCalls.empty())
+    {
+        g_engineOldest = GetTickCount();
+    }
+    g_engineCalls.push_back({fn, context});
+}
+
+void Inject::drainEngine()
+{
+    const DWORD engineThread = *reinterpret_cast<const DWORD*>(0x17E7D40);
+    const bool engine = engineThread && GetCurrentThreadId() == engineThread;
+    std::vector<EngineCall> calls;
+    {
+        const std::lock_guard lock(g_engineLock);
+        // Not the engine's thread: only what has waited 3 s (the id not where it is read, or the engine not
+        // presenting: a call is not left for ever).
+        if (g_engineCalls.empty() || (!engine && GetTickCount() - g_engineOldest < 3000))
+        {
+            return;
+        }
+        calls.swap(g_engineCalls);
+    }
+    static bool s_told = false, s_toldOther = false;
+    if (bool& told = engine ? s_told : s_toldOther; !told)
+    {
+        told = true;
+        LOG("Inject: calls into the game run {} (thread {}, the engine's {})",
+            engine ? "on the engine's thread" : "on another thread after 3 s waiting", GetCurrentThreadId(), engineThread);
+    }
+    for (const EngineCall& c : calls)
+    {
+        c.fn(c.context);
+    }
 }
 
 void Inject::releaseAll()
