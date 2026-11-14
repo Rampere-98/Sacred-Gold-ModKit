@@ -987,6 +987,7 @@ namespace
     std::atomic<bool> g_full{false};
     std::atomic<bool> g_tripShop{false};    // the shop open now is the trip's
     std::atomic<bool> g_tripDone{false};    // the trip's shop has nothing more: to be closed
+    std::atomic<bool> g_closeShop{false};   // the trip is over: the merchant's window closed the game's own way
     int g_idleWorks = 0;
     std::atomic<DWORD> g_noTripUntil{0};    // full with nothing to sell: no trip again for a while
 
@@ -1556,6 +1557,62 @@ namespace
             }
         }
         return beside;
+    }
+
+    // The shop's and the chest's windows closed the game's own way (Manolito, block AY, 2026-11-14, read live on the
+    // eight copies): Escape without the focus left the merchant's window marked visible (+0x10 & 1) with the hero
+    // thousands of units from the merchant, and the game's canSave (0x75ADB0) says no while any of them is: A3 and
+    // A7 could not save for 40 minutes, six of eight copies had it so. onShow(0) is the window's vtable slot 9
+    // (thiscall(window, u8 show); the merchant's 0x6DBB70): it unlinks the inventory and tells the rest. The
+    // merchant's at the trip's end or with its merchant (window +0x1D8) not there or beyond 1500 units; the chest's
+    // after a minute open.
+    void closeLeftOpen(const cCreature* hero)
+    {
+        const uint8_t* ui = *reinterpret_cast<const uint8_t* const*>(kUiManager);
+        cObjectManager* objects = cObjectManager::instance();
+        const bool tripOver = g_closeShop.exchange(false);
+        if (!ui || !objects || !hero || !Act::automatic(Act::Kind::Windows))
+        {
+            return;
+        }
+        using OnShow = void(__fastcall*)(uint8_t* window, void*, uint32_t show);
+        const auto visible = [](const uint8_t* w) {
+            return w && !IsBadReadPtr(w, 0x1DC) && (*reinterpret_cast<const uint32_t*>(w + 0x10) & 1) != 0;
+        };
+        const auto close = [](uint8_t* w, const char* what, const char* why) {
+            const auto* vt = *reinterpret_cast<const uintptr_t* const*>(w);
+            reinterpret_cast<OnShow>(vt[9])(w, nullptr, 0);
+            LOG("Gear: the {} window closed ({}): {}", what, why,
+                *reinterpret_cast<const uint32_t*>(w + 0x10) & 1 ? "still marked open" : "done");
+        };
+        if (uint8_t* merchant = *reinterpret_cast<uint8_t* const*>(ui + 0x90); visible(merchant))
+        {
+            const uint32_t npcId = *reinterpret_cast<const uint32_t*>(merchant + 0x1D8);
+            const cCreature* npc = npcId ? objects->creature(npcId) : nullptr;
+            const bool far = !npc || std::hypot(static_cast<double>(npc->x - hero->x), static_cast<double>(npc->y - hero->y)) > 1500.0;
+            if (tripOver || far)
+            {
+                close(merchant, "merchant's", tripOver ? "the trip is over" : "its merchant is not near");
+            }
+        }
+        static DWORD s_chestSince = 0;
+        if (uint8_t* chest = *reinterpret_cast<uint8_t* const*>(ui + 0xC0); visible(chest))
+        {
+            const DWORD now = GetTickCount();
+            if (!s_chestSince)
+            {
+                s_chestSince = now ? now : 1;
+            }
+            else if (now - s_chestSince > 60000)
+            {
+                close(chest, "chest's", "open a minute");
+                s_chestSince = 0;
+            }
+        }
+        else
+        {
+            s_chestSince = 0;
+        }
     }
 
     // What the open shop takes (block AW, static): the merchant window [uiMgr +0x90], its goods child at +0x154
@@ -2579,6 +2636,7 @@ namespace
         uint8_t* pack = hero ? entryOf(static_cast<int>(hero->id)) : nullptr;
         if (hero && inv && pack && hero->health > 0)
         {
+            closeLeftOpen(hero);
             if (Act::automatic(Act::Kind::PickUp))
             {
                 stashHeld(pack);
@@ -2929,6 +2987,7 @@ bool Gear::tripDone()
     }
     g_tripDone = false;
     g_tripShop = false;
+    g_closeShop = true;
     return true;
 }
 
