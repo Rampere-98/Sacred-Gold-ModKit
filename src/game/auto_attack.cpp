@@ -5883,6 +5883,14 @@ namespace
                         const int ix = dx + static_cast<int>(std::lround((gtx - dx) / gl)),
                                   iy = dy + static_cast<int>(std::lround((gty - dy) / gl));
                         setIntent(Intent::Quest, "the goal indoors: in through the door");
+                        // Interiors are entered on foot (the player, 2026-11-14: «el caballo no entra en interiores y
+                        // el agente lo vive intentando»): off the horse from 12 tiles before the door, and not back up
+                        // while the goal is inside.
+                        if (hero && std::hypot(static_cast<double>(hero->x) / kTileSize - dx,
+                                               static_cast<double>(hero->y) / kTileSize - dy) < 12.0)
+                        {
+                            g_onFootUntil = now + 30000;
+                        }
                         noteDoor(dx, dy);
                         qx = static_cast<int32_t>((ix + 0.5) * kTileSize);
                         qy = static_cast<int32_t>((iy + 0.5) * kTileSize);
@@ -5898,6 +5906,14 @@ namespace
                             LOG("AutoAttack: the goal {},{} lies indoors: in by the door at {},{}", gtx, gty, dx, dy);
                         }
                         setIntent(Intent::Quest, "the goal indoors: to the house's door");
+                        // Interiors are entered on foot (the player, 2026-11-14: «el caballo no entra en interiores y
+                        // el agente lo vive intentando»): off the horse from 12 tiles before the door, and not back up
+                        // while the goal is inside.
+                        if (hero && std::hypot(static_cast<double>(hero->x) / kTileSize - dx,
+                                               static_cast<double>(hero->y) / kTileSize - dy) < 12.0)
+                        {
+                            g_onFootUntil = now + 30000;
+                        }
                         noteDoor(dx, dy);
                         qx = static_cast<int32_t>((dx + 0.5) * kTileSize);
                         qy = static_cast<int32_t>((dy + 0.5) * kTileSize);
