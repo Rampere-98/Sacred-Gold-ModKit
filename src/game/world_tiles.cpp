@@ -197,7 +197,19 @@ static int tileByteLocked(int layer, int tileX, int tileY);
 
 static int tileByte(int layer, int tileX, int tileY)
 {
-    std::lock_guard<std::mutex> lock(g_lock);
+    // Never waited for: a single tile asked while a route's box is being read (a sector inflated under the lock)
+    // is «not known» this once rather than a frame held up (2026-11-14: the presenting thread still seconds in this
+    // lock after the fill gave it up every few rows). Three tries, a turn given between them.
+    std::unique_lock<std::mutex> lock(g_lock, std::try_to_lock);
+    for (int tries = 0; !lock.owns_lock() && tries < 3; ++tries)
+    {
+        Sleep(0);
+        lock.try_lock();
+    }
+    if (!lock.owns_lock())
+    {
+        return -1;
+    }
     return tileByteLocked(layer, tileX, tileY);
 }
 
