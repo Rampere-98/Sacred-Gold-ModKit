@@ -5985,8 +5985,16 @@ namespace
             // does something else before coming back.
             static int32_t s_atGoalX = 0, s_atGoalY = 0;
             static DWORD s_atGoalSince = 0;
+            // Something does come of it while the hero fights, loots or ends quests there (the stuck solver,
+            // 2026-11-14: A7 at «kill 20 goblins», 19 killed and 4000 experience, left after 6 min all the same): the
+            // six minutes count from the last of those.
+            static DWORD s_goalLoot = 0, s_goalDone = 0;
+            const bool progress = g_lootCount != s_goalLoot || g_questsDoneAt != s_goalDone ||
+                                  (g_lastTargetAt && now - g_lastTargetAt < 60000);
+            s_goalLoot = g_lootCount;
+            s_goalDone = g_questsDoneAt;
             if (std::abs(qx - s_atGoalX) > 3 * kTileSize || std::abs(qy - s_atGoalY) > 3 * kTileSize || !s_atGoalSince ||
-                now - s_atGoalSince > 900000)
+                now - s_atGoalSince > 900000 || progress)
             {
                 s_atGoalX = qx;
                 s_atGoalY = qy;
@@ -6104,6 +6112,33 @@ namespace
             }
             // There: the quest's creature, if one, is spoken to.
             cObject* npc = who && who != 0xFFFFFFFFu ? objects->object(who) : nullptr;
+            // The journal's id may now be another thing (the stuck solver, 2026-11-14: A1's quest named 772, by then a
+            // piece of loot: «talkable false», never spoken to, in and out of the house until the goal was left): the
+            // one to speak to is then the nearest creature that can be spoken to within 10 tiles of the goal.
+            if (npc && !npc->asCreature())
+            {
+                struct GoalAt
+                {
+                    int32_t x, y;
+                } goalAt{qx, qy};
+                AimAssist::Target near1;
+                const bool found = AimAssist::findObject(2500.0f, [](uint32_t id, void* context) {
+                    cObjectManager* om = cObjectManager::instance();
+                    cObject* o = om && !(id & 0x80000000u) ? om->object(id) : nullptr;
+                    const auto* g = static_cast<const GoalAt*>(context);
+                    return o && talkable(o) && !isHireling(id) && std::abs(o->x - g->x) <= 10 * kTileSize &&
+                           std::abs(o->y - g->y) <= 10 * kTileSize;
+                }, &goalAt, near1);
+                static uint32_t s_toldNot = 0;
+                if (s_toldNot != who)
+                {
+                    s_toldNot = who;
+                    LOG("AutoAttack: the quest's creature {:x} is no creature now: {}", who,
+                        found ? "the one by the goal spoken to instead" : "none to speak to by the goal");
+                }
+                who = found ? near1.id : 0;
+                npc = found ? objects->object(who) : nullptr;
+            }
             // The quest's creature far away (the Gladiator's arena fight names one 5000 tiles off, its opponent
             // only comes when the fight starts): nothing to go for here, the rest of the agent's play meanwhile.
             if (const double away = npc ? std::max(std::abs(static_cast<double>(npc->x - self->x)),
@@ -6773,7 +6808,8 @@ namespace
         g_walkY = bestY;
         sendWalk();
         MapMemory::setRoute(true, g_walkX, g_walkY);
-        if (!g_roamAt || now - g_roamAt > 10000)
+        static DWORD s_lookToldAt = 0;      // once a minute: each fight and shop set g_roamAt back (224 lines an hour)
+        if ((!g_roamAt || now - g_roamAt > 10000) && (!s_lookToldAt || now - s_lookToldAt > 60000) && (s_lookToldAt = now))
         {
             LOG("AutoAttack: nothing around, going to look ({:.0f} tiles from where it began, {} cells of this layer "
                 "seen)", homeDistance / kTileSize, MapMemory::cellsOn(layer));
