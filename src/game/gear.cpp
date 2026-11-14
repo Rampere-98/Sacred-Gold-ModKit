@@ -1428,6 +1428,10 @@ namespace
         float bestScore = 0.0f;
         eachItem(pack, [&](uint32_t id, int, int, int) {
             const uint32_t type = typeOf(id);
+            if (const auto t = g_noPutOn.find(id); t != g_noPutOn.end() && GetTickCount() - t->second < 600000)
+            {
+                return;
+            }
             if ((flagsOf(id) & kQuestItem) || type == 0x1600 || type == 0x1601 || !types ||
                 !fn<SlotAccepts>(g_slotAccepts)(types, nullptr, 13, type) || !fn<CanUse>(g_canUse)(hero, nullptr, id, 0))
             {
@@ -1449,16 +1453,25 @@ namespace
         {
             return false;
         }
-        if (const int may = canDrop(static_cast<uint32_t>(empty), 1, best); may != 1)
+        // The hand the game's test gives (4: the other one, a bow's; A7, 2026-11-14), and only a free one. A weapon
+        // refused is left for 10 minutes, the slots not given up for it.
+        uint32_t hand = 1;
+        int may = canDrop(static_cast<uint32_t>(empty), hand, best);
+        if (may == 4)
         {
-            LOG("Gear: weapon {:x} may not go into weapon slot {} (the game's test: {}): the slots left alone", best,
+            hand = 0;
+            may = canDrop(static_cast<uint32_t>(empty), hand, best);
+        }
+        if (may != 1)
+        {
+            LOG("Gear: weapon {:x} may not go into weapon slot {} (the game's test: {}): left for 10 min", best,
                 empty + 1, may);
-            g_slotsReady = false;
+            g_noPutOn[best] = GetTickCount();
             return false;
         }
         fn<RemoveItem>(g_removeItem)(pack, nullptr, best, 1);
-        fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), 1, best, 1);
-        if (slotItem(pack, empty, 1) != best)
+        fn<SetSlotHand>(g_setSlotHand)(pack, nullptr, static_cast<uint32_t>(empty), hand, best, 1);
+        if (slotItem(pack, empty, hand) != best)
         {
             // Not taken: back into the backpack, and the slots left alone from now on.
             int w = 0, h = 0;
