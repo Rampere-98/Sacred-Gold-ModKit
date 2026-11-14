@@ -2390,7 +2390,10 @@ namespace
             for (const auto& [px, py] : options)
             {
                 const double fromFoes = std::hypot(px - ex, py - ey), fromHero = std::hypot(px - self->x, py - self->y);
-                if (fromHero < kRetreatWay || fromFoes < heroFromFoes + 4 * kTileSize ||
+                // Not a trail point far back either (the stuck solver, 2026-11-14, A6: 13 «safest way» runs of 46 to
+                // 446 tiles, the trail's points ridden 10-30 tiles apart; a run is 12 s at most and is meant to leave
+                // the pack behind over ground walked, not to cross the map).
+                if (fromHero < kRetreatWay || fromHero > 45.0 * kTileSize || fromFoes < heroFromFoes + 4 * kTileSize ||
                     ClickWalk::walkable(layer, static_cast<int>(px / kTileSize), static_cast<int>(py / kTileSize)) == 0)
                 {
                     continue;
@@ -6076,14 +6079,20 @@ namespace
                         // its teleport tiles (tpstart_g_03/04 -> 3293,2717, Manolito), not by a path.
                         static std::unordered_map<uint64_t, DWORD> s_triedWayOut;
                         const int htx = static_cast<int>(self->x / kTileSize), hty = static_cast<int>(self->y / kTileSize);
-                        for (const auto& [ex, ey] : waysOutAround(layer, htx, hty))
+                        size_t gameWays = 0;
+                        const std::vector<std::pair<int, int>> wayList = waysOutAround(layer, htx, hty, &gameWays);
+                        for (size_t wi = 0; wi < wayList.size(); ++wi)
                         {
+                            const int ex = wayList[wi].first, ey = wayList[wi].second;
                             const uint64_t wk = (static_cast<uint64_t>(static_cast<uint32_t>(ex)) << 32) | static_cast<uint32_t>(ey);
                             if (const auto t = s_triedWayOut.find(wk); t != s_triedWayOut.end() && now - t->second < 120000)
                             {
                                 continue;
                             }
-                            bool reach = false;
+                            // The game's own ways out (a teleport pad: the stuck guard walks to them without this test)
+                            // are taken as reachable; the stuck solver, 2026-11-14: A3 in the cave 2.3 never logged «trying
+                            // the way out» in 2 h and sat at the nearest tile to the quest, 40 tiles from the pad.
+                            bool reach = wi < gameWays;
                             for (int dy = -1; dy <= 1 && !reach; ++dy)
                             {
                                 for (int dx = -1; dx <= 1 && !reach; ++dx)
@@ -6093,6 +6102,12 @@ namespace
                             }
                             if (!reach)
                             {
+                                static uint64_t s_toldSkip = 0;
+                                if (wk != s_toldSkip)
+                                {
+                                    s_toldSkip = wk;
+                                    LOG("AutoAttack: shut in: the way out at {},{} is not on reachable ground: skipped", ex, ey);
+                                }
                                 continue;
                             }
                             if (std::abs(ex - htx) <= 1 && std::abs(ey - hty) <= 1)

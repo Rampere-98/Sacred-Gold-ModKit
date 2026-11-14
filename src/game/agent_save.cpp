@@ -7,6 +7,7 @@
 #include "game/auto_attack.h"
 #include "game/combat_learn.h"
 #include "game/frame_hooks.h"
+#include "game/whereabouts.h"
 #include "input/inject.h"
 #include "log.h"
 #include "sacred/engine.h"
@@ -580,14 +581,18 @@ void AgentSave::onFrame()
     // below decides alone (A4, 2026-11-14: due twice in 40 min, 164 targets, never saved and not a word why).
     const bool patient = now - s_wantedSince > 180000;
     const int foes = CombatLearn::forecast().foes;
-    const bool allowed = canSave();
+    // Not shut in a closed area (the stuck solver, 2026-11-14: A3 saved at 12:23, 13:21 and 13:31 inside the cave
+    // 2.3 at 4043..4091 x 70..122 and could not leave it: every load, every 5-min stuck reload and every death put it
+    // back there, 2 hours). A save is made where a way on is known: outside.
+    const bool shutIn = Whereabouts::area().valid && Whereabouts::area().shutIn;
+    const bool allowed = canSave() && !shutIn;
     if (health <= 0 || (foes > 0 && !patient) || !allowed)
     {
         static DWORD s_heldToldAt = 0;
         if (now - s_heldToldAt > 60000)
         {
             s_heldToldAt = now;
-            LOG("AgentSave: the save waits ({})", health <= 0 ? "the hero is down" : !allowed ? "the game does not allow it now"
+            LOG("AgentSave: the save waits ({})", health <= 0 ? "the hero is down" : shutIn ? "shut in a closed area" : !allowed ? "the game does not allow it now"
                                                                                            : "a fight under way");
         }
         return;
