@@ -22,7 +22,9 @@ namespace
     constexpr size_t kBlockSize = 0x20144;
     constexpr size_t kTilesAt = 0x20;
     constexpr size_t kTileSize = 0x20;
-    constexpr int kCacheSlots = 256;            // 4 KB each
+    // 4 KB each. A far route's box is up to 18 x 18 sectors: with 256 slots its own rows threw each other out, each
+    // miss a read and an inflate under the lock.
+    constexpr int kCacheSlots = 1024;
 
     struct Block
     {
@@ -205,11 +207,20 @@ void WorldTiles::fill(int tileX, int tileY, int w, int h, int8_t* out)
     // other tile tests for seconds on a far route).
     for (int y = 0; y < h; ++y)
     {
-        std::lock_guard<std::mutex> lock(g_lock);
-        for (int x = 0; x < w; ++x)
         {
-            const int b = tileByteLocked(0, tileX + x, tileY + y);
-            out[static_cast<size_t>(y) * w + x] = static_cast<int8_t>(b == -1 ? -1 : b < 0 ? 0 : b);
+            std::lock_guard<std::mutex> lock(g_lock);
+            for (int x = 0; x < w; ++x)
+            {
+                const int b = tileByteLocked(0, tileX + x, tileY + y);
+                out[static_cast<size_t>(y) * w + x] = static_cast<int8_t>(b == -1 ? -1 : b < 0 ? 0 : b);
+            }
+        }
+        // The lock is not fair: taken again at once for the next row, the frame's own tile tests waited on it for
+        // the whole box (2026-11-14: up to 9.6 s without a frame, the presenting thread in tileByte's lock). Every
+        // few rows the others get their turn.
+        if ((y & 3) == 3)
+        {
+            Sleep(0);
         }
     }
 }
