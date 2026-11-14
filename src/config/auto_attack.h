@@ -36,6 +36,9 @@ namespace Config
         // The forecast from the enemies' own sheets (docs/Medicion-de-enemigos.md) decides in place of today's. Off:
         // it is only worked out and logged («forecast3» in SacredBild-combat.log).
         bool forecast3 = false;
+        // The class's combat plan (docs/Planes-de-combate.md): ClassPlans\<Class>.ini beside the exe, read for the pick
+        // of the enemy and the distance kept (step 1). Off: the code's own values whatever the file says.
+        bool classPlan = false;
     };
     inline AutoAttack autoAttack;
 }

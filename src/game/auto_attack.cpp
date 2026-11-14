@@ -3049,20 +3049,21 @@ namespace
             {
                 threat = true;
             }
+            const Mind::Plan& cp = Mind::plan();
             float cost = d;
             if (closing)
             {
-                cost *= 0.7f;       // the one coming at the hero first
+                cost *= cp.closing;     // the one coming at the hero first
             }
             if (farLooks >= 3 && !inMelee)
             {
-                cost *= 0.6f;       // shooting at the hero from afar, nobody in the melee: go for it
+                cost *= cp.sniper;      // shooting at the hero from afar, nobody in the melee: go for it
             }
             if (shooting && d > melee)
             {
                 // Its arrows seen at the hero: the shooter before those about, unless one in the melee hits hard
                 // (the strong-foe pull below); a player goes for the archer that keeps hitting.
-                cost *= inMelee ? 0.5f : 0.35f;
+                cost *= inMelee ? cp.shooterInMelee : cp.shooterAlone;
             }
             // The threat first: who strikes the hero (the strong ones before the weak), then who strikes the
             // hireling (it dies fast alone); a weak one standing by waits.
@@ -3071,18 +3072,18 @@ namespace
             const bool strongFoe = (typical > 0 && f.maxHealth * 2 >= typical * 3) || hardness >= 1.6f;
             if (atHero && d < melee)
             {
-                cost *= strongFoe ? 0.45f : 0.6f;
+                cost *= strongFoe ? cp.atHeroStrong : cp.atHero;
             }
             if (atHireling)
             {
-                cost *= strongFoe ? 0.6f : 0.75f;
+                cost *= strongFoe ? cp.atHirelingStrong : cp.atHireling;
             }
             if ((atHero || atHireling || current) && f.maxHealth > 0)
             {
                 // Among those in the fight, the less health left, the sooner it is down (from x0.7 at its last breath
                 // to x1 unhurt): one focused down instead of blows spread. A weak one standing by gets no such pull.
                 const float left = std::clamp(static_cast<float>(f.health) / static_cast<float>(f.maxHealth), 0.0f, 1.0f);
-                cost *= 0.7f + 0.3f * left;
+                cost *= cp.woundedFloor + (1.0f - cp.woundedFloor) * left;
             }
             const bool striking = atHero || atHireling;
             if (striking)
@@ -3093,20 +3094,21 @@ namespace
                 // ordinary one's), so a hard hitter is not left for last because it has more health.
                 const float healthShare =
                     typical > 0 ? std::clamp(static_cast<float>(f.health) / static_cast<float>(typical), 0.15f, 4.0f) : 1.0f;
-                const float priority = std::clamp(std::pow(hardness, 1.5f) / std::sqrt(healthShare), 0.3f, 6.0f);
+                const float priority =
+                    std::clamp(std::pow(hardness, cp.hardnessPower) / std::sqrt(healthShare), 0.3f, 6.0f);
                 cost /= priority;
             }
             // The forecast's kill order (the least health lost: the highest blows per second needed to kill it, a
             // summoner weighed with what it brings): its first one pulled ahead among several.
             if (CombatLearn::forecast().foes > 1 && CombatLearn::killRank(f.id) == 0)
             {
-                cost *= 0.6f;
+                cost *= cp.killFirst;
             }
             if (current)
             {
                 // Stay on it: a player finishes the enemy they fight, unless another is far nearer; a new one at least
                 // a moment (no back and forth).
-                cost *= 0.4f;
+                cost *= cp.stay;
                 currentCandidate = true;
                 currentEngaged = striking;
                 currentLeft = f.maxHealth > 0 ? static_cast<float>(f.health) / static_cast<float>(f.maxHealth) : 1.0f;
@@ -7942,7 +7944,9 @@ static bool keepDistance(DWORD now, uint32_t id)
     const HeroProfile::Data hero = HeroProfile::current();
     // The Battle Mage kites as the archers do (docs/Mentalidades.md §1: «Far», kite, 8 tiles): his spells reach
     // as far, his health is the thinnest.
-    const bool kites = hero.ranged || hero.cls == HeroProfile::Class::BattleMage;
+    // The class's plan may say otherwise ([Distance] Kite: 0 never, 1 always; docs/Planes-de-combate.md).
+    const Mind::Plan& cp = Mind::plan();
+    const bool kites = cp.kite >= 0 ? cp.kite == 1 : (hero.ranged || hero.cls == HeroProfile::Class::BattleMage);
     if (!hero.valid || !kites || hero.mounted || Whereabouts::area().shutIn)
     {
         return false;
@@ -7976,7 +7980,7 @@ static bool keepDistance(DWORD now, uint32_t id)
             weight += w;
         }
     }
-    if (nearest >= 3.0 || weight <= 0)
+    if (nearest >= cp.tooCloseTiles || weight <= 0)
     {
         return false;
     }
@@ -7994,7 +7998,7 @@ static bool keepDistance(DWORD now, uint32_t id)
             LOG("AutoAttack: cornered {:.1f} tiles from an enemy: the close weapon", nearest);
         }
     };
-    if (recent >= 4)
+    if (recent >= cp.stepsPer30s)
     {
         closeIn();
         return false;
@@ -8005,7 +8009,8 @@ static bool keepDistance(DWORD now, uint32_t id)
     for (double turn : {0.0, 0.5, -0.5, 1.0, -1.0, 1.57, -1.57})
     {
         const double a = away + turn;
-        const double tx = self->x / kTileSize + std::cos(a) * 4.0, ty = self->y / kTileSize + std::sin(a) * 4.0;
+        const double tx = self->x / kTileSize + std::cos(a) * cp.stepTiles,
+                     ty = self->y / kTileSize + std::sin(a) * cp.stepTiles;
         bool clear = true;
         for (int k = 1; k <= 8 && clear; ++k)
         {

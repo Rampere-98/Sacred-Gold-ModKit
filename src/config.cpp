@@ -160,6 +160,7 @@ void ConfigFile::load(const std::wstring& gameDir)
     Config::autoAttack.seek = readBool(ini, L"AutoAttack", L"Seek", Config::autoAttack.seek);
     Config::autoAttack.noLostFights = readBool(ini, L"AutoAttack", L"NoLostFights", Config::autoAttack.noLostFights);
     Config::autoAttack.forecast3 = readBool(ini, L"AutoAttack", L"Forecast3", Config::autoAttack.forecast3);
+    Config::autoAttack.classPlan = readBool(ini, L"AutoAttack", L"ClassPlan", Config::autoAttack.classPlan);
     Config::autoAttack.roam = readBool(ini, L"AutoAttack", L"Roam", Config::autoAttack.roam);
     Config::autoAttack.background = readBool(ini, L"AutoAttack", L"Background", Config::autoAttack.background);
     Config::autoAttack.farm = readBool(ini, L"AutoAttack", L"Farm", Config::autoAttack.farm);
