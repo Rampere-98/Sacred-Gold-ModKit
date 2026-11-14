@@ -2419,6 +2419,21 @@ namespace
                     bestCrossed = crossed;
                 }
             }
+            // Running that only draws more enemies in makes the fight harder, not easier (the player, watching A6,
+            // 2026-11-14: «al huir solo está cogiendo aggro de más enemigos»; the analyst: fights joined by others
+            // end in death five times as often). With no way out that passes by none of them, and a quarter of the
+            // health or more left, the hero stands and fights those it has; the retreat is off for a while.
+            const bool noCleanWay = bestScore <= 0.0 || bestCrossed > 0;
+            if (noCleanWay && health * 4 >= maximum)
+            {
+                LOG("AutoAttack: no way out that draws no more enemies ({} would join, {} of {} health): standing and "
+                    "fighting",
+                    bestScore > 0.0 ? bestCrossed : -1, health, maximum);
+                g_retreatUntil = 0;
+                g_retreatDoomed = false;
+                g_noRetreatUntil = now + kRetreatPauseMs;
+                return false;
+            }
             if (bestScore > 0.0)
             {
                 g_walkX = bx;
